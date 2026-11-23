@@ -1,0 +1,47 @@
+#!/bin/sh
+# Garde-fou de publication MyPhotos (crochet pre-commit).
+#
+# Avant chaque commit, verifie la version indexee des fichiers ajoutes ou
+# modifies : donnees personnelles, secrets, gros fichiers, images non autorisees.
+# Voir outils/verifier_publication.py.
+#
+# Activation, une fois par clone :   git config core.hooksPath .githooks
+
+racine=$(git rev-parse --show-toplevel) || exit 1
+cd "$racine" || exit 1
+
+script=outils/verifier_publication.py
+if [ ! -f "$script" ]; then
+    echo "Garde-fou de publication : $script introuvable. COMMIT BLOQUE." >&2
+    exit 1
+fi
+
+# Python : celui du projet, sinon le lanceur py de Windows, sinon python.
+if [ -f .venv/Scripts/python.exe ]; then
+    set -- .venv/Scripts/python.exe
+elif [ -x .venv/bin/python ]; then
+    set -- .venv/bin/python
+elif command -v py >/dev/null 2>&1; then
+    set -- py -3
+elif command -v python >/dev/null 2>&1; then
+    set -- python
+elif command -v python3 >/dev/null 2>&1; then
+    set -- python3
+else
+    echo "Garde-fou de publication : Python introuvable, verification impossible. COMMIT BLOQUE." >&2
+    exit 1
+fi
+
+PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$@" "$script" --index
+code=$?
+if [ "$code" -eq 0 ]; then
+    exit 0
+fi
+echo >&2
+if [ "$code" -eq 1 ]; then
+    echo "COMMIT BLOQUE par le garde-fou de publication : corrigez les alertes ci-dessus," >&2
+    echo "indexez la correction (git add), puis relancez le commit." >&2
+else
+    echo "COMMIT BLOQUE : le garde-fou de publication n'a pas pu s'executer (code $code)." >&2
+fi
+exit 1

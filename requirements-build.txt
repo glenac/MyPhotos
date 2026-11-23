@@ -1,0 +1,19 @@
+# MyPhotos : paquets pour construire MyPhotos.exe (Python 3.14, Windows 64 bits).
+# Versions figées : ce sont exactement celles avec lesquelles MyPhotos.exe est construit et essayé.
+#
+#   python -m venv .venv-build
+#   .venv-build\Scripts\python -m pip install -r requirements-build.txt
+#   construction\construire.ps1
+#
+# Voir construction\LISEZMOI.md.
+
+# --- Ce que MyPhotos embarque
+-r requirements.txt
+
+# --- La construction
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+altgraph==0.17.5
+pefile==2024.8.26
+pywin32-ctypes==0.2.3
+setuptools==84.2.1

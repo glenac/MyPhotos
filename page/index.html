@@ -1,0 +1,1889 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>MyPhotos</title>
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAEWElEQVR42u2XW2xUVRSGv7UP7fSmFAaFJgi2UEoDEaI0rfJieRFDiCTcQqLhQSJI8E1IjSZiIpGLEZ8kkSeIIcqdQEYNAYuhaQkQoiSGW8WCtR3C0Cky0+nMnL186HToMBeGtNUX19M5++zs/99r/evf+8D/8R+HDD68tCswX9TZimo9IgXDXlk1hsg5Fbfp4rvelpwEBsDNaZDCkd+jRlXsgmwkDICos3V0wAGkcGD9zDEmka56JFkNpng6WOrdj4PL0XtLuRGpHm456nMTGFLzKZ4O9kxfRZnzAIA3xh9mTftervbNHEYSsmvKPDqwzLs/CQ5QZCKsnLBv1LrApA+4aZOcDGOjRuDovaVEbFHyPaYFHAysGDUCYx4duBGpZk37XlZO2IfB5VBgBZfDcx4yFpfKijPc7Z1Bb2jyyBjRvK+Cms/kp4q7mfX8IcqK/Vh1uN75GrfvNAx+vqzKKcReM1b6LDIJo3NFZSHC2AvryyWvDGQWsTJ14lmqKn7CSDyZiZrJPko9d1qu3Fq06XDznEulbmGjMcxGdSJop3XMp411LW8XlBStzbsEj0axp4dZUw9TXtaRob357P3mz7dM/ePjJqHQh2FsgjEgOBbOnHvlAmo2jnuSElgNEte/qHy2jxmTv8cx0YzgH37h22nV/QHkxdw+hMXQNO7A7ztyZkCJEI6dIBzzgfQjjhfHlGdas2XVweYtVt2fB8G16gXs4nXY2gYoLkP8HUjbCRzfbiQSNijbg8un9ZYfaP86QwYC2hc/RSh2BKv3U5CqK55mXtUzQ50aa3T+B9t8r4voRwC2cRXu6s1gnPQUd93E2fom0uMHCLuOzPR+1347xQcCfZv4O7onDRzgetd9mn/rIubapNo37DhySdD3BnY+B3f1ZsQ4lBUIpQWpYteKStz1XyZ0QYlj7YY0I3K1O6cQu3rCnPy1k3B/HBFOlbqFjciA4OzidWAcSgsEzxiI2/SO1po6tKYuoQdZkkZAVWOP64ZgKMqPv/zJje7gNWOYnSxHbX1CP/AgqvRncW2tTfpFtS6c7km9DyDn8vGDvqhL2/W7faiWPOzTMgBCsezgAJqYJyBBT6w49SxQ26RoNE/3nASmMyky/638LNef9JHQuGMdwRQCtzZ93yJWF6B6VpVYbleUudbR1uQCbccfjx7rx1w8OfjWmvFS+qTRs6zyvCDzKCoh/skxtKIy61zn220Y3+6Eyelb4w/d/CbrcZz/NctsVMUSCQ/0+dXzGXc+FDwSc2nv7vWPSAYAepZXbRRl+6D/a00dWtuAJpzQXDwJwTsAxF1Lx90HRF03LGoWN7QGTg+bAEBw+bR3UN0JlGSbE4m5dN4LJc1M0SSJYRMACKyc9pwTtxtUZAlQLSAoIYRWq7qnvbvXH1c9KkjJw3NHw4hZNCIEUqSxcLon6IkVD201gLaXvQtU7PGhJECvjDiBXJFO4l8mANA63/uqqN018Eema/8B+4nfWHxj2GAAAAAASUVORK5CYII=">
+<style>
+:root {
+  color-scheme: light dark;
+  --fond: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eceff3;
+  --texte: #1a1d21;
+  --texte-doux: #56606b;
+  --bordure: #d3d9e0;
+  --accent: #1a62cc;
+  --accent-survol: #1553ad;
+  --accent-texte: #ffffff;
+  --accent-doux: #e5eefb;
+  --succes: #1d7a3a;
+  --succes-doux: #e3f4e8;
+  --attention: #8a5300;
+  --attention-doux: #fdf1dc;
+  --danger: #bf2a1f;
+  --danger-doux: #fce9e7;
+  --tuile: #e2e6eb;
+  --ombre: 0 1px 2px rgba(16, 24, 40, .06), 0 6px 20px rgba(16, 24, 40, .08);
+  --rayon: 16px;
+  --tuile-min: 172px;
+  --gouttiere: 24px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #111316;
+    --surface: #1b1e23;
+    --surface-2: #272b31;
+    --texte: #e9ecf0;
+    --texte-doux: #a5aeb8;
+    --bordure: #363c45;
+    --accent: #82b1ff;
+    --accent-survol: #a6c8ff;
+    --accent-texte: #0a1830;
+    --accent-doux: #1b2a42;
+    --succes: #74d18f;
+    --succes-doux: #17301f;
+    --attention: #f2b65e;
+    --attention-doux: #33280f;
+    --danger: #ff8f85;
+    --danger-doux: #3a1d1b;
+    --tuile: #252a30;
+    --ombre: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 112.5%; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; min-height: 100vh; background: var(--fond); color: var(--texte);
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.45;
+}
+body:has(dialog[open]) { overflow: hidden; }
+[hidden] { display: none !important; }
+h1, h2, h3 { line-height: 1.2; margin: 0 0 .5em; }
+h1 { font-size: 1.75rem; }
+h2 { font-size: 1.3rem; }
+h3 { font-size: 1.1rem; }
+p { margin: 0 0 .8em; }
+a { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.visuellement-cache {
+  position: absolute !important; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+.icone {
+  width: 1.3em; height: 1.3em; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.note { color: var(--texte-doux); font-size: .92rem; }
+.intro { font-size: 1.05rem; color: var(--texte-doux); }
+
+/* ------------------------------------------------ boutons */
+.bouton {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; padding: 0 20px; border-radius: 999px; border: 1px solid var(--bordure);
+  background: var(--surface); color: var(--texte); font: inherit; font-weight: 600; cursor: pointer;
+  text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s;
+}
+.bouton:hover { border-color: var(--accent); color: var(--accent); }
+.bouton.principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+.bouton.principal:hover { background: var(--accent-survol); border-color: var(--accent-survol); color: var(--accent-texte); }
+.bouton.grand { min-height: 56px; padding: 0 30px; font-size: 1.08rem; }
+.bouton.petit { min-height: 40px; padding: 0 16px; font-size: .95rem; }
+.bouton.danger { color: var(--danger); }
+.bouton.danger:hover { border-color: var(--danger); background: var(--danger-doux); }
+.bouton.danger-plein { background: var(--danger); border-color: var(--danger); color: #fff; }
+.bouton.fantome { border-color: transparent; background: transparent; }
+.bouton.fantome:hover { background: var(--surface-2); color: var(--texte); }
+.bouton:disabled, .bouton[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.bouton:disabled:hover { border-color: var(--bordure); color: var(--texte); }
+.bouton.principal:disabled:hover { background: var(--accent); color: var(--accent-texte); }
+.bouton-lien {
+  background: none; border: none; padding: 4px 2px; color: var(--accent); font: inherit; font-weight: 600;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+}
+.bouton-icone {
+  display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: 50%;
+  border: none; background: transparent; color: inherit; cursor: pointer;
+}
+.bouton-icone:hover { background: var(--surface-2); }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px;
+  font-size: .85rem; font-weight: 600; background: var(--surface-2); color: var(--texte-doux);
+}
+.badge.accent { background: var(--accent-doux); color: var(--accent); }
+.badge.succes { background: var(--succes-doux); color: var(--succes); }
+.badge .icone { width: 1.1em; height: 1.1em; }
+.roue {
+  display: inline-block; width: 1.3em; height: 1.3em; border-radius: 50%; flex: none;
+  border: 3px solid var(--surface-2); border-top-color: var(--accent); animation: tourner 1s linear infinite;
+  vertical-align: -.25em;
+}
+@keyframes tourner { to { transform: rotate(360deg); } }
+.attente { display: flex; align-items: center; gap: 12px; color: var(--texte-doux); padding: 12px 0; }
+.erreur-texte { color: var(--danger); font-weight: 600; }
+.alerte {
+  padding: 12px 16px; border-radius: 12px; background: var(--attention-doux); color: var(--attention);
+  margin: 10px 0; font-size: .95rem;
+}
+.alerte.erreur { background: var(--danger-doux); color: var(--danger); }
+.succes-texte { display: flex; align-items: center; gap: 10px; color: var(--succes); font-weight: 600; margin: 8px 0; }
+progress {
+  -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 12px; border: none;
+  border-radius: 999px; overflow: hidden; background: var(--surface-2); color: var(--accent);
+}
+progress::-webkit-progress-bar { background: var(--surface-2); border-radius: 999px; }
+progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; transition: width .5s; }
+progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
+
+/* ------------------------------------------------ marque */
+.marque {
+  display: inline-flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.35rem;
+  color: var(--texte); text-decoration: none; letter-spacing: -.01em;
+}
+.logo { width: 40px; height: 40px; flex: none; }
+
+/* ------------------------------------------------ écran de démarrage, écran d'arrêt */
+.ecran-plein {
+  position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px;
+  background: var(--fond); z-index: 50;
+}
+.ecran-plein .logo { width: 72px; height: 72px; margin-bottom: 16px; }
+.ecran-plein p { color: var(--texte-doux); font-size: 1.1rem; max-width: 34em; margin-inline: auto; }
+
+/* ------------------------------------------------ en-tête */
+.haut { position: sticky; top: 0; z-index: 20; }
+.entete {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 28px;
+  padding: 12px var(--gouttiere); background: color-mix(in srgb, var(--fond) 90%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-bottom: 1px solid var(--bordure);
+}
+.recherche { display: flex; gap: 10px; width: 100%; max-width: 820px; justify-self: center; }
+.champ { position: relative; flex: 1; min-width: 0; }
+.champ .icone { position: absolute; left: 20px; top: 50%; transform: translateY(-50%); color: var(--texte-doux); pointer-events: none; }
+.champ input {
+  width: 100%; height: 58px; padding: 0 20px 0 58px; border-radius: 999px; border: 2px solid var(--bordure);
+  background: var(--surface); color: var(--texte); font: inherit; font-size: 1.15rem;
+}
+.champ input::placeholder { color: var(--texte-doux); opacity: .9; }
+.champ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-doux); }
+.recherche .bouton { min-height: 58px; padding: 0 26px; font-size: 1.05rem; }
+.bandeau {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 8px var(--gouttiere);
+  background: var(--accent-doux); border-bottom: 1px solid var(--bordure); font-size: .95rem;
+}
+.bandeau-texte { flex: 1 1 320px; min-width: 0; }
+.bandeau progress { flex: 0 1 260px; height: 10px; background: var(--surface); }
+.bandeau progress::-webkit-progress-bar { background: var(--surface); }
+.bandeau .bouton { min-height: 38px; }
+
+/* ------------------------------------------------ écran principal */
+.zone-principale { padding: 4px var(--gouttiere) 80px; max-width: 1900px; margin: 0 auto; }
+.exemples { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 4px; }
+.exemples .etiquette { color: var(--texte-doux); margin-right: 4px; }
+.puce {
+  min-height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--bordure);
+  background: var(--surface); color: var(--texte); font: inherit; font-size: 1rem; cursor: pointer;
+}
+.puce:hover { border-color: var(--accent); color: var(--accent); }
+.puce[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+.ligne-compte { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 20px; margin: 18px 0 14px; }
+.compte { margin: 0; font-size: 1.08rem; color: var(--texte-doux); min-height: 1.5em; }
+.compte strong { color: var(--texte); }
+.maj { margin: 0; color: var(--texte-doux); font-size: .95rem; }
+.mois { font-size: 1.2rem; font-weight: 650; margin: 30px 0 12px; }
+.section-mois:first-child .mois { margin-top: 6px; }
+.grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tuile-min), 1fr)); gap: 6px; }
+.tuile {
+  position: relative; display: block; aspect-ratio: 1 / 1; overflow: hidden; border-radius: 10px;
+  background: var(--tuile);
+}
+.tuile img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s; visibility: hidden; }
+.tuile img.chargee { visibility: visible; }
+.tuile:hover img { transform: scale(1.04); }
+.tuile:focus-visible { outline-offset: 3px; }
+.tuile.sans-image::after {
+  content: ""; position: absolute; inset: 34%; border: 2px dashed var(--bordure); border-radius: 8px;
+}
+.sentinelle { height: 1px; }
+.vide { text-align: center; padding: 56px 16px; color: var(--texte-doux); max-width: 40em; margin: 0 auto; }
+.vide .icone { width: 64px; height: 64px; stroke-width: 1.4; color: var(--bordure); margin-bottom: 12px; }
+.vide h2 { color: var(--texte); }
+.vide .bouton { margin-top: 10px; }
+.moins-sures { margin-top: 40px; border-top: 1px solid var(--bordure); padding-top: 12px; }
+.moins-sures.seule { margin-top: 0; border-top: none; padding-top: 0; }
+.moins-sures summary {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 6px; cursor: pointer;
+  font-size: 1.12rem; font-weight: 650; list-style: none; border-radius: 10px;
+}
+.moins-sures summary::-webkit-details-marker { display: none; }
+.moins-sures summary .icone { transition: transform .2s; }
+.moins-sures[open] summary .icone { transform: rotate(90deg); }
+.moins-sures .note { margin: 4px 0 14px 6px; }
+
+/* ------------------------------------------------ assistant */
+.assistant { display: flex; flex-direction: column; align-items: center; padding: 28px 16px 64px; min-height: 100vh; }
+.assistant-tete { margin-bottom: 18px; }
+.etapes { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 10px; list-style: none; margin: 0 0 24px; padding: 0; }
+.etapes li { display: flex; align-items: center; gap: 10px; color: var(--texte-doux); font-weight: 600; }
+.etapes li + li::before { content: ""; width: 36px; height: 2px; background: var(--bordure); margin-right: 2px; }
+.etapes .num {
+  display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  border: 2px solid var(--bordure); font-size: .95rem;
+}
+.etapes li[aria-current="step"] { color: var(--texte); }
+.etapes li[aria-current="step"] .num { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+.etapes li.faite .num { background: var(--succes); border-color: var(--succes); color: var(--surface); }
+.carte {
+  width: 100%; max-width: 800px; background: var(--surface); border: 1px solid var(--bordure);
+  border-radius: 22px; box-shadow: var(--ombre); padding: 34px 40px;
+}
+.carte h1:focus { outline: none; }
+.carte > h2 { margin-top: 28px; }
+.pied { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px 16px; margin-top: 30px; }
+.pied .note { margin: 0 auto 0 0; flex: 1 1 260px; }
+.materiel { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 8px 0 12px; }
+.materiel dt { color: var(--texte-doux); }
+.materiel dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.moteur {
+  border: 2px solid var(--bordure); border-radius: var(--rayon); padding: 20px 22px; margin: 16px 0;
+  background: var(--surface);
+}
+.moteur.mis-en-avant { border-color: var(--accent); background: color-mix(in srgb, var(--accent-doux) 55%, var(--surface)); }
+.moteur-tete { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 6px; }
+.moteur-tete h3 { margin: 0; font-size: 1.2rem; }
+.moteur p { margin: 6px 0; }
+.faits { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 4px; }
+.faits li { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.faits .cle { color: var(--texte-doux); }
+.faits .cle::after { content: " :"; }
+.faits .valeur { font-weight: 600; }
+.raisons { margin: 8px 0; padding-left: 1.2em; color: var(--texte-doux); font-size: .95rem; }
+.compromis { color: var(--texte-doux); font-style: italic; }
+.moteur-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.liste-moteurs .moteur { margin: 12px 0; }
+.action-moteur { margin: 18px 0 6px; }
+.action-moteur .bouton { margin-right: 12px; }
+.dl { display: grid; gap: 8px; padding: 16px 18px; border-radius: 14px; background: var(--surface-2); margin: 12px 0; }
+.dl-ligne { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; }
+.dl-titre { font-weight: 650; }
+.dl progress { background: var(--surface); }
+.dl progress::-webkit-progress-bar { background: var(--surface); }
+.dl-info { color: var(--texte-doux); font-size: .95rem; }
+.liste-dossiers, .liste-proposes { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 10px; }
+.dossier {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 14px;
+  border: 1px solid var(--bordure); background: var(--surface);
+}
+.dossier > .icone { width: 30px; height: 30px; color: var(--accent); }
+.dossier-texte { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.dossier-chemin { font-weight: 600; overflow-wrap: anywhere; }
+.dossier-nom { font-weight: 700; }
+.dossier-infos { color: var(--texte-doux); font-size: .92rem; }
+.dossier .chemin-discret { color: var(--texte-doux); font-size: .92rem; overflow-wrap: anywhere; font-weight: 400; }
+.manuel { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; align-items: center; }
+.manuel label { width: 100%; font-weight: 600; }
+.manuel input {
+  flex: 1 1 280px; min-height: 48px; padding: 0 14px; border-radius: 12px; border: 2px solid var(--bordure);
+  background: var(--surface); color: var(--texte); font: inherit;
+}
+.encart { padding: 14px 18px; border-radius: 14px; background: var(--accent-doux); margin: 18px 0 0; }
+.etat-analyse { display: grid; gap: 10px; margin: 18px 0; }
+.etat-analyse .titre { font-size: 1.15rem; font-weight: 650; }
+.etat-analyse progress { height: 14px; }
+
+/* ------------------------------------------------ fenêtres */
+dialog { border: none; padding: 0; color: var(--texte); background: var(--surface); }
+dialog::backdrop { background: rgba(10, 12, 16, .5); }
+.fenetre {
+  width: min(880px, calc(100% - 32px)); max-height: calc(100% - 32px); border-radius: 20px;
+  box-shadow: var(--ombre); overflow: auto;
+}
+.fenetre.petite { width: min(560px, calc(100% - 32px)); }
+.fenetre-tete, .panneau-tete {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 18px 12px 28px; background: var(--surface); border-bottom: 1px solid var(--bordure);
+}
+.fenetre-tete h2, .panneau-tete h2 { margin: 0; }
+.fenetre-corps { padding: 20px 28px 26px; }
+.fenetre-corps .pied { margin-top: 22px; }
+.panneau {
+  margin: 0 0 0 auto; width: min(580px, 100%); max-width: 100%; height: 100%; max-height: 100%;
+  border-left: 1px solid var(--bordure); overflow: auto; box-shadow: var(--ombre);
+}
+.panneau[open] { animation: glisser .2s ease-out; }
+@keyframes glisser { from { transform: translateX(40px); opacity: 0; } }
+.panneau-corps { padding: 8px 28px 40px; }
+.panneau-corps section { padding: 18px 0; border-bottom: 1px solid var(--bordure); }
+.panneau-corps section:last-child { border-bottom: none; }
+.panneau-corps h3 { margin-bottom: 10px; }
+.r-fin { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.r-fin .note { margin: 0; }
+
+/* ------------------------------------------------ visionneuse */
+.visionneuse {
+  width: 100%; height: 100%; max-width: 100%; max-height: 100%; margin: 0; background: #0c0d0f; color: #f2f3f5;
+  overflow: hidden;
+}
+.visionneuse::backdrop { background: #000; }
+.visionneuse[open] { display: flex; flex-direction: column; }
+.v-scene { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 68px; }
+.v-cadre { position: absolute; inset: 0 92px 6px; }
+.v-cadre img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.v-mini { filter: blur(6px); opacity: .85; }
+.v-image { visibility: hidden; }
+.v-image.chargee { visibility: visible; }
+.v-mini.cachee { visibility: hidden; }
+.v-erreur {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: max-content;
+  max-width: min(640px, calc(100% - 32px)); padding: 12px 18px; border-radius: 12px; background: rgba(0, 0, 0, .78);
+  text-align: center; margin: 0;
+}
+.v-fleche, .v-fermer {
+  position: absolute; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: none; cursor: pointer; color: #fff; background: rgba(255, 255, 255, .12); font: inherit; font-weight: 600;
+}
+.v-fleche:hover, .v-fermer:hover { background: rgba(255, 255, 255, .24); }
+.v-fleche:disabled { opacity: .25; cursor: default; }
+.v-fleche { top: 50%; transform: translateY(-50%); width: 64px; height: 64px; border-radius: 50%; }
+.v-fleche .icone { width: 34px; height: 34px; }
+.v-fleche.gauche { left: 14px; }
+.v-fleche.droite { right: 14px; }
+.v-fermer { top: 12px; right: 14px; min-height: 48px; padding: 0 18px 0 14px; border-radius: 999px; }
+.v-infos { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 10px 24px 18px; }
+.v-texte { flex: 1 1 320px; min-width: 0; }
+.v-date { font-size: 1.15rem; font-weight: 650; margin: 0 0 2px; }
+.v-dossier {
+  margin: 0; color: #b9bfc7; font-size: .92rem; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.v-position { color: #b9bfc7; font-size: .95rem; white-space: nowrap; }
+.v-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.bouton.sombre { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .22); color: #fff; }
+.bouton.sombre:hover { background: rgba(255, 255, 255, .2); border-color: rgba(255, 255, 255, .5); color: #fff; }
+.visionneuse :focus-visible { outline-color: #9cc2ff; }
+
+/* ------------------------------------------------ annonces */
+.annonce {
+  inset: auto auto 28px 50%; margin: 0; transform: translateX(-50%); max-width: min(680px, calc(100% - 32px));
+  padding: 14px 22px; border: none; border-radius: 14px; background: #23272e; color: #fff;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .35); font-size: 1rem; text-align: center;
+}
+.annonce[data-genre="erreur"] { background: #8f1f17; }
+
+/* ------------------------------------------------ largeur */
+@media (max-width: 900px) {
+  :root { --tuile-min: 132px; --gouttiere: 16px; }
+  .entete { grid-template-columns: 1fr auto; }
+  .recherche { grid-column: 1 / -1; grid-row: 2; max-width: none; }
+  .carte { padding: 26px 22px; }
+  .v-cadre { inset: 0 8px 6px; }
+  .v-fleche { width: 52px; height: 52px; background: rgba(0, 0, 0, .5); }
+  .v-fleche.gauche { left: 12px; }
+  .v-fleche.droite { right: 12px; }
+}
+@media (max-width: 560px) {
+  :root { --tuile-min: 104px; }
+  html { font-size: 106%; }
+  .recherche .bouton { padding: 0 16px; }
+  .recherche .bouton span { display: none; }
+  #ouvrir-reglages span { display: none; }
+  .etapes { gap: 8px 18px; }
+  .etapes li + li::before { display: none; }
+  .materiel { grid-template-columns: 1fr; gap: 0; }
+  .materiel dd { margin-bottom: 8px; }
+  .fenetre-corps, .panneau-corps { padding-left: 18px; padding-right: 18px; }
+  .v-actions .bouton { flex: 1 1 100%; white-space: normal; }
+  .v-infos { padding: 10px 14px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+<div id="vivant" class="visuellement-cache" aria-live="polite"></div>
+<div id="annonce" class="annonce" popover="manual" role="status"></div>
+
+<svg width="0" height="0" class="visuellement-cache" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="degrade-logo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f7bf5"/><stop offset="1" stop-color="#18a07a"/>
+    </linearGradient>
+    <symbol id="logo" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="16" fill="url(#degrade-logo)"/>
+      <circle cx="44" cy="21" r="7" fill="#fff"/>
+      <path d="M8 51 24 30l10 12 6-7 16 16z" fill="#fff"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div id="ecran-demarrage" class="ecran-plein">
+  <div>
+    <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+    <h1>MyPhotos</h1>
+    <p class="attente" id="demarrage-texte"><span class="roue" aria-hidden="true"></span>Démarrage…</p>
+  </div>
+</div>
+
+<div id="arrete" class="ecran-plein" hidden>
+  <div>
+    <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+    <h1 id="arrete-titre">MyPhotos est arrêté</h1>
+    <p id="arrete-texte">Pour l'utiliser de nouveau, lancez MyPhotos depuis son icône. Vous pouvez fermer cet onglet.</p>
+  </div>
+</div>
+
+<!-- ============================================ assistant de premier lancement -->
+<div id="assistant" class="assistant" hidden>
+  <div class="assistant-tete">
+    <span class="marque"><svg class="logo" aria-hidden="true"><use href="#logo"/></svg>MyPhotos</span>
+  </div>
+  <ol class="etapes" aria-label="Étapes de la mise en route">
+    <li data-etape="1"><span class="num">1</span><span>Votre ordinateur</span></li>
+    <li data-etape="2"><span class="num">2</span><span>Vos photos</span></li>
+    <li data-etape="3"><span class="num">3</span><span>Analyse</span></li>
+  </ol>
+
+  <section id="etape-1" class="carte" aria-labelledby="titre-1" hidden>
+    <h1 id="titre-1" tabindex="-1">Bienvenue dans MyPhotos</h1>
+    <p class="intro">MyPhotos retrouve vos photos à partir de mots : tapez « chien », et toutes vos photos de chiens apparaissent. Tout se passe sur votre ordinateur : vos photos ne sont envoyées nulle part.</p>
+    <h2>Votre ordinateur</h2>
+    <div id="e1-materiel"><p class="attente"><span class="roue" aria-hidden="true"></span>Analyse de votre ordinateur…</p></div>
+    <div id="e1-conseil"></div>
+    <div id="e1-action" class="action-moteur"></div>
+    <p><button id="e1-autres-bouton" class="bouton-lien" type="button" aria-expanded="false" aria-controls="e1-autres" hidden>Autres choix</button></p>
+    <div id="e1-autres" class="liste-moteurs" hidden></div>
+    <div class="pied">
+      <p id="e1-note" class="note"></p>
+      <button id="e1-suite" class="bouton principal grand" type="button" disabled>Continuer</button>
+    </div>
+  </section>
+
+  <section id="etape-2" class="carte" aria-labelledby="titre-2" hidden>
+    <h1 id="titre-2" tabindex="-1">Vos photos</h1>
+    <p class="intro">Choisissez les dossiers où se trouvent vos photos. MyPhotos les regarde sans jamais les modifier, les déplacer ni les supprimer.</p>
+    <ul id="e2-proposes" class="liste-proposes" aria-label="Dossiers proposés"></ul>
+    <button id="e2-ajouter" class="bouton grand" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ajouter un dossier…</button>
+    <div id="e2-manuel" class="manuel" hidden>
+      <label for="e2-chemin">Ou tapez l'emplacement du dossier :</label>
+      <input id="e2-chemin" type="text" placeholder="Par exemple : D:\Photos" autocomplete="off" spellcheck="false">
+      <button id="e2-chemin-ok" class="bouton" type="button">Ajouter</button>
+    </div>
+    <h2>Dossiers choisis</h2>
+    <ul id="e2-liste" class="liste-dossiers" aria-label="Dossiers choisis"></ul>
+    <p id="e2-aucun" class="note">Aucun dossier pour le moment.</p>
+    <div class="pied">
+      <button id="e2-retour" class="bouton" type="button">Retour</button>
+      <button id="e2-suite" class="bouton principal grand" type="button" disabled>Continuer</button>
+    </div>
+  </section>
+
+  <section id="etape-3" class="carte" aria-labelledby="titre-3" hidden>
+    <h1 id="titre-3" tabindex="-1">Analyse de vos photos</h1>
+    <p class="intro">MyPhotos regarde chacune de vos photos une seule fois pour reconnaître ce qu'elle montre. Cela peut prendre un moment.</p>
+    <div id="e3-etat" class="etat-analyse" role="status"></div>
+    <p class="encart">Vous pouvez déjà chercher pendant l'analyse : les résultats s'enrichissent au fur et à mesure.</p>
+    <div class="pied">
+      <button id="e3-retour" class="bouton" type="button">Retour</button>
+      <button id="e3-suite" class="bouton principal grand" type="button">Commencer à chercher</button>
+    </div>
+  </section>
+</div>
+
+<!-- ============================================ écran principal -->
+<div id="appli" hidden>
+  <div class="haut">
+    <header class="entete">
+      <a id="accueil" class="marque" href="#" aria-label="MyPhotos : afficher toutes les photos"><svg class="logo" aria-hidden="true"><use href="#logo"/></svg><span>MyPhotos</span></a>
+      <form id="formulaire" class="recherche" role="search">
+        <div class="champ">
+          <svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <label for="q" class="visuellement-cache">Rechercher dans vos photos</label>
+          <input id="q" type="search" placeholder="Que cherchez-vous ? Par exemple : chien" autocomplete="off" spellcheck="false" enterkeyhint="search" maxlength="200">
+        </div>
+        <button class="bouton principal" type="submit"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Chercher</span></button>
+      </form>
+      <button id="ouvrir-reglages" class="bouton fantome" type="button" aria-haspopup="dialog"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Réglages</span></button>
+    </header>
+    <div id="bandeau" class="bandeau" role="status" hidden>
+      <span id="bandeau-texte" class="bandeau-texte"></span>
+      <progress id="bandeau-barre" max="100" aria-label="Avancement"></progress>
+      <button id="bandeau-bouton" class="bouton petit" type="button" hidden></button>
+    </div>
+  </div>
+
+  <main id="principal" class="zone-principale">
+    <div class="exemples" role="group" aria-label="Exemples de recherche">
+      <span class="etiquette">Essayez :</span>
+      <button class="puce" type="button" data-q="chien">chien</button>
+      <button class="puce" type="button" data-q="plage">plage</button>
+      <button class="puce" type="button" data-q="anniversaire">anniversaire</button>
+      <button class="puce" type="button" data-q="neige">neige</button>
+      <button class="puce" type="button" data-q="voiture">voiture</button>
+      <button class="puce" type="button" data-q="coucher de soleil">coucher de soleil</button>
+      <button class="puce" type="button" data-q="fleurs">fleurs</button>
+    </div>
+    <div class="ligne-compte">
+      <p id="compte" class="compte" aria-live="polite"></p>
+      <p id="maj" class="maj" hidden>De nouvelles photos sont prêtes. <button id="maj-bouton" class="bouton-lien" type="button">Mettre à jour</button></p>
+    </div>
+    <div id="vide" class="vide" hidden></div>
+    <div id="resultats" class="resultats"></div>
+    <div id="sentinelle" class="sentinelle" aria-hidden="true"></div>
+    <details id="moins-sures" class="moins-sures" hidden>
+      <summary><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg><span id="moins-sures-titre">Moins sûres</span></summary>
+      <p class="note">Ces photos correspondent peut-être à votre recherche.</p>
+      <div id="grille-peut" class="grille"></div>
+      <div id="sentinelle-peut" class="sentinelle" aria-hidden="true"></div>
+    </details>
+  </main>
+</div>
+
+<!-- ============================================ visionneuse -->
+<dialog id="visionneuse" class="visionneuse" aria-label="Visionneuse de photos">
+  <div class="v-scene">
+    <div class="v-cadre">
+      <img id="v-mini" class="v-mini" alt="">
+      <img id="v-image" class="v-image" alt="">
+    </div>
+    <p id="v-erreur" class="v-erreur" role="alert" hidden></p>
+    <button id="v-prec" class="v-fleche gauche" type="button" aria-label="Photo précédente (flèche gauche)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
+    <button id="v-suiv" class="v-fleche droite" type="button" aria-label="Photo suivante (flèche droite)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+  </div>
+  <button id="v-fermer" class="v-fermer" type="button" aria-label="Fermer la visionneuse (Échap)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Fermer</span></button>
+  <div class="v-infos">
+    <div class="v-texte">
+      <p id="v-date" class="v-date"></p>
+      <p id="v-dossier" class="v-dossier"></p>
+    </div>
+    <span id="v-position" class="v-position"></span>
+    <div class="v-actions">
+      <button id="v-ouvrir" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Ouvrir avec la visionneuse Windows</button>
+      <button id="v-montrer" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Afficher dans le dossier</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============================================ réglages -->
+<dialog id="reglages" class="panneau" aria-labelledby="titre-reglages">
+  <div class="panneau-tete">
+    <h2 id="titre-reglages">Réglages</h2>
+    <button class="bouton-icone" type="button" data-fermer aria-label="Fermer les réglages"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="panneau-corps">
+    <section aria-labelledby="r-t-dossiers">
+      <h3 id="r-t-dossiers">Vos dossiers de photos</h3>
+      <ul id="r-dossiers" class="liste-dossiers"></ul>
+      <button id="r-ajouter" class="bouton" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ajouter un dossier…</button>
+      <div id="r-manuel" class="manuel" hidden>
+        <label for="r-chemin">Ou tapez l'emplacement du dossier :</label>
+        <input id="r-chemin" type="text" placeholder="Par exemple : D:\Photos" autocomplete="off" spellcheck="false">
+        <button id="r-chemin-ok" class="bouton" type="button">Ajouter</button>
+      </div>
+    </section>
+    <section aria-labelledby="r-t-analyse">
+      <h3 id="r-t-analyse">Analyse des photos</h3>
+      <p id="r-analyse"></p>
+      <button id="r-relancer" class="bouton petit" type="button">Chercher les nouvelles photos maintenant</button>
+    </section>
+    <section aria-labelledby="r-t-moteur">
+      <h3 id="r-t-moteur">Moteur de reconnaissance</h3>
+      <div id="r-moteur"></div>
+      <div id="r-telechargement"></div>
+      <button id="r-changer" class="bouton" type="button">Changer de moteur</button>
+    </section>
+    <section aria-labelledby="r-t-materiel">
+      <h3 id="r-t-materiel">Votre ordinateur</h3>
+      <div id="r-materiel"><p class="attente"><span class="roue" aria-hidden="true"></span>Analyse de votre ordinateur…</p></div>
+    </section>
+    <section class="r-fin">
+      <button id="r-quitter" class="bouton danger" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Arrêter MyPhotos</button>
+      <p id="r-version" class="note"></p>
+    </section>
+  </div>
+</dialog>
+
+<!-- ============================================ changer de moteur -->
+<dialog id="moteurs" class="fenetre" aria-labelledby="titre-moteurs">
+  <div class="fenetre-tete">
+    <h2 id="titre-moteurs">Changer de moteur de reconnaissance</h2>
+    <button class="bouton-icone" type="button" data-fermer aria-label="Fermer"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="fenetre-corps">
+    <p class="intro">Un moteur plus précis trouve mieux vos photos, mais il est plus long à télécharger et à faire travailler. Après un changement, MyPhotos analyse de nouveau toutes vos photos.</p>
+    <div id="m-materiel"></div>
+    <div id="m-liste" class="liste-moteurs"></div>
+  </div>
+</dialog>
+
+<!-- ============================================ confirmation -->
+<dialog id="confirmation" class="fenetre petite" aria-labelledby="c-titre" aria-describedby="c-texte">
+  <div class="fenetre-corps">
+    <h2 id="c-titre"></h2>
+    <div id="c-texte"></div>
+    <div class="pied">
+      <button id="c-non" class="bouton" type="button">Annuler</button>
+      <button id="c-oui" class="bouton principal" type="button">Confirmer</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+(() => {
+'use strict';
+
+// ============================================================ outils
+const $ = (s, r = document) => r.querySelector(s);
+const nombre = new Intl.NumberFormat('fr-FR');
+const N_PAGE = 150;
+const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre',
+  'novembre', 'décembre'];
+const ICONES = {
+  dossier: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  coche: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>',
+  photo: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 8"/></svg>',
+  loupe: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>',
+  plus: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  telecharger: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+};
+
+function icone(nom) {
+  const t = document.createElement('template');
+  t.innerHTML = ICONES[nom];                       // chaînes constantes uniquement, jamais de données
+  return t.content.firstElementChild;
+}
+
+/** Élément DOM ; le texte passe toujours par des nœuds texte (aucun HTML venant des données). */
+function el(tag, attrs, ...enfants) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'classe') e.className = v;
+    else if (k === 'texte') e.textContent = v;
+    else if (k === 'dataset') Object.assign(e.dataset, v);
+    else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : String(v));
+  }
+  for (const c of enfants.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+
+/** replaceChildren sans les absents (le DOM écrirait « null » en toutes lettres). */
+function remplacer(noeud, ...enfants) {
+  noeud.replaceChildren(...enfants.flat().filter((c) => c !== null && c !== undefined && c !== false));
+}
+
+const majuscule = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+const pluriel = (n, un, plusieurs) => `${nombre.format(n)} ${n > 1 ? (plusieurs || un + 's') : un}`;
+
+function taille(octets) {
+  if (octets === null || octets === undefined) return '';
+  const mo = octets / 1048576;
+  if (mo < 1) return 'moins de 1 Mo';
+  if (mo < 1000) return `${nombre.format(Math.round(mo))} Mo`;
+  return `${(mo / 1024).toLocaleString('fr-FR', {maximumFractionDigits: 1})} Go`;
+}
+
+function lireDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(iso || '');
+  if (!m) return null;
+  return {a: +m[1], m: +m[2], j: +m[3], h: m[4] === undefined ? null : +m[4], mn: m[5] === undefined ? null : +m[5]};
+}
+function dateCourte(iso) {
+  const d = lireDate(iso);
+  return d ? `${d.j === 1 ? '1er' : d.j} ${MOIS[d.m - 1]} ${d.a}` : null;
+}
+function dateLongue(iso) {
+  const d = lireDate(iso);
+  if (!d) return 'Date inconnue';
+  const jour = new Date(d.a, d.m - 1, d.j).toLocaleDateString('fr-FR', {weekday: 'long'});
+  let t = `${majuscule(jour)} ${dateCourte(iso)}`;
+  if (d.h !== null && !(d.h === 0 && d.mn === 0)) t += ` à ${d.h} h ${String(d.mn).padStart(2, '0')}`;
+  return t;
+}
+function cleMois(iso) {
+  const d = lireDate(iso);
+  return d ? `${d.a}-${String(d.m).padStart(2, '0')}` : 'inconnue';
+}
+function titreMois(cle) {
+  if (cle === 'inconnue') return 'Date inconnue';
+  const [a, m] = cle.split('-');
+  return `${majuscule(MOIS[+m - 1])} ${a}`;
+}
+const libellePhoto = (p) => (dateCourte(p.date) ? `Photo du ${dateCourte(p.date)}` : 'Photo');
+
+class ErreurApi extends Error {
+  constructor(message, statut) { super(message); this.statut = statut; }
+}
+
+/** Appel de l'API : GET sans corps, POST JSON avec l'en-tête X-MyPhotos. Erreurs : messages en français. */
+async function api(chemin, corps) {
+  const options = corps === undefined
+    ? {headers: {Accept: 'application/json'}, cache: 'no-store'}
+    : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-MyPhotos': '1'}, body: JSON.stringify(corps)};
+  let r;
+  try {
+    r = await fetch(chemin, options);
+  } catch (e) {
+    throw new ErreurApi('MyPhotos ne répond pas. Il est peut-être arrêté.', 0);
+  }
+  let d = null;
+  try { d = await r.json(); } catch (e) { /* réponse vide */ }
+  if (!r.ok) throw new ErreurApi((d && d.erreur) || 'Une erreur est survenue. Réessayez.', r.status);
+  return d;
+}
+
+let minuteurAnnonce = null;
+function annoncer(texte, genre = 'info') {
+  const a = $('#annonce');
+  a.textContent = texte;
+  a.dataset.genre = genre;
+  $('#vivant').textContent = texte;
+  try {
+    if (a.matches(':popover-open')) a.hidePopover();
+    a.showPopover();
+  } catch (e) { /* navigateur sans popover */ }
+  clearTimeout(minuteurAnnonce);
+  minuteurAnnonce = setTimeout(() => { try { a.hidePopover(); } catch (e) { /* rien */ } },
+    genre === 'erreur' ? 9000 : 5000);
+}
+
+function confirmer({titre, texte, oui = 'Confirmer', non = 'Annuler', danger = false}) {
+  return new Promise((resoudre) => {
+    const d = $('#confirmation');
+    $('#c-titre').textContent = titre;
+    $('#c-texte').replaceChildren(...[].concat(texte).map((t) => el('p', {texte: t})));
+    const bOui = $('#c-oui'), bNon = $('#c-non');
+    bOui.textContent = oui;
+    bNon.textContent = non;
+    bOui.classList.toggle('danger-plein', danger);
+    bOui.classList.toggle('principal', !danger);
+    const finir = (v) => { if (d.open) d.close(); resoudre(v); };
+    bOui.onclick = () => finir(true);
+    bNon.onclick = () => finir(false);
+    d.oncancel = (ev) => { ev.preventDefault(); finir(false); };
+    d.showModal();
+    bNon.focus();
+  });
+}
+
+function barreProgression(zone, {titre, pourcent, details, bouton}) {
+  let b = zone.querySelector(':scope > .dl');
+  if (!b) {
+    b = el('div', {classe: 'dl'},
+      el('div', {classe: 'dl-ligne'}, el('span', {classe: 'dl-titre'}), el('span', {classe: 'dl-pct'})),
+      el('progress', {max: '100'}),
+      el('div', {classe: 'dl-ligne'}, el('span', {classe: 'dl-info'}), el('span', {classe: 'dl-bouton'})));
+    zone.replaceChildren(b);
+  }
+  b.querySelector('.dl-titre').textContent = titre;
+  const barre = b.querySelector('progress');
+  if (pourcent === null || pourcent === undefined) {
+    barre.removeAttribute('value');
+    b.querySelector('.dl-pct').textContent = '';
+  } else {
+    barre.value = Math.max(0, Math.min(100, pourcent));
+    b.querySelector('.dl-pct').textContent = `${Math.floor(pourcent)} %`;
+  }
+  barre.setAttribute('aria-label', titre);
+  b.querySelector('.dl-info').textContent = details || '';
+  const place = b.querySelector('.dl-bouton');
+  const cle = bouton ? bouton.texte : '';
+  if (place.dataset.cle !== cle) {
+    place.dataset.cle = cle;
+    place.replaceChildren(bouton ? el('button', {classe: 'bouton petit', type: 'button', onclick: bouton.action}, bouton.texte) : '');
+  }
+}
+
+function detailsTelechargement(t) {
+  const morceaux = [];
+  if (t.total) morceaux.push(`${taille(t.fait)} sur ${taille(t.total)}`);
+  if (t.vitesse) morceaux.push(`${(t.vitesse / 1048576).toLocaleString('fr-FR', {maximumFractionDigits: 1})} Mo/s`);
+  if (t.restant_texte) morceaux.push(`encore ${t.restant_texte}`);
+  return morceaux.join(' · ');
+}
+const titreTelechargement = (t) => (t.mode === 'copie' ? `Copie du moteur « ${t.nom} »…`
+  : `Téléchargement du moteur « ${t.nom} »…`);
+
+// ============================================================ état général
+const E = {
+  serveur: null,          // dernier /api/etat
+  ecran: 'demarrage',     // demarrage, assistant, appli, arrete
+  etape: 1,
+  materiel: null,
+  choix: null,            // moteur choisi à l'étape 1
+  dossiers: null,
+  echecs: 0,
+  sonde: null,
+  arretVolontaire: false,
+};
+
+async function sonder() {
+  clearTimeout(E.sonde);
+  try {
+    const e = await api('/api/etat');
+    E.echecs = 0;
+    appliquerEtat(e);
+  } catch (err) {
+    E.echecs += 1;
+    if (E.arretVolontaire || E.echecs >= 2) montrerArret();
+    else if (E.ecran === 'demarrage') $('#demarrage-texte').lastChild.textContent = 'Connexion à MyPhotos…';
+  }
+  const delai = document.hidden ? 30000 : (E.ecran === 'arrete' ? 5000 : 2000);
+  E.sonde = setTimeout(sonder, delai);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sonder(); });
+
+function appliquerEtat(e) {
+  const avant = E.serveur;
+  E.serveur = e;
+  if (e.arret) { montrerArret(); return; }
+  if (E.ecran === 'demarrage' || E.ecran === 'arrete') {
+    $('#arrete').hidden = true;
+    $('#ecran-demarrage').hidden = true;
+    const enRoute = e.moteur || e.changement || (e.telechargement && e.telechargement.etat === 'en_cours');
+    if (e.assistant === 'fini' && enRoute) montrerAppli();
+    else montrerAssistant(e);
+  }
+  if (E.ecran === 'assistant') majAssistant(e);
+  if (E.ecran === 'appli') majAppli(e, avant);
+  if ($('#reglages').open) majReglages(e);
+}
+
+function fermerFenetres() {
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+}
+
+function montrerArret() {
+  if (E.ecran === 'arrete') return;
+  fermerFenetres();
+  E.ecran = 'arrete';
+  $('#arrete-titre').textContent = E.arretVolontaire ? 'MyPhotos est arrêté' : 'MyPhotos ne répond plus';
+  $('#arrete-texte').textContent = E.arretVolontaire
+    ? 'Pour l’utiliser de nouveau, lancez MyPhotos depuis son icône. Vous pouvez fermer cet onglet.'
+    : 'MyPhotos s’est peut-être arrêté. Pour le relancer, utilisez son icône. Cette page se remettra à jour toute seule.';
+  $('#arrete').hidden = false;
+  $('#ecran-demarrage').hidden = true;
+  $('#appli').hidden = true;
+  $('#assistant').hidden = true;
+}
+
+// ============================================================ assistant de premier lancement
+function montrerAssistant(e) {
+  E.ecran = 'assistant';
+  $('#appli').hidden = true;
+  $('#assistant').hidden = false;
+  let etape = parseInt(e.assistant, 10) || 1;
+  const t = e.telechargement;
+  const moteurEnRoute = e.moteur || e.changement || (t && (t.etat === 'en_cours' || t.etat === 'fini'));
+  if (etape > 1 && !moteurEnRoute) etape = 1;
+  allerEtape(etape, false);
+}
+
+function allerEtape(n, enregistrer = true) {
+  E.etape = n;
+  for (const li of document.querySelectorAll('.etapes li')) {
+    const k = +li.dataset.etape;
+    li.classList.toggle('faite', k < n);
+    if (k === n) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+  }
+  for (const k of [1, 2, 3]) $(`#etape-${k}`).hidden = k !== n;
+  if (enregistrer) api('/api/assistant', {etape: n}).catch(() => {});
+  if (n === 1) chargerMaterielEtape1();
+  if (n === 2) chargerDossiers().catch((err) => annoncer(err.message, 'erreur'));
+  if (E.serveur) majAssistant(E.serveur);
+  const titre = $(`#titre-${n}`);
+  if (enregistrer && titre) titre.focus();
+  window.scrollTo(0, 0);
+}
+
+function majAssistant(e) {
+  if (E.etape === 1) majEtape1(e);
+  if (E.etape === 3) majEtape3(e);
+}
+
+// ---------------- étape 1 : votre ordinateur
+async function chargerMaterielEtape1(refaire = false) {
+  try {
+    await chargerMateriel(refaire);
+    rendreEtape1();
+  } catch (err) {
+    $('#e1-materiel').replaceChildren(el('p', {classe: 'alerte erreur', texte: err.message}),
+      el('button', {classe: 'bouton', type: 'button', onclick: () => chargerMaterielEtape1(true)}, 'Réessayer'));
+  }
+}
+
+async function chargerMateriel(refaire = false) {
+  const d = await api('/api/materiel' + (refaire ? '?refaire=1' : ''));
+  E.materiel = d;
+  if (!E.choix || !d.moteurs.some((m) => m.cle === E.choix)) E.choix = d.actuel || d.conseil;
+  return d;
+}
+
+function resumeMateriel(m) {
+  const dl = el('dl', {classe: 'materiel'});
+  for (const l of m.resume || []) dl.append(el('dt', {texte: l.libelle}), el('dd', {texte: l.valeur}));
+  return dl;
+}
+
+function phraseNbPhotos(m) {
+  if (!m.nb_photos) return '';
+  if (m.nb_photos_origine === 'base') return `pour vos ${pluriel(m.nb_photos, 'photo')}`;
+  if (m.nb_photos_origine === 'estimation') return `pour environ ${pluriel(m.nb_photos, 'photo')}`;
+  return `pour ${pluriel(m.nb_photos, 'photo')}`;
+}
+
+/** Fiche d'un moteur : nom, description, téléchargement, durée, compromis, alertes, action. */
+function carteMoteur(m, {miseEnAvant = false, action = null, raisons = false} = {}) {
+  const mat = E.materiel || {};
+  const tete = el('div', {classe: 'moteur-tete'}, el('h3', {texte: `Moteur « ${m.nom} »`}));
+  if (m.conseille) tete.append(el('span', {classe: 'badge accent', texte: 'Conseillé pour cet ordinateur'}));
+  if (m.actuel) tete.append(el('span', {classe: 'badge succes'}, icone('coche'), 'Moteur actuel'));
+  const faits = el('ul', {classe: 'faits'},
+    el('li', {}, el('span', {classe: 'cle', texte: 'Téléchargement'}),
+      el('span', {classe: 'valeur', texte: m.deja ? 'déjà sur cet ordinateur' : `${m.telechargement_texte}, une seule fois`})),
+    el('li', {}, el('span', {classe: 'cle', texte: 'Analyse de vos photos'}),
+      el('span', {classe: 'valeur', texte: m.duree_texte ? `${m.duree_texte} ${phraseNbPhotos(mat)}`.trim() : 'durée difficile à prévoir'})),
+    el('li', {}, el('span', {classe: 'cle', texte: 'Travaille avec'}),
+      el('span', {classe: 'valeur', texte: m.materiel === 'processeur' ? 'le processeur' : 'la carte graphique'})));
+  const carte = el('article', {classe: 'moteur' + (miseEnAvant ? ' mis-en-avant' : '')}, tete,
+    m.description ? el('p', {texte: m.description}) : null, faits);
+  if (m.compromis && !m.conseille) carte.append(el('p', {classe: 'compromis', texte: m.compromis}));
+  if (raisons && m.raisons && m.raisons.length) carte.append(el('ul', {classe: 'raisons'}, m.raisons.map((r) => el('li', {texte: r}))));
+  for (const a of m.alertes || []) carte.append(el('p', {classe: 'alerte', texte: a}));
+  if (action) {
+    const bloque = m.bloquant || m.possible === false;
+    const b = el('button', {classe: 'bouton' + (action.principal ? ' principal' : ''), type: 'button', disabled: bloque,
+      onclick: () => action.faire(m)}, action.texte);
+    carte.append(el('div', {classe: 'moteur-actions'}, b,
+      bloque && m.raison_blocage ? el('span', {classe: 'note', texte: m.raison_blocage}) : null));
+  }
+  return carte;
+}
+
+const moteurChoisi = () => (E.materiel ? E.materiel.moteurs.find((m) => m.cle === E.choix) || null : null);
+
+function rendreEtape1() {
+  const m = E.materiel;
+  if (!m) return;
+  const zone = $('#e1-materiel');
+  zone.replaceChildren(resumeMateriel(m), el('p', {classe: 'note', texte: m.carte
+    ? 'Votre carte graphique accélérera l’analyse de vos photos.'
+    : 'Pas de carte graphique utilisable : le processeur fera le travail, un peu plus lentement.'}));
+  const choisi = moteurChoisi();
+  $('#e1-conseil').replaceChildren(choisi ? carteMoteur(choisi, {miseEnAvant: true, raisons: true}) : '');
+  const autres = m.moteurs.filter((x) => x.cle !== E.choix);
+  $('#e1-autres').replaceChildren(
+    el('p', {classe: 'note', texte: 'Un moteur plus précis trouve mieux vos photos, mais il est plus long à télécharger et à faire travailler.'}),
+    ...autres.map((x) => carteMoteur(x, {action: {texte: 'Choisir ce moteur', faire: (y) => {
+      E.choix = y.cle;
+      basculerAutres(false);
+      rendreEtape1();
+      $('#e1-conseil').scrollIntoView({block: 'nearest'});
+    }}})));
+  $('#e1-autres-bouton').hidden = !autres.length;
+  $('#e1-action').dataset.signature = '';
+  if (E.serveur) majEtape1(E.serveur);
+}
+
+function basculerAutres(ouvrir) {
+  const b = $('#e1-autres-bouton');
+  const v = ouvrir === undefined ? b.getAttribute('aria-expanded') !== 'true' : ouvrir;
+  b.setAttribute('aria-expanded', String(v));
+  b.textContent = v ? 'Masquer les autres choix' : 'Autres choix';
+  $('#e1-autres').hidden = !v;
+}
+
+async function telechargerMoteur(m) {
+  try {
+    await api('/api/moteur/telecharger', {cle: m.cle, vision: m.vision, materiel: m.materiel});
+    sonder();
+    return true;
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    return false;
+  }
+}
+
+async function annulerTelechargement() {
+  const ok = await confirmer({titre: 'Annuler le téléchargement ?',
+    texte: 'Vous pourrez le reprendre plus tard : il repartira là où il s’est arrêté.',
+    oui: 'Annuler le téléchargement', non: 'Continuer le téléchargement'});
+  if (!ok) return;
+  try { await api('/api/moteur/annuler', {}); sonder(); } catch (err) { annoncer(err.message, 'erreur'); }
+}
+
+function majEtape1(e) {
+  const m = moteurChoisi();
+  const t = e.telechargement;
+  const zone = $('#e1-action');
+  let signature = 'rien';
+  if (m) {
+    if (e.moteur && e.moteur.cle === m.cle && !e.changement) signature = 'pret';
+    else if (e.changement && e.changement.cle === m.cle) signature = 'preparation';
+    else if (t && t.cle === m.cle && t.etat === 'en_cours') signature = 'telechargement';
+    else if (t && t.cle === m.cle && t.etat === 'fini') signature = 'preparation';
+    else signature = `bouton-${m.deja}-${t && t.cle === m.cle ? t.etat : ''}`;
+  }
+  if (signature === 'telechargement') {
+    barreProgression(zone, {titre: titreTelechargement(t), pourcent: t.total ? t.pourcent : null,
+      details: detailsTelechargement(t), bouton: {texte: 'Annuler', action: annulerTelechargement}});
+  } else if (zone.dataset.signature !== signature) {
+    if (signature === 'pret') {
+      zone.replaceChildren(el('p', {classe: 'succes-texte'}, icone('coche'), 'Le moteur de reconnaissance est prêt.'));
+    } else if (signature === 'preparation') {
+      zone.replaceChildren(el('p', {classe: 'attente'}, el('span', {classe: 'roue', 'aria-hidden': 'true'}),
+        'Préparation du moteur de reconnaissance…'));
+    } else if (m) {
+      const morceaux = [];
+      if (t && t.cle === m.cle && t.etat === 'erreur') morceaux.push(el('p', {classe: 'alerte erreur', texte: t.message}));
+      if (t && t.cle === m.cle && t.etat === 'annule') morceaux.push(el('p', {classe: 'note', texte: 'Téléchargement annulé. Il reprendra là où il s’est arrêté.'}));
+      const reprise = t && t.cle === m.cle && (t.etat === 'erreur' || t.etat === 'annule');
+      const texte = m.deja ? 'Utiliser ce moteur' : (reprise ? 'Reprendre le téléchargement' : `Télécharger (${m.telechargement_texte})`);
+      morceaux.push(el('button', {classe: 'bouton principal grand', type: 'button', onclick: async (ev) => {
+        ev.currentTarget.disabled = true;
+        if (!(await telechargerMoteur(m))) ev.currentTarget.disabled = false;
+      }}, m.deja ? icone('coche') : icone('telecharger'), texte));
+      zone.replaceChildren(...morceaux);
+    }
+    zone.dataset.signature = signature;
+  }
+  const enRoute = e.moteur || e.changement || (t && (t.etat === 'en_cours' || t.etat === 'fini'));
+  $('#e1-suite').disabled = !enRoute;
+  $('#e1-note').textContent = t && t.etat === 'en_cours'
+    ? 'Vous pouvez continuer : le téléchargement se poursuit pendant que vous choisissez vos photos.' : '';
+}
+
+// ---------------- étape 2 : vos photos
+let minuteurDossiers = null;
+async function chargerDossiers() {
+  const d = await api('/api/dossiers');
+  E.dossiers = d;
+  rendreDossiers();
+  clearTimeout(minuteurDossiers);
+  if (d.estimation_en_cours && E.ecran === 'assistant' && E.etape === 2) {
+    minuteurDossiers = setTimeout(() => chargerDossiers().catch(() => {}), 2000);
+  }
+  return d;
+}
+
+function infosDossier(d) {
+  const infos = [d.photos ? pluriel(d.photos, 'photo') : 'aucune photo pour le moment'];
+  if (d.photos && d.a_faire > 0) infos.push(`${nombre.format(d.a_faire)} à analyser`);
+  if (!d.disponible) infos.push('inaccessible pour le moment (disque débranché ?)');
+  return infos.join(' · ');
+}
+
+function ligneDossier(d, confirmerRetrait) {
+  return el('li', {classe: 'dossier'}, icone('dossier'),
+    el('div', {classe: 'dossier-texte'}, el('span', {classe: 'dossier-chemin', texte: d.chemin}),
+      el('span', {classe: 'dossier-infos', texte: infosDossier(d)})),
+    el('button', {classe: 'bouton petit', type: 'button', 'aria-label': `Retirer le dossier ${d.chemin}`,
+      onclick: () => retirerDossier(d, confirmerRetrait)}, 'Retirer'));
+}
+
+function rendreDossiers() {
+  const d = E.dossiers;
+  if (!d) return;
+  // Étape 2 de l'assistant
+  $('#e2-proposes').replaceChildren(...d.proposes.map((p) => {
+    let estimation = '';
+    if (p.photos_estimees === null || p.photos_estimees === undefined) {
+      estimation = d.estimation_en_cours ? 'Comptage des photos…' : '';
+    } else if (p.photos_estimees === 0) {
+      estimation = 'aucune photo trouvée';
+    } else {
+      estimation = `${p.estimation_complete ? 'environ' : 'plus de'} ${pluriel(p.photos_estimees, 'photo')}`;
+    }
+    return el('li', {classe: 'dossier'}, icone('dossier'),
+      el('div', {classe: 'dossier-texte'}, el('span', {classe: 'dossier-nom', texte: p.nom}),
+        el('span', {classe: 'chemin-discret', texte: p.chemin}),
+        estimation ? el('span', {classe: 'dossier-infos', texte: estimation}) : null),
+      p.deja
+        ? el('span', {classe: 'badge succes'}, icone('coche'), 'Ajouté')
+        : el('button', {classe: 'bouton principal', type: 'button', 'aria-label': `Ajouter le dossier ${p.chemin}`,
+          onclick: (ev) => ajouterDossier(p.chemin, ev.currentTarget)}, 'Ajouter'));
+  }));
+  $('#e2-proposes').hidden = !d.proposes.length;
+  $('#e2-liste').replaceChildren(...d.dossiers.map((x) => ligneDossier(x, false)));
+  $('#e2-aucun').hidden = d.dossiers.length > 0;
+  $('#e2-suite').disabled = !d.dossiers.length;
+  // Réglages
+  $('#r-dossiers').replaceChildren(...d.dossiers.map((x) => ligneDossier(x, true)));
+  if (!d.dossiers.length) $('#r-dossiers').append(el('li', {classe: 'note', texte: 'Aucun dossier pour le moment.'}));
+}
+
+function annoncerAjout(r) {
+  let t = `Dossier ajouté : ${r.dossier.chemin}.`;
+  if (r.remplaces && r.remplaces.length) t += ' Il comprend des dossiers déjà choisis, qui sont regroupés avec lui.';
+  annoncer(t);
+}
+
+async function ajouterDossier(chemin, bouton) {
+  if (bouton) bouton.disabled = true;
+  try {
+    const r = await api('/api/dossiers/ajouter', {chemin});
+    annoncerAjout(r);
+    await chargerDossiers();
+    apresChangementDossiers();
+    return true;
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    if (bouton) bouton.disabled = false;
+    return false;
+  }
+}
+
+async function choisirDossier(bouton, zoneManuelle) {
+  bouton.disabled = true;
+  annoncer('Une fenêtre s’ouvre pour choisir le dossier de vos photos.');
+  try {
+    const r = await api('/api/dossiers/choisir', {});
+    if (!r.annule) {
+      annoncerAjout(r);
+      await chargerDossiers();
+      apresChangementDossiers();
+    }
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    if (err.statut !== 409) zoneManuelle.hidden = false;
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
+async function retirerDossier(d, confirmerRetrait) {
+  if (confirmerRetrait) {
+    const ok = await confirmer({titre: 'Retirer ce dossier ?', danger: true, oui: 'Retirer le dossier',
+      texte: [`« ${d.chemin} »`, 'Ses photos ne seront plus montrées dans MyPhotos. Elles restent sur votre ordinateur : rien n’est supprimé.']});
+    if (!ok) return;
+  }
+  try {
+    await api('/api/dossiers/retirer', {id: d.id});
+    annoncer('Dossier retiré de MyPhotos.');
+    await chargerDossiers();
+    apresChangementDossiers();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  }
+}
+
+function apresChangementDossiers() {
+  if (E.ecran === 'appli') rafraichir();
+  sonder();
+}
+
+// ---------------- étape 3 : analyse
+function etatAnalyse(e) {
+  const t = e.telechargement, a = e.analyse;
+  if (t && t.etat === 'en_cours') {
+    return {titre: titreTelechargement(t), pourcent: t.total ? t.pourcent : null, details: detailsTelechargement(t),
+      bouton: {texte: 'Annuler', action: annulerTelechargement}};
+  }
+  if (t && t.etat === 'erreur' && !e.moteur) {
+    return {titre: t.message, pourcent: 0, details: '', bouton: {texte: 'Réessayer', action: async () => {
+      await telechargerMoteur({cle: t.cle, vision: t.vision});
+    }}};
+  }
+  if (e.changement || !e.moteur) return {titre: 'Préparation du moteur de reconnaissance…', pourcent: null, details: ''};
+  if (!a) return {titre: 'Préparation…', pourcent: null, details: ''};
+  if (a.phase === 'inventaire') return {titre: a.message || 'Recherche de vos photos…', pourcent: null, details: ''};
+  if (a.phase === 'analyse' || a.phase === 'pause') {
+    const pct = a.total ? (100 * a.faites) / a.total : null;
+    const details = a.total ? [`${nombre.format(a.faites)} sur ${pluriel(a.total, 'photo')}`] : [];
+    if (a.phase === 'analyse' && a.eta_texte) details.push(`encore ${a.eta_texte}`);
+    return {titre: a.phase === 'pause' ? 'Analyse en pause' : 'Analyse des photos…', pourcent: pct,
+      details: details.join(' · '), bouton: a.phase === 'pause'
+        ? {texte: 'Reprendre', action: () => commandeAnalyse('reprendre')}
+        : {texte: 'Pause', action: () => commandeAnalyse('pause')}};
+  }
+  if (a.phase === 'erreur') {
+    return {titre: a.message || 'L’analyse s’est arrêtée.', pourcent: 0, details: '',
+      bouton: {texte: 'Réessayer', action: () => commandeAnalyse('relancer')}};
+  }
+  if (a.phase === 'termine') {
+    if (!e.photos.total) return {titre: 'Aucune photo trouvée dans les dossiers choisis.', pourcent: 0, details: ''};
+    return {titre: a.message || 'Toutes vos photos sont analysées.', pourcent: 100,
+      details: pluriel(e.photos.analysees, 'photo analysée', 'photos analysées')};
+  }
+  return {titre: 'Préparation…', pourcent: null, details: ''};
+}
+
+function majEtape3(e) {
+  barreProgression($('#e3-etat'), etatAnalyse(e));
+}
+
+async function commandeAnalyse(action) {
+  try { await api(`/api/analyse/${action}`, {}); sonder(); } catch (err) { annoncer(err.message, 'erreur'); }
+}
+
+// ============================================================ écran principal
+function montrerAppli() {
+  E.ecran = 'appli';
+  $('#assistant').hidden = true;
+  $('#appli').hidden = false;
+  synchroniser();
+  if (!$('#visionneuse').open) $('#q').focus({preventScroll: true});
+}
+
+const R = {
+  q: null, mode: null, jeton: 0, generation: null, depuis: 0, erreur: false,
+  principal: null, peut: null, mois: null, grille: null,
+};
+const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false});
+const infosPhotos = new Map();
+
+function adresse(q, photo) {
+  const p = new URLSearchParams();
+  if (q) p.set('q', q);
+  if (photo) p.set('photo', String(photo));
+  const s = p.toString();
+  return s ? '#' + s : location.pathname;
+}
+function lireAdresse() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const id = p.get('photo') || '';
+  return {q: (p.get('q') || '').trim().replace(/\s+/g, ' ').slice(0, 200), photo: /^[1-9]\d{0,17}$/.test(id) ? +id : null,
+    reglages: p.has('reglages'), moteurs: p.has('moteurs')};
+}
+
+function synchroniser() {
+  if (E.ecran !== 'appli') return;
+  const a = lireAdresse();
+  if (a.q !== R.q) chercher(a.q, null);
+  const v = $('#visionneuse');
+  if (a.photo) {
+    if (!v.open || V.id !== a.photo) ouvrirVisionneuse(a.photo, groupeDe(a.photo), false);
+  } else if (v.open) {
+    V.pousse = false;
+    fermerVisionneuse(false);
+  }
+  // Liens directs vers les réglages (#reglages) et le choix du moteur (#moteurs).
+  if (!a.photo && a.reglages && !$('#reglages').open) ouvrirReglages();
+  if (!a.photo && a.moteurs && !$('#moteurs').open) ouvrirChoixMoteur();
+}
+window.addEventListener('popstate', synchroniser);
+window.addEventListener('hashchange', synchroniser);
+
+function chercher(q, historique = 'pousser') {
+  q = (q || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  $('#q').value = q;
+  R.q = q;
+  R.mode = q ? 'recherche' : 'dates';
+  R.jeton += 1;
+  R.principal = nouvelleListe();
+  R.peut = nouvelleListe();
+  R.mois = null;
+  R.grille = null;
+  R.erreur = false;
+  R.generation = E.serveur ? E.serveur.generation : null;
+  R.depuis = Date.now();
+  $('#resultats').replaceChildren();
+  $('#grille-peut').replaceChildren();
+  $('#moins-sures').hidden = true;
+  $('#moins-sures').open = false;
+  $('#vide').hidden = true;
+  $('#maj').hidden = true;
+  $('#compte').textContent = q ? `Recherche de « ${q} »…` : 'Chargement des photos…';
+  for (const b of document.querySelectorAll('.puce')) b.setAttribute('aria-pressed', String(b.dataset.q === q));
+  if (historique === 'pousser' && location.hash !== adresse(q) && !(location.hash === '' && !q)) history.pushState(null, '', adresse(q));
+  else if (historique === 'remplacer') history.replaceState(null, '', adresse(q));
+  chargerPrincipal();
+}
+
+function rafraichir() {
+  if (R.mode === null) return;
+  const y = window.scrollY;
+  chercher(R.q, null);
+  if (y < 400) window.scrollTo(0, 0);
+}
+
+function urlPage(debut, n) {
+  return R.mode === 'dates' ? `/api/photos?debut=${debut}&n=${n}`
+    : `/api/recherche?q=${encodeURIComponent(R.q)}&debut=${debut}&n=${n}`;
+}
+
+async function chargerPrincipal() {
+  const L = R.principal;
+  if (!L || L.enCours || L.fin || R.erreur) return;
+  L.enCours = true;
+  const jeton = R.jeton;
+  try {
+    const d = await api(urlPage(L.suivant, N_PAGE));
+    if (jeton !== R.jeton) return;
+    if (d.mode === 'dates') ajouterDates(d); else ajouterRecherche(d);
+  } catch (err) {
+    if (jeton === R.jeton) afficherErreur(err);
+  } finally {
+    if (jeton === R.jeton) {
+      L.enCours = false;
+      requestAnimationFrame(verifierFin);
+    }
+  }
+}
+
+async function chargerPeut() {
+  const L = R.peut, P = R.principal;
+  if (!L || L.enCours || L.fin || !P.fin || R.erreur || R.mode !== 'recherche') return;
+  L.enCours = true;
+  const jeton = R.jeton;
+  try {
+    const debut = Math.max(L.suivant, P.total);
+    const d = await api(urlPage(debut, N_PAGE));
+    if (jeton !== R.jeton) return;
+    ajouterTuiles(L, d.peut_etre || [], $('#grille-peut'), 'peut');
+    L.suivant = Math.max(d.suivant, debut);
+    L.fin = !(d.peut_etre || []).length || L.suivant >= d.total_sures + d.total_peut_etre;
+    if (V.id) majNavigation();
+  } catch (err) {
+    if (jeton === R.jeton) { L.fin = true; annoncer(err.message, 'erreur'); }
+  } finally {
+    if (jeton === R.jeton) {
+      L.enCours = false;
+      requestAnimationFrame(verifierFin);
+    }
+  }
+}
+
+function verifierFin() {
+  const proche = (s) => s.getBoundingClientRect().top < window.innerHeight + 2000;
+  if (E.ecran !== 'appli') return;
+  if (R.principal && !R.principal.fin && proche($('#sentinelle'))) chargerPrincipal();
+  if ($('#moins-sures').open && R.peut && !R.peut.fin && proche($('#sentinelle-peut'))) chargerPeut();
+}
+
+const observateurFin = new IntersectionObserver((entrees) => {
+  if (entrees.some((e) => e.isIntersecting)) verifierFin();
+}, {rootMargin: '0px 0px 2000px 0px'});
+
+const observateurImages = new IntersectionObserver((entrees) => {
+  for (const e of entrees) {
+    const img = e.target.firstElementChild;
+    if (!img) continue;
+    if (e.isIntersecting) {
+      if (!img.getAttribute('src')) {
+        img.src = img.dataset.src;
+        if (img.complete && img.naturalWidth) img.classList.add('chargee');
+      }
+    } else if (img.getAttribute('src')) {
+      img.removeAttribute('src');           // loin de l'écran : on libère la mémoire (10 000 photos et plus)
+      img.classList.remove('chargee');
+    }
+  }
+}, {rootMargin: '1500px 0px 1500px 0px'});
+
+function tuile(p, groupe) {
+  infosPhotos.set(p.id, p);
+  const a = el('a', {classe: 'tuile', href: adresse(R.q, p.id), 'aria-label': libellePhoto(p),
+    dataset: {id: String(p.id), groupe}});
+  const img = el('img', {alt: '', draggable: 'false'});
+  img.dataset.src = `/miniature/${p.id}`;
+  img.addEventListener('load', () => img.classList.add('chargee'));
+  img.addEventListener('error', () => { if (img.getAttribute('src')) a.classList.add('sans-image'); });
+  a.append(img);
+  observateurImages.observe(a);
+  return a;
+}
+
+function ajouterTuiles(L, photos, grille, groupe) {
+  const fragment = document.createDocumentFragment();
+  const nouvelles = [];
+  for (const p of photos) {
+    if (L.vus.has(p.id)) continue;
+    L.vus.add(p.id);
+    L.ids.push(p.id);
+    const t = tuile(p, groupe);
+    nouvelles.push(t);
+    fragment.append(t);
+  }
+  grille.append(fragment);
+  if (V.id && !V.groupe && L.vus.has(V.id)) V.groupe = groupe;
+  setTimeout(() => chargerSiVisibles(nouvelles), 30);
+}
+
+/** Filet de sécurité de l'observateur : les nouvelles miniatures déjà près de l'écran se chargent tout de suite. */
+function chargerSiVisibles(tuiles) {
+  const bas = window.innerHeight + 1500;
+  for (const a of tuiles) {
+    const img = a.firstElementChild;
+    if (!img || img.getAttribute('src') || !a.isConnected) continue;
+    const r = a.getBoundingClientRect();
+    if (r.width > 0 && r.bottom > -1500 && r.top < bas) img.src = img.dataset.src;
+  }
+}
+
+function ajouterDates(d) {
+  const L = R.principal;
+  L.total = d.total;
+  for (const p of d.photos) {
+    if (L.vus.has(p.id)) continue;
+    const cle = cleMois(p.date);
+    if (cle !== R.mois) {
+      R.mois = cle;
+      R.grille = el('div', {classe: 'grille'});
+      $('#resultats').append(el('section', {classe: 'section-mois', 'aria-label': titreMois(cle)},
+        el('h2', {classe: 'mois', texte: titreMois(cle)}), R.grille));
+    }
+    ajouterTuiles(L, [p], R.grille, 'principal');
+  }
+  L.suivant = d.suivant;
+  L.fin = !d.photos.length || d.suivant >= d.total;
+  majCompte();
+  if (V.id) majNavigation();
+}
+
+function ajouterRecherche(d) {
+  const L = R.principal, P = R.peut;
+  L.total = d.total_sures;
+  P.total = d.total_peut_etre;
+  if (!R.grille) {
+    R.grille = el('div', {classe: 'grille'});
+    $('#resultats').append(R.grille);
+  }
+  ajouterTuiles(L, d.sures || [], R.grille, 'principal');
+  L.suivant = d.suivant;
+  L.fin = d.suivant >= d.total_sures || (!(d.sures || []).length && !(d.peut_etre || []).length);
+  if ((d.peut_etre || []).length && !P.ids.length && !P.enCours) {
+    if (!d.total_sures) {                     // rien de sûr : la section s'ouvre avant d'être remplie
+      $('#moins-sures').hidden = false;
+      $('#moins-sures').open = true;
+    }
+    ajouterTuiles(P, d.peut_etre, $('#grille-peut'), 'peut');
+    P.suivant = d.suivant;
+  }
+  if (L.fin) P.suivant = Math.max(P.suivant, d.total_sures);
+  P.fin = P.suivant >= d.total_sures + d.total_peut_etre;
+  majCompte();
+  if (V.id) majNavigation();
+}
+
+function majCompte() {
+  const c = $('#compte'), s = E.serveur || {}, photos = s.photos || {};
+  const incomplet = s.analyse && s.analyse.active && photos.total > photos.analysees;
+  const vide = $('#vide');
+  if (R.mode === 'dates') {
+    const n = R.principal.total;
+    c.replaceChildren(el('strong', {texte: pluriel(n, 'photo')}));
+    if (n) { vide.hidden = true; return; }
+    c.replaceChildren();
+    if (!s.nb_dossiers) {
+      vide.replaceChildren(icone('dossier'), el('h2', {texte: 'Aucun dossier de photos'}),
+        el('p', {texte: 'Indiquez à MyPhotos où se trouvent vos photos.'}),
+        el('button', {classe: 'bouton principal grand', type: 'button', onclick: (ev) => choisirDossier(ev.currentTarget, $('#r-manuel'))},
+          icone('plus'), 'Ajouter un dossier…'));
+    } else if (s.analyse && (s.analyse.active || !s.moteur) || (photos.a_faire > 0)) {
+      vide.replaceChildren(icone('photo'), el('h2', {texte: 'L’analyse de vos photos a commencé'}),
+        el('p', {texte: 'Elles apparaîtront ici au fur et à mesure.'}));
+    } else {
+      vide.replaceChildren(icone('photo'), el('h2', {texte: 'Aucune photo pour le moment'}),
+        el('p', {texte: 'Les dossiers choisis ne contiennent pas encore de photos.'}));
+    }
+    vide.hidden = false;
+    return;
+  }
+  const sures = R.principal.total, peut = R.peut.total;
+  const moinsSures = (n) => `${pluriel(n, 'photo')} moins sûre${n > 1 ? 's' : ''}`;
+  let morceaux;
+  if (sures) {
+    morceaux = [el('strong', {texte: pluriel(sures, 'photo')}), ` pour « ${R.q} »`];
+    if (peut) morceaux.push(` · ${moinsSures(peut)}`);
+  } else if (peut) {
+    morceaux = [`Aucune photo sûre pour « ${R.q} » · `, el('strong', {texte: moinsSures(peut)})];
+  } else {
+    morceaux = [];                            // le grand message « Aucune photo ne correspond… » suffit
+  }
+  if (incomplet && morceaux.length) morceaux.push(` · parmi ${nombre.format(photos.analysees)} photos déjà analysées`);
+  remplacer(c, morceaux);
+  const details = $('#moins-sures');
+  details.hidden = !(R.principal.fin && peut);
+  details.classList.toggle('seule', !sures);
+  $('#moins-sures-titre').textContent = `Moins sûres (${nombre.format(peut)})`;
+  if (!sures && peut && !details.open) details.open = true;
+  if (!sures && !peut) {
+    remplacer(vide, icone('loupe'), el('h2', {texte: `Aucune photo ne correspond à « ${R.q} »`}),
+      el('p', {texte: 'Essayez un autre mot, par exemple « plage » ou « fleurs ».'}),
+      incomplet ? el('p', {classe: 'note', texte: 'L’analyse n’est pas finie : d’autres photos pourront apparaître.'}) : null);
+    vide.hidden = false;
+  } else {
+    vide.hidden = true;
+  }
+}
+
+function afficherErreur(err) {
+  R.erreur = true;
+  $('#compte').textContent = '';
+  const vide = $('#vide');
+  vide.replaceChildren(icone('loupe'), el('h2', {texte: 'La recherche n’a pas pu se faire'}), el('p', {texte: err.message}),
+    el('button', {classe: 'bouton', type: 'button', onclick: () => rafraichir()}, 'Réessayer'));
+  vide.hidden = false;
+}
+
+function majAppli(e, avant) {
+  majBandeau(e);
+  if (R.mode === null) return;
+  if (e.generation !== R.generation && R.generation !== null) {
+    const auCalme = window.scrollY < 400 && !document.querySelector('dialog[open]');
+    const peu = R.principal.ids.length < N_PAGE && R.peut.ids.length === 0;
+    if (auCalme && peu && Date.now() - R.depuis > 6000) {
+      rafraichir();
+    } else if (!R.erreur && R.principal.ids.length) {
+      $('#maj').hidden = false;
+      if (R.mode === 'dates' && R.principal.fin && e.photos && e.photos.analysees > R.principal.total) {
+        R.principal.fin = false;            // de nouvelles photos à la suite : le défilement continue
+        verifierFin();
+      }
+    }
+  }
+  if (R.mode === 'dates' && !R.principal.total && !R.principal.enCours && R.principal.fin) majCompte();
+  if (avant && avant.nb_dossiers !== e.nb_dossiers && R.mode === 'dates') rafraichir();
+}
+
+function majBandeau(e) {
+  const b = $('#bandeau'), t = e.telechargement, a = e.analyse, barre = $('#bandeau-barre'), bouton = $('#bandeau-bouton');
+  let texte = '', pourcent, action = null;
+  if (t && t.etat === 'en_cours') {
+    texte = `${titreTelechargement(t)} ${detailsTelechargement(t)}`;
+    pourcent = t.total ? t.pourcent : null;
+    action = {texte: 'Annuler', faire: annulerTelechargement};
+  } else if (t && t.etat === 'erreur') {
+    texte = t.message;
+    action = {texte: 'Réessayer', faire: () => telechargerMoteur({cle: t.cle, vision: t.vision})};
+  } else if (e.changement) {
+    texte = `Préparation du moteur « ${e.changement.nom} »…`;
+    pourcent = null;
+  } else if (a && a.phase === 'inventaire') {
+    texte = a.message || 'Recherche de vos photos…';
+    pourcent = null;
+  } else if (a && (a.phase === 'analyse' || a.phase === 'pause')) {
+    texte = a.phase === 'pause' ? 'Analyse en pause' : 'Analyse des photos';
+    if (a.total) texte += ` : ${nombre.format(a.faites)} sur ${nombre.format(a.total)}`;
+    if (a.phase === 'analyse' && a.eta_texte) texte += ` · encore ${a.eta_texte}`;
+    pourcent = a.total ? (100 * a.faites) / a.total : null;
+    action = a.phase === 'pause' ? {texte: 'Reprendre', faire: () => commandeAnalyse('reprendre')}
+      : {texte: 'Pause', faire: () => commandeAnalyse('pause')};
+  } else if (a && a.phase === 'erreur') {
+    texte = a.message || 'L’analyse s’est arrêtée.';
+    action = {texte: 'Réessayer', faire: () => commandeAnalyse('relancer')};
+  }
+  b.hidden = !texte;
+  if (!texte) return;
+  $('#bandeau-texte').textContent = texte;
+  barre.hidden = pourcent === undefined;
+  if (pourcent === null) barre.removeAttribute('value'); else if (pourcent !== undefined) barre.value = pourcent;
+  bouton.hidden = !action;
+  if (action && bouton.textContent !== action.texte) bouton.textContent = action.texte;
+  bouton.onclick = action ? action.faire : null;
+}
+
+// ============================================================ visionneuse
+const V = {id: null, groupe: null, pousse: false, jeton: 0};
+const listeDe = (groupe) => (groupe === 'principal' ? R.principal && R.principal.ids : groupe === 'peut' ? R.peut && R.peut.ids : null);
+function groupeDe(id) {
+  if (R.principal && R.principal.vus.has(id)) return 'principal';
+  if (R.peut && R.peut.vus.has(id)) return 'peut';
+  return null;
+}
+
+function ouvrirVisionneuse(id, groupe, historique = true) {
+  const d = $('#visionneuse');
+  V.groupe = groupe;
+  if (!d.open) {
+    for (const autre of document.querySelectorAll('dialog[open]')) autre.close();
+    d.showModal();
+  }
+  montrerPhoto(id);
+  if (historique) {
+    history.pushState({photo: id}, '', adresse(R.q, id));
+    V.pousse = true;
+  }
+  $('#v-fermer').focus();
+}
+
+function montrerPhoto(id) {
+  V.id = id;
+  const jeton = ++V.jeton;
+  const image = $('#v-image'), mini = $('#v-mini');
+  image.classList.remove('chargee');
+  mini.classList.remove('cachee');
+  $('#v-erreur').hidden = true;
+  mini.src = `/miniature/${id}`;
+  image.onload = () => { if (V.jeton === jeton) { image.classList.add('chargee'); mini.classList.add('cachee'); } };
+  image.onerror = () => {
+    if (V.jeton !== jeton) return;
+    const e = $('#v-erreur');
+    e.textContent = 'La photo d’origine ne peut pas être affichée : le disque est peut-être débranché, ou le fichier a été déplacé. La miniature est montrée à la place.';
+    e.hidden = false;
+  };
+  image.src = `/photo/${id}`;
+  const connue = infosPhotos.get(id);
+  image.alt = connue ? libellePhoto(connue) : 'Photo';
+  $('#v-date').textContent = connue ? dateLongue(connue.date) : '';
+  $('#v-dossier').textContent = '';
+  $('#v-dossier').title = '';
+  majNavigation();
+  api(`/api/photo/${id}`).then((p) => {
+    if (V.jeton !== jeton) return;
+    $('#v-date').textContent = dateLongue(p.date);
+    const dossier = $('#v-dossier');
+    dossier.textContent = `Dossier : ${p.dossier}`;
+    dossier.title = `${p.dossier}\\${p.nom}`;
+    image.alt = p.date ? `Photo du ${dateCourte(p.date)}` : 'Photo';
+  }).catch((err) => {
+    if (V.jeton !== jeton) return;
+    $('#v-date').textContent = 'Photo introuvable';
+    $('#v-dossier').textContent = err.message;
+  });
+  // Photo suivante préchargée : le passage de l'une à l'autre est immédiat.
+  const liste = listeDe(V.groupe);
+  if (liste) {
+    const i = liste.indexOf(id);
+    if (i >= 0 && i + 1 < liste.length) new Image().src = `/photo/${liste[i + 1]}`;
+    if (i >= 0 && liste.length - i < 10) (V.groupe === 'peut' ? chargerPeut : chargerPrincipal)();
+  }
+}
+
+function majNavigation() {
+  const liste = listeDe(V.groupe);
+  const i = liste ? liste.indexOf(V.id) : -1;
+  const L = V.groupe === 'peut' ? R.peut : R.principal;
+  const total = L ? (V.groupe === 'peut' ? L.total : L.total) : 0;
+  $('#v-prec').disabled = !(i > 0);
+  $('#v-suiv').disabled = !(i >= 0 && (i + 1 < liste.length || (L && !L.fin)));
+  $('#v-position').textContent = i >= 0 ? `${nombre.format(i + 1)} sur ${nombre.format(Math.max(total, liste.length))}` : '';
+}
+
+async function photoVoisine(delta) {
+  const liste = listeDe(V.groupe);
+  if (!liste) return;
+  const i = liste.indexOf(V.id);
+  if (i < 0) return;
+  let j = i + delta;
+  if (j < 0) return;
+  if (j >= liste.length) {
+    await (V.groupe === 'peut' ? chargerPeut() : chargerPrincipal());
+    if (j >= liste.length) return;
+  }
+  montrerPhoto(liste[j]);
+  history.replaceState({photo: liste[j]}, '', adresse(R.q, liste[j]));
+}
+
+function fermerVisionneuse(historique = true) {
+  const d = $('#visionneuse');
+  if (d.open) d.close();
+  $('#v-image').removeAttribute('src');
+  $('#v-mini').removeAttribute('src');
+  const id = V.id;
+  V.id = null;
+  V.jeton += 1;
+  if (historique) {
+    if (V.pousse) { V.pousse = false; history.back(); } else history.replaceState(null, '', adresse(R.q));
+  }
+  const t = id && document.querySelector(`a.tuile[data-id="${id}"]`);
+  if (t) t.focus();
+}
+
+// ============================================================ réglages
+async function ouvrirReglages() {
+  const d = $('#reglages');
+  if (!d.open) d.showModal();
+  if (E.serveur) majReglages(E.serveur);
+  chargerDossiers().catch((err) => annoncer(err.message, 'erreur'));
+  try {
+    const m = E.materiel || await chargerMateriel(false);
+    $('#r-materiel').replaceChildren(resumeMateriel(m));
+  } catch (err) {
+    $('#r-materiel').replaceChildren(el('p', {classe: 'alerte erreur', texte: err.message}));
+  }
+}
+
+function majReglages(e) {
+  const m = e.moteur;
+  const zone = $('#r-moteur');
+  const sig = m ? `${m.cle}-${m.materiel}` : 'aucun';
+  if (zone.dataset.signature !== sig) {
+    zone.dataset.signature = sig;
+    remplacer(zone, m ? [
+      el('p', {}, el('strong', {texte: `« ${m.nom} »`}), m.description ? ` — ${m.description}` : ''),
+      m.materiel ? el('p', {classe: 'note', texte: `Il travaille avec ${m.materiel === 'processeur' ? 'le processeur' : 'la carte graphique'}.`}) : null,
+    ] : [el('p', {classe: 'note', texte: 'Aucun moteur installé pour le moment.'})]);
+  }
+  const t = e.telechargement, zt = $('#r-telechargement');
+  if (t && t.etat === 'en_cours') {
+    barreProgression(zt, {titre: titreTelechargement(t), pourcent: t.total ? t.pourcent : null,
+      details: detailsTelechargement(t), bouton: {texte: 'Annuler', action: annulerTelechargement}});
+  } else if (e.changement) {
+    barreProgression(zt, {titre: `Préparation du moteur « ${e.changement.nom} »…`, pourcent: null, details: ''});
+  } else if (t && t.etat === 'erreur') {
+    zt.replaceChildren(el('p', {classe: 'alerte erreur', texte: t.message}));
+  } else {
+    zt.replaceChildren();
+  }
+  $('#r-changer').disabled = !!(e.changement || (t && t.etat === 'en_cours'));
+  const p = e.photos || {}, a = e.analyse;
+  let texte = p.total ? `${pluriel(p.total, 'photo')} dans vos dossiers, dont ${nombre.format(p.analysees)} déjà analysée${p.analysees > 1 ? 's' : ''}.`
+    : 'Aucune photo pour le moment.';
+  if (p.erreurs) texte += ` ${pluriel(p.erreurs, 'fichier')} n’${p.erreurs > 1 ? 'ont' : 'a'} pas pu être lu${p.erreurs > 1 ? 's' : ''}.`;
+  if (a && a.active && a.message) texte += ` ${a.message}`;
+  $('#r-analyse').textContent = texte;
+  $('#r-relancer').disabled = !e.moteur;
+  $('#r-version').textContent = `MyPhotos ${e.version}`;
+}
+
+// ---------------- changer de moteur
+async function ouvrirChoixMoteur() {
+  const d = $('#moteurs');
+  $('#m-materiel').replaceChildren();
+  $('#m-liste').replaceChildren(el('p', {classe: 'attente'}, el('span', {classe: 'roue', 'aria-hidden': 'true'}),
+    'Analyse de votre ordinateur…'));
+  d.showModal();
+  try {
+    await chargerMateriel(true);                  // le matériel est analysé de nouveau
+    rendreChoixMoteur();
+    if (E.materiel) $('#r-materiel').replaceChildren(resumeMateriel(E.materiel));
+  } catch (err) {
+    $('#m-liste').replaceChildren(el('p', {classe: 'alerte erreur', texte: err.message}));
+  }
+}
+
+function rendreChoixMoteur() {
+  const m = E.materiel;
+  $('#m-materiel').replaceChildren(resumeMateriel(m));
+  $('#m-liste').replaceChildren(...m.moteurs.map((x) => carteMoteur(x, {miseEnAvant: x.actuel,
+    action: x.actuel ? null : {texte: 'Choisir ce moteur', faire: confirmerChangement}})));
+}
+
+async function confirmerChangement(x) {
+  const m = E.materiel;
+  const texte = [x.deja ? 'Il est déjà sur cet ordinateur : rien à télécharger.'
+    : `Il faut d’abord le télécharger : ${x.telechargement_texte}.`];
+  const vos = m.nb_photos_origine === 'base' ? `vos ${pluriel(m.nb_photos, 'photo')}` : 'toutes vos photos';
+  texte.push(x.duree_texte
+    ? `Ensuite, MyPhotos analysera de nouveau ${vos} : ${x.duree_texte}.`
+    : `Ensuite, MyPhotos analysera de nouveau ${vos} : cela peut prendre plusieurs heures.`);
+  texte.push('Pendant ce temps, vous pouvez continuer à chercher, mais les résultats resteront incomplets jusqu’à la fin de l’analyse. Vos photos ne sont jamais modifiées.');
+  texte.push(...(x.alertes || []));
+  const ok = await confirmer({titre: `Passer au moteur « ${x.nom} » ?`, texte, oui: 'Changer de moteur'});
+  if (!ok) return;
+  if (await telechargerMoteur(x)) {
+    $('#moteurs').close();
+    annoncer(x.deja ? `Passage au moteur « ${x.nom} »…` : `Téléchargement du moteur « ${x.nom} »…`);
+  }
+}
+
+async function quitter() {
+  const ok = await confirmer({titre: 'Arrêter MyPhotos ?', danger: true, oui: 'Arrêter MyPhotos',
+    texte: 'L’analyse en cours s’arrête proprement ; elle reprendra au prochain lancement.'});
+  if (!ok) return;
+  try {
+    await api('/api/quitter', {});
+    E.arretVolontaire = true;
+    montrerArret();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  }
+}
+
+// ============================================================ branchements
+function brancher() {
+  // Assistant
+  $('#e1-suite').addEventListener('click', () => allerEtape(2));
+  $('#e1-autres-bouton').addEventListener('click', () => basculerAutres());
+  $('#e2-retour').addEventListener('click', () => allerEtape(1));
+  $('#e2-suite').addEventListener('click', () => allerEtape(3));
+  $('#e2-ajouter').addEventListener('click', (ev) => choisirDossier(ev.currentTarget, $('#e2-manuel')));
+  $('#e2-chemin-ok').addEventListener('click', async (ev) => {
+    if (await ajouterDossier($('#e2-chemin').value, ev.currentTarget)) $('#e2-chemin').value = '';
+  });
+  $('#e3-retour').addEventListener('click', () => allerEtape(2));
+  $('#e3-suite').addEventListener('click', async () => {
+    try { await api('/api/assistant', {etape: 'fini'}); } catch (err) { /* sans gravité */ }
+    if (E.serveur) E.serveur.assistant = 'fini';
+    montrerAppli();
+  });
+
+  // Recherche
+  $('#formulaire').addEventListener('submit', (ev) => { ev.preventDefault(); chercher($('#q').value); });
+  $('#q').addEventListener('search', () => { if (!$('#q').value && R.q) chercher(''); });
+  for (const b of document.querySelectorAll('.puce')) b.addEventListener('click', () => chercher(b.dataset.q));
+  $('#accueil').addEventListener('click', (ev) => { ev.preventDefault(); chercher(''); window.scrollTo(0, 0); });
+  $('#maj-bouton').addEventListener('click', () => { rafraichir(); window.scrollTo(0, 0); });
+  $('#moins-sures').addEventListener('toggle', () => {
+    if (!$('#moins-sures').open) return;
+    // Les miniatures étaient cachées : on les fait réexaminer maintenant qu'elles sont visibles.
+    for (const a of $('#grille-peut').children) { observateurImages.unobserve(a); observateurImages.observe(a); }
+    setTimeout(() => chargerSiVisibles([...$('#grille-peut').children]), 30);
+    requestAnimationFrame(verifierFin);
+  });
+  observateurFin.observe($('#sentinelle'));
+  observateurFin.observe($('#sentinelle-peut'));
+  document.addEventListener('click', (ev) => {
+    const a = ev.target.closest && ev.target.closest('a.tuile');
+    if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+    ev.preventDefault();
+    ouvrirVisionneuse(+a.dataset.id, a.dataset.groupe);
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === '/' && E.ecran === 'appli' && !document.querySelector('dialog[open]')
+      && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+      ev.preventDefault();
+      $('#q').focus();
+      $('#q').select();
+    }
+  });
+  window.addEventListener('scroll', () => { if (E.ecran === 'appli') verifierFin(); }, {passive: true});
+
+  // Visionneuse
+  const v = $('#visionneuse');
+  v.addEventListener('cancel', (ev) => { ev.preventDefault(); fermerVisionneuse(); });
+  v.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowLeft') { ev.preventDefault(); photoVoisine(-1); }
+    else if (ev.key === 'ArrowRight') { ev.preventDefault(); photoVoisine(1); }
+  });
+  $('#v-prec').addEventListener('click', () => photoVoisine(-1));
+  $('#v-suiv').addEventListener('click', () => photoVoisine(1));
+  $('#v-fermer').addEventListener('click', () => fermerVisionneuse());
+  $('#v-ouvrir').addEventListener('click', async () => {
+    try { await api('/api/ouvrir', {id: V.id}); annoncer('La photo s’ouvre dans la visionneuse de Windows…'); }
+    catch (err) { annoncer(err.message, 'erreur'); }
+  });
+  $('#v-montrer').addEventListener('click', async () => {
+    try { await api('/api/montrer', {id: V.id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
+    catch (err) { annoncer(err.message, 'erreur'); }
+  });
+
+  // Réglages et fenêtres
+  $('#ouvrir-reglages').addEventListener('click', ouvrirReglages);
+  for (const b of document.querySelectorAll('[data-fermer]')) b.addEventListener('click', () => b.closest('dialog').close());
+  for (const d of document.querySelectorAll('dialog.panneau, dialog.fenetre')) {
+    d.addEventListener('click', (ev) => { if (ev.target === d && d.id !== 'confirmation') d.close(); });
+  }
+  for (const id of ['reglages', 'moteurs']) {
+    $(`#${id}`).addEventListener('close', () => {
+      const p = new URLSearchParams(location.hash.slice(1));
+      if (p.has(id)) { p.delete(id); history.replaceState(null, '', p.toString() ? '#' + p : location.pathname); }
+    });
+  }
+  $('#r-ajouter').addEventListener('click', (ev) => choisirDossier(ev.currentTarget, $('#r-manuel')));
+  $('#r-chemin-ok').addEventListener('click', async (ev) => {
+    if (await ajouterDossier($('#r-chemin').value, ev.currentTarget)) $('#r-chemin').value = '';
+  });
+  $('#r-relancer').addEventListener('click', async () => {
+    await commandeAnalyse('relancer');
+    annoncer('MyPhotos regarde s’il y a de nouvelles photos dans vos dossiers.');
+  });
+  $('#r-changer').addEventListener('click', ouvrirChoixMoteur);
+  $('#r-quitter').addEventListener('click', quitter);
+}
+
+brancher();
+sonder();
+})();
+</script>
+</body>
+</html>

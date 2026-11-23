@@ -1,0 +1,18 @@
+# Garde-fou de publication (outils/verifier_publication.py) : ce qui est autorisé.
+# Ce fichier est PUBLIÉ : n'y mettez jamais de donnée personnelle.
+
+# 1. Fichiers autorisés malgré leur type (images, vidéos...) : un motif glob par
+#    ligne, chemin depuis la racine du dépôt avec « / » ; « * » traverse aussi
+#    les dossiers. La limite de 2 Mo par fichier reste valable.
+construction/MyPhotos.ico
+docs/*.png
+docs/captures/*.jpg
+
+# 2. Valeurs d'exemple génériques, sous la forme « exemple: <valeur> » : chemins
+#    fictifs des tests et de l'interface. Une valeur couvre aussi ses sous-dossiers.
+#    Les mots interdits locaux (.git/info/publication-interdits.txt) restent
+#    vérifiés quoi qu'il arrive.
+exemple: D:\Photos
+exemple: E:\Photos
+exemple: C:\Images
+exemple: C:\chemin\images

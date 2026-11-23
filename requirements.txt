@@ -1,0 +1,40 @@
+# MyPhotos : paquets nécessaires pour faire tourner le logiciel (Python 3.14, Windows 64 bits).
+# Versions figées : ce sont exactement celles avec lesquelles MyPhotos est essayé.
+#
+#   python -m venv .venv
+#   .venv\Scripts\python -m pip install -r requirements.txt
+#
+# Pour construire MyPhotos.exe : requirements-build.txt.
+
+# --- Utilisés directement par MyPhotos
+onnxruntime-directml==1.24.4    # moteur de reconnaissance (carte graphique via DirectML, sinon processeur)
+numpy==2.5.5                    # calcul des vecteurs
+pillow==13.0.0                  # lecture des photos, miniatures
+tokenizers==0.23.3              # découpage du texte tapé dans la recherche
+
+# --- Tirés par onnxruntime-directml
+flatbuffers==25.12.19
+packaging==26.3
+protobuf==7.36.2
+sympy==1.14.0
+mpmath==1.3.0
+
+# --- Tirés par tokenizers (huggingface_hub et ses dépendances).
+# MyPhotos n'en a pas besoin pour fonctionner : il télécharge le moteur lui-même (urllib) et
+# ces paquets ne sont pas embarqués dans MyPhotos.exe. Ils sont figés ici pour que pip
+# installe toujours la même chose.
+huggingface_hub==2.4.0
+anyio==4.16.0
+click==8.5.1
+colorama==0.4.6
+filelock==4.3.0
+fsspec==2026.9.0
+h11==0.16.0
+hf-xet==1.8.0
+httpcore2==2.16.2
+httpx2==2.16.2
+idna==3.20
+PyYAML==6.0.4
+tqdm==4.70.1
+truststore==0.10.5
+typing_extensions==4.16.0

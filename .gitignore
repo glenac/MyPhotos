@@ -1,0 +1,23 @@
+# Environnements Python et caches
+.venv/
+.venv*/
+venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Données locales : moteur téléchargé, index des photos, miniatures, journaux.
+# Elles sont personnelles et ne sont jamais publiées.
+donnees/
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.part
+
+# Construction de l'exécutable
+build/
+dist/
+
+# Essais locaux
+essai-*/
