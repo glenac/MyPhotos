@@ -7,6 +7,7 @@ Les machines sont fabriquées (dictionnaires « comme analyser() ») ; seul Essa
 aucune photo. La mesure du vrai moteur (EssaiReel.test_mesure_moteur) ne tourne que si MYPHOTOS_TEST_MESURE=1,
 pour ne pas fausser les mesures d'autres programmes.
 """
+import copy
 import json
 import math
 import os
@@ -453,6 +454,60 @@ class Robustesse(Base):
         d = materiel._disque(r'Q:\inexistant\MyPhotos' if os.name == 'nt' else '/inexistant/MyPhotos')
         self.assertIsNone(d['libre_go'])
         self.assertTrue(d['dossier'])
+
+    # Relecture adverse du 24/11/2026 : ces essais échouaient avant correction.
+
+    def test_nombres_demesures(self):
+        """Un entier trop grand pour un flottant (10**400, possible en JSON) faisait lever OverflowError jusque dans
+        recommander(), analyser(), formater_duree() et formater_taille()."""
+        gros = 10 ** 400
+        self.verifier_forme(materiel.recommander(pc_rx6600xt_32go(), gros))
+        self.assertIsNone(materiel._nombre(gros))
+        self.assertIsNone(materiel.formater_duree(gros))
+        self.assertIsNone(materiel.formater_taille(gros))
+        with mock.patch.object(materiel, '_cartes', return_value=[]):
+            self.assertIsNone(materiel.analyser(gros)['nb_photos'])
+
+    def test_analyse_illisible(self):
+        """Une analyse dont la lecture même échoue : le conseil de secours levait à son tour."""
+        class Hostile(dict):
+            def get(self, *a, **k):
+                raise RuntimeError('lecture impossible')
+        r = materiel.recommander(Hostile(), 100)
+        self.verifier_forme(r)
+        self.assertEqual(r['cle'], 'base')
+
+    def test_un_champ_absurde_ne_coute_pas_le_conseil(self):
+        """Chaque champ d'une analyse remplacé par une valeur absurde : jamais d'exception, un résultat JSON, et jamais
+        le conseil de secours. Un nom de processeur qui n'était pas du texte faisait perdre tout le conseil, et un
+        indice de carte en octets le rendait impossible à envoyer à l'interface."""
+        reference = pc_rx6600xt_32go()
+        absurdes = (None, 'x', -1, 10 ** 400, float('nan'), float('inf'), [], {}, True, b'\xff')
+        rates = []
+        secours = mock.Mock(side_effect=materiel._conseil_de_secours)
+        with mock.patch.object(materiel, '_conseil_de_secours', secours):
+            for section, contenu in reference.items():
+                champs = [None] + (list(contenu) if isinstance(contenu, dict) else
+                                   [(i, k) for i, c in enumerate(contenu) for k in c] if isinstance(contenu, list) else [])
+                for champ in champs:
+                    for valeur in absurdes:
+                        a = copy.deepcopy(reference)
+                        if champ is None:
+                            a[section] = valeur
+                        elif isinstance(champ, tuple):
+                            a[section][champ[0]][champ[1]] = valeur
+                        else:
+                            a[section][champ] = valeur
+                        secours.reset_mock()
+                        try:
+                            r = materiel.recommander(a, 7100)
+                            json.dumps(r)
+                            ok = bool(r['raisons']) and not secours.called
+                        except Exception:                # noqa: BLE001
+                            ok = False
+                        if not ok:
+                            rates.append((section, champ, repr(valeur)[:12]))
+        self.assertEqual(rates, [])
 
 
 # ---------------------------------------------------------------- mise en forme, mesure

@@ -143,14 +143,18 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
   display: inline-flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.35rem;
   color: var(--texte); text-decoration: none; letter-spacing: -.01em;
 }
-.logo { width: 40px; height: 40px; flex: none; }
+/* Icône de MyPhotos (construction/MyPhotos.ico, image de 64 px), une seule fois dans la page. */
+.logo {
+  display: inline-block; width: 40px; height: 40px; flex: none;
+  background: url("data:image/png;base64,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") center / contain no-repeat;
+}
 
 /* ------------------------------------------------ écran de démarrage, écran d'arrêt */
 .ecran-plein {
   position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px;
   background: var(--fond); z-index: 50;
 }
-.ecran-plein .logo { width: 72px; height: 72px; margin-bottom: 16px; }
+.ecran-plein .logo { display: block; width: 64px; height: 64px; margin: 0 auto 16px; }
 .ecran-plein p { color: var(--texte-doux); font-size: 1.1rem; max-width: 34em; margin-inline: auto; }
 
 /* ------------------------------------------------ en-tête */
@@ -178,6 +182,13 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .bandeau progress { flex: 0 1 260px; height: 10px; background: var(--surface); }
 .bandeau progress::-webkit-progress-bar { background: var(--surface); }
 .bandeau .bouton { min-height: 38px; }
+/* Avancement inconnu (préparation du moteur, inventaire) : une bande qui va et vient, plutôt qu'une barre vide. */
+progress:not([value]), .bandeau progress:not([value]) {
+  background-image: linear-gradient(var(--accent), var(--accent)); background-repeat: no-repeat;
+  background-size: 30% 100%; animation: indetermine 1.2s ease-in-out infinite alternate;
+}
+progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-webkit-progress-bar { background: transparent; }
+@keyframes indetermine { from { background-position: 0 0; } to { background-position: 100% 0; } }
 
 /* ------------------------------------------------ écran principal */
 .zone-principale { padding: 4px var(--gouttiere) 80px; max-width: 1900px; margin: 0 auto; }
@@ -192,6 +203,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .ligne-compte { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 20px; margin: 18px 0 14px; }
 .compte { margin: 0; font-size: 1.08rem; color: var(--texte-doux); min-height: 1.5em; }
 .compte strong { color: var(--texte); }
+.compte .roue { width: 1.1em; height: 1.1em; border-width: 2px; margin-right: 10px; }
 .maj { margin: 0; color: var(--texte-doux); font-size: .95rem; }
 .mois { font-size: 1.2rem; font-weight: 650; margin: 30px 0 12px; }
 .section-mois:first-child .mois { margin-top: 6px; }
@@ -222,6 +234,15 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .moins-sures summary .icone { transition: transform .2s; }
 .moins-sures[open] summary .icone { transform: rotate(90deg); }
 .moins-sures .note { margin: 4px 0 14px 6px; }
+.proches { margin-top: 40px; border-top: 1px solid var(--bordure); padding-top: 18px; }
+.proches.seule { margin-top: 0; border-top: none; padding-top: 0; }
+.proches-appel { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.proches-appel p { margin: 0; color: var(--texte-doux); font-size: 1.05rem; }
+.proches.seule .proches-appel { justify-content: center; }
+.proches-titre { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0 0 4px; font-size: 1.12rem; font-weight: 650; }
+.proches-titre:focus { outline: none; }
+.proches .note { margin: 0 0 14px; }
+.proches-suite { display: flex; justify-content: center; margin: 22px 0 0; }
 
 /* ------------------------------------------------ assistant */
 .assistant { display: flex; flex-direction: column; align-items: center; padding: 28px 16px 64px; min-height: 100vh; }
@@ -400,6 +421,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation-duration: .01ms !important; }
+  progress:not([value]), .bandeau progress:not([value]) { animation: none; background-position: 50% 0; }
 }
 </style>
 </head>
@@ -407,22 +429,9 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 <div id="vivant" class="visuellement-cache" aria-live="polite"></div>
 <div id="annonce" class="annonce" popover="manual" role="status"></div>
 
-<svg width="0" height="0" class="visuellement-cache" aria-hidden="true" focusable="false">
-  <defs>
-    <linearGradient id="degrade-logo" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2f7bf5"/><stop offset="1" stop-color="#18a07a"/>
-    </linearGradient>
-    <symbol id="logo" viewBox="0 0 64 64">
-      <rect width="64" height="64" rx="16" fill="url(#degrade-logo)"/>
-      <circle cx="44" cy="21" r="7" fill="#fff"/>
-      <path d="M8 51 24 30l10 12 6-7 16 16z" fill="#fff"/>
-    </symbol>
-  </defs>
-</svg>
-
 <div id="ecran-demarrage" class="ecran-plein">
   <div>
-    <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+    <span class="logo" aria-hidden="true"></span>
     <h1>MyPhotos</h1>
     <p class="attente" id="demarrage-texte"><span class="roue" aria-hidden="true"></span>Démarrage…</p>
   </div>
@@ -430,7 +439,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 
 <div id="arrete" class="ecran-plein" hidden>
   <div>
-    <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+    <span class="logo" aria-hidden="true"></span>
     <h1 id="arrete-titre">MyPhotos est arrêté</h1>
     <p id="arrete-texte">Pour l'utiliser de nouveau, lancez MyPhotos depuis son icône. Vous pouvez fermer cet onglet.</p>
   </div>
@@ -439,7 +448,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 <!-- ============================================ assistant de premier lancement -->
 <div id="assistant" class="assistant" hidden>
   <div class="assistant-tete">
-    <span class="marque"><svg class="logo" aria-hidden="true"><use href="#logo"/></svg>MyPhotos</span>
+    <span class="marque"><span class="logo" aria-hidden="true"></span>MyPhotos</span>
   </div>
   <ol class="etapes" aria-label="Étapes de la mise en route">
     <li data-etape="1"><span class="num">1</span><span>Votre ordinateur</span></li>
@@ -497,7 +506,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 <div id="appli" hidden>
   <div class="haut">
     <header class="entete">
-      <a id="accueil" class="marque" href="#" aria-label="MyPhotos : afficher toutes les photos"><svg class="logo" aria-hidden="true"><use href="#logo"/></svg><span>MyPhotos</span></a>
+      <a id="accueil" class="marque" href="#" aria-label="MyPhotos : afficher toutes les photos"><span class="logo" aria-hidden="true"></span><span>MyPhotos</span></a>
       <form id="formulaire" class="recherche" role="search">
         <div class="champ">
           <svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
@@ -539,6 +548,18 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
       <div id="grille-peut" class="grille"></div>
       <div id="sentinelle-peut" class="sentinelle" aria-hidden="true"></div>
     </details>
+    <section id="proches" class="proches" aria-label="Photos les plus proches" hidden>
+      <div id="proches-appel" class="proches-appel">
+        <p>Vous ne trouvez pas ce que vous cherchez ?</p>
+        <button id="proches-voir" class="bouton" type="button">Voir les photos les plus proches</button>
+      </div>
+      <div id="proches-liste" hidden>
+        <h2 id="proches-titre" class="proches-titre" tabindex="-1">Moins probables</h2>
+        <p id="proches-note" class="note"></p>
+        <div id="grille-proches" class="grille"></div>
+        <p id="proches-suite" class="proches-suite" hidden><button id="proches-plus" class="bouton" type="button">Voir 60 photos de plus</button></p>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -639,6 +660,11 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 const $ = (s, r = document) => r.querySelector(s);
 const nombre = new Intl.NumberFormat('fr-FR');
 const N_PAGE = 150;
+const N_PROCHES = 60;              // photos « moins probables » chargées à chaque demande
+const PEU_DE_RESULTATS = 10;       // moins de résultats sûrs : la page propose de voir les photos les plus proches
+const RELANCE_MS = 1000;           // recherche lancée pendant la préparation du moteur : redemandée chaque seconde
+const PATIENCE_MS = 30000;         // « MyPhotos ne répond plus » : jamais avant 30 s sans aucune réponse
+const PREPARATION = 'Préparation du moteur de reconnaissance…';
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre',
   'novembre', 'décembre'];
 const ICONES = {
@@ -722,21 +748,32 @@ class ErreurApi extends Error {
   constructor(message, statut) { super(message); this.statut = statut; }
 }
 
-/** Appel de l'API : GET sans corps, POST JSON avec l'en-tête X-MyPhotos. Erreurs : messages en français. */
-async function api(chemin, corps) {
+/** Appel de l'API : GET sans corps, POST JSON avec l'en-tête X-MyPhotos. Erreurs : messages en français.
+ *  delai (ms) : abandon au-delà ; sans délai, on attend la réponse, même lente. */
+async function api(chemin, corps, delai = 0) {
   const options = corps === undefined
     ? {headers: {Accept: 'application/json'}, cache: 'no-store'}
     : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-MyPhotos': '1'}, body: JSON.stringify(corps)};
-  let r;
-  try {
-    r = await fetch(chemin, options);
-  } catch (e) {
-    throw new ErreurApi('MyPhotos ne répond pas. Il est peut-être arrêté.', 0);
+  let minuteur = null;
+  if (delai) {
+    const abandon = new AbortController();
+    options.signal = abandon.signal;
+    minuteur = setTimeout(() => abandon.abort(), delai);
   }
-  let d = null;
-  try { d = await r.json(); } catch (e) { /* réponse vide */ }
-  if (!r.ok) throw new ErreurApi((d && d.erreur) || 'Une erreur est survenue. Réessayez.', r.status);
-  return d;
+  try {
+    let r;
+    try {
+      r = await fetch(chemin, options);
+    } catch (e) {
+      throw new ErreurApi('MyPhotos ne répond pas. Il est peut-être arrêté.', 0);
+    }
+    let d = null;
+    try { d = await r.json(); } catch (e) { /* réponse vide */ }
+    if (!r.ok) throw new ErreurApi((d && d.erreur) || 'Une erreur est survenue. Réessayez.', r.status);
+    return d;
+  } finally {
+    clearTimeout(minuteur);
+  }
 }
 
 let minuteurAnnonce = null;
@@ -821,21 +858,32 @@ const E = {
   dossiers: null,
   echecs: 0,
   sonde: null,
+  sondeEnCours: false,
+  resonder: false,
+  derniereReponse: Date.now(),
   arretVolontaire: false,
 };
 
 async function sonder() {
   clearTimeout(E.sonde);
+  if (E.sondeEnCours) { E.resonder = true; return; }    // une question à la fois, même quand MyPhotos est lent
+  E.sondeEnCours = true;
   try {
-    const e = await api('/api/etat');
+    const e = await api('/api/etat', undefined, PATIENCE_MS);
     E.echecs = 0;
+    E.derniereReponse = Date.now();
     appliquerEtat(e);
   } catch (err) {
     E.echecs += 1;
-    if (E.arretVolontaire || E.echecs >= 2) montrerArret();
+    // Pendant la préparation du moteur, MyPhotos peut répondre lentement : il n'est dit arrêté qu'après
+    // PATIENCE_MS sans aucune réponse.
+    if (E.arretVolontaire || (E.echecs >= 2 && Date.now() - E.derniereReponse >= PATIENCE_MS)) montrerArret();
     else if (E.ecran === 'demarrage') $('#demarrage-texte').lastChild.textContent = 'Connexion à MyPhotos…';
+  } finally {
+    E.sondeEnCours = false;
   }
-  const delai = document.hidden ? 30000 : (E.ecran === 'arrete' ? 5000 : 2000);
+  const delai = E.resonder ? 0 : document.hidden ? 30000 : (E.ecran === 'arrete' ? 5000 : 2000);
+  E.resonder = false;
   E.sonde = setTimeout(sonder, delai);
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sonder(); });
@@ -1025,7 +1073,7 @@ function majEtape1(e) {
   const zone = $('#e1-action');
   let signature = 'rien';
   if (m) {
-    if (e.moteur && e.moteur.cle === m.cle && !e.changement) signature = 'pret';
+    if (e.moteur && e.moteur.cle === m.cle && !e.changement) signature = e.preparation ? 'preparation' : 'pret';
     else if (e.changement && e.changement.cle === m.cle) signature = 'preparation';
     else if (t && t.cle === m.cle && t.etat === 'en_cours') signature = 'telechargement';
     else if (t && t.cle === m.cle && t.etat === 'fini') signature = 'preparation';
@@ -1039,7 +1087,7 @@ function majEtape1(e) {
       zone.replaceChildren(el('p', {classe: 'succes-texte'}, icone('coche'), 'Le moteur de reconnaissance est prêt.'));
     } else if (signature === 'preparation') {
       zone.replaceChildren(el('p', {classe: 'attente'}, el('span', {classe: 'roue', 'aria-hidden': 'true'}),
-        'Préparation du moteur de reconnaissance…'));
+        PREPARATION));
     } else if (m) {
       const morceaux = [];
       if (t && t.cle === m.cle && t.etat === 'erreur') morceaux.push(el('p', {classe: 'alerte erreur', texte: t.message}));
@@ -1191,7 +1239,7 @@ function etatAnalyse(e) {
       await telechargerMoteur({cle: t.cle, vision: t.vision});
     }}};
   }
-  if (e.changement || !e.moteur) return {titre: 'Préparation du moteur de reconnaissance…', pourcent: null, details: ''};
+  if (e.changement || !e.moteur || (e.preparation && !(a && a.active))) return {titre: PREPARATION, pourcent: null, details: ''};
   if (!a) return {titre: 'Préparation…', pourcent: null, details: ''};
   if (a.phase === 'inventaire') return {titre: a.message || 'Recherche de vos photos…', pourcent: null, details: ''};
   if (a.phase === 'analyse' || a.phase === 'pause') {
@@ -1235,8 +1283,9 @@ function montrerAppli() {
 const R = {
   q: null, mode: null, jeton: 0, generation: null, depuis: 0, erreur: false,
   principal: null, peut: null, mois: null, grille: null,
+  proches: null, totalProches: 0, prochesDemandees: false, relance: null,
 };
-const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false});
+const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
 const infosPhotos = new Map();
 
 function adresse(q, photo) {
@@ -1279,6 +1328,10 @@ function chercher(q, historique = 'pousser') {
   R.jeton += 1;
   R.principal = nouvelleListe();
   R.peut = nouvelleListe();
+  R.proches = nouvelleListe();
+  R.totalProches = 0;
+  R.prochesDemandees = false;
+  clearTimeout(R.relance);
   R.mois = null;
   R.grille = null;
   R.erreur = false;
@@ -1286,6 +1339,8 @@ function chercher(q, historique = 'pousser') {
   R.depuis = Date.now();
   $('#resultats').replaceChildren();
   $('#grille-peut').replaceChildren();
+  $('#grille-proches').replaceChildren();
+  $('#proches').hidden = true;
   $('#moins-sures').hidden = true;
   $('#moins-sures').open = false;
   $('#vide').hidden = true;
@@ -1311,13 +1366,15 @@ function urlPage(debut, n) {
 
 async function chargerPrincipal() {
   const L = R.principal;
-  if (!L || L.enCours || L.fin || R.erreur) return;
+  if (!L || L.enCours || L.fin || L.pause || R.erreur) return;
   L.enCours = true;
   const jeton = R.jeton;
   try {
     const d = await api(urlPage(L.suivant, N_PAGE));
     if (jeton !== R.jeton) return;
-    if (d.mode === 'dates') ajouterDates(d); else ajouterRecherche(d);
+    if (d.preparation) attendrePreparation(L, chargerPrincipal);
+    else if (d.mode === 'dates') ajouterDates(d); else ajouterRecherche(d);
+    if (!d.preparation && d.mode === 'recherche' && E.serveur && E.serveur.preparation) sonder();   // bandeau à jour
   } catch (err) {
     if (jeton === R.jeton) afficherErreur(err);
   } finally {
@@ -1330,13 +1387,14 @@ async function chargerPrincipal() {
 
 async function chargerPeut() {
   const L = R.peut, P = R.principal;
-  if (!L || L.enCours || L.fin || !P.fin || R.erreur || R.mode !== 'recherche') return;
+  if (!L || L.enCours || L.fin || L.pause || !P.fin || R.erreur || R.mode !== 'recherche') return;
   L.enCours = true;
   const jeton = R.jeton;
   try {
     const debut = Math.max(L.suivant, P.total);
     const d = await api(urlPage(debut, N_PAGE));
     if (jeton !== R.jeton) return;
+    if (d.preparation) { attendrePreparation(L, chargerPeut); return; }
     ajouterTuiles(L, d.peut_etre || [], $('#grille-peut'), 'peut');
     L.suivant = Math.max(d.suivant, debut);
     L.fin = !(d.peut_etre || []).length || L.suivant >= d.total_sures + d.total_peut_etre;
@@ -1349,6 +1407,75 @@ async function chargerPeut() {
       requestAnimationFrame(verifierFin);
     }
   }
+}
+
+/** Le moteur se prépare (quelques secondes après le lancement) : « Préparation… », puis la page redemande d'elle-même,
+ *  sans jamais afficher d'erreur. */
+function attendrePreparation(L, relancer) {
+  L.pause = true;
+  if (L === R.principal) {
+    $('#compte').replaceChildren(el('span', {classe: 'roue', 'aria-hidden': 'true'}),
+      R.q ? `Préparation… La recherche de « ${R.q} » commence dans un instant.` : 'Préparation…');
+  }
+  const jeton = R.jeton;
+  clearTimeout(R.relance);
+  R.relance = setTimeout(() => {
+    if (jeton !== R.jeton) return;
+    L.pause = false;
+    relancer();
+  }, RELANCE_MS);
+}
+
+// ---------------- « Voir les photos les plus proches » : la suite, sous les seuils, à la demande seulement
+function voirProches() {
+  if (R.mode !== 'recherche' || R.prochesDemandees) return;
+  R.prochesDemandees = true;
+  if (!$('#vide').hidden) {                  // aucun résultat : le grand message laisse la place aux photos proches
+    $('#vide').hidden = true;
+    $('#compte').textContent = `Aucune photo ne correspond à « ${R.q} ».`;
+  }
+  majProches();
+  $('#proches-titre').focus({preventScroll: true});
+  chargerProches();
+}
+
+async function chargerProches() {
+  const L = R.proches;
+  if (!L || L.enCours || L.fin || L.pause || R.mode !== 'recherche' || !R.prochesDemandees) return;
+  L.enCours = true;
+  const jeton = R.jeton;
+  try {
+    const d = await api(`/api/recherche?q=${encodeURIComponent(R.q)}&proches=1&debut=${L.suivant}&n=${N_PROCHES}`);
+    if (jeton !== R.jeton) return;
+    if (d.preparation) { attendrePreparation(L, chargerProches); return; }
+    ajouterTuiles(L, d.proches || [], $('#grille-proches'), 'proches');
+    L.total = R.totalProches = d.total_proches;
+    L.suivant = Math.max(d.suivant, L.suivant);
+    L.fin = !(d.proches || []).length || L.suivant >= d.total_proches;
+    if (V.id) majNavigation();
+  } catch (err) {
+    if (jeton === R.jeton) annoncer(err.message, 'erreur');
+  } finally {
+    if (jeton === R.jeton) {
+      L.enCours = false;
+      majProches();
+    }
+  }
+}
+
+function majProches() {
+  const L = R.proches, s = $('#proches');
+  if (!L) return;
+  const rien = !R.principal.total && !R.peut.total;
+  const propose = R.mode === 'recherche' && !R.erreur && R.principal.fin && R.principal.total < PEU_DE_RESULTATS
+    && R.totalProches > 0;
+  // Aucun résultat : le bouton est dans le grand message « Aucune photo ne correspond… » (majCompte).
+  s.hidden = !propose || (rien && !R.prochesDemandees);
+  s.classList.toggle('seule', rien);
+  $('#proches-appel').hidden = R.prochesDemandees;
+  $('#proches-liste').hidden = !R.prochesDemandees;
+  $('#proches-note').textContent = `Elles ne correspondent sans doute pas à « ${R.q} » : ce sont seulement celles qui s’en approchent le plus.`;
+  $('#proches-suite').hidden = !R.prochesDemandees || L.fin || !L.ids.length;
 }
 
 function verifierFin() {
@@ -1380,7 +1507,8 @@ const observateurImages = new IntersectionObserver((entrees) => {
 
 function tuile(p, groupe) {
   infosPhotos.set(p.id, p);
-  const a = el('a', {classe: 'tuile', href: adresse(R.q, p.id), 'aria-label': libellePhoto(p),
+  const libelle = groupe === 'proches' ? `${libellePhoto(p)}, moins probable` : libellePhoto(p);
+  const a = el('a', {classe: 'tuile', href: adresse(R.q, p.id), 'aria-label': libelle,
     dataset: {id: String(p.id), groupe}});
   const img = el('img', {alt: '', draggable: 'false'});
   img.dataset.src = `/miniature/${p.id}`;
@@ -1442,6 +1570,7 @@ function ajouterRecherche(d) {
   const L = R.principal, P = R.peut;
   L.total = d.total_sures;
   P.total = d.total_peut_etre;
+  R.totalProches = d.total_proches || 0;
   if (!R.grille) {
     R.grille = el('div', {classe: 'grille'});
     $('#resultats').append(R.grille);
@@ -1508,11 +1637,14 @@ function majCompte() {
   if (!sures && !peut) {
     remplacer(vide, icone('loupe'), el('h2', {texte: `Aucune photo ne correspond à « ${R.q} »`}),
       el('p', {texte: 'Essayez un autre mot, par exemple « plage » ou « fleurs ».'}),
-      incomplet ? el('p', {classe: 'note', texte: 'L’analyse n’est pas finie : d’autres photos pourront apparaître.'}) : null);
-    vide.hidden = false;
+      incomplet ? el('p', {classe: 'note', texte: 'L’analyse n’est pas finie : d’autres photos pourront apparaître.'}) : null,
+      R.totalProches > 0 ? el('button', {classe: 'bouton', type: 'button', onclick: voirProches},
+        'Voir les photos les plus proches') : null);
+    vide.hidden = R.prochesDemandees;
   } else {
     vide.hidden = true;
   }
+  majProches();
 }
 
 function afficherErreur(err) {
@@ -1529,7 +1661,7 @@ function majAppli(e, avant) {
   if (R.mode === null) return;
   if (e.generation !== R.generation && R.generation !== null) {
     const auCalme = window.scrollY < 400 && !document.querySelector('dialog[open]');
-    const peu = R.principal.ids.length < N_PAGE && R.peut.ids.length === 0;
+    const peu = R.principal.ids.length < N_PAGE && R.peut.ids.length === 0 && !R.prochesDemandees;
     if (auCalme && peu && Date.now() - R.depuis > 6000) {
       rafraichir();
     } else if (!R.erreur && R.principal.ids.length) {
@@ -1557,6 +1689,9 @@ function majBandeau(e) {
   } else if (e.changement) {
     texte = `Préparation du moteur « ${e.changement.nom} »…`;
     pourcent = null;
+  } else if (e.preparation && !(a && a.active)) {
+    texte = PREPARATION;                     // quelques secondes après le lancement : la recherche attend
+    pourcent = null;
   } else if (a && a.phase === 'inventaire') {
     texte = a.message || 'Recherche de vos photos…';
     pourcent = null;
@@ -1583,10 +1718,14 @@ function majBandeau(e) {
 
 // ============================================================ visionneuse
 const V = {id: null, groupe: null, pousse: false, jeton: 0};
-const listeDe = (groupe) => (groupe === 'principal' ? R.principal && R.principal.ids : groupe === 'peut' ? R.peut && R.peut.ids : null);
+const listeGroupe = (groupe) => (groupe === 'principal' ? R.principal : groupe === 'peut' ? R.peut
+  : groupe === 'proches' ? R.proches : null);
+const listeDe = (groupe) => { const L = listeGroupe(groupe); return L ? L.ids : null; };
+const chargeurDe = (groupe) => (groupe === 'peut' ? chargerPeut : groupe === 'proches' ? chargerProches : chargerPrincipal);
 function groupeDe(id) {
   if (R.principal && R.principal.vus.has(id)) return 'principal';
   if (R.peut && R.peut.vus.has(id)) return 'peut';
+  if (R.proches && R.proches.vus.has(id)) return 'proches';
   return null;
 }
 
@@ -1644,15 +1783,16 @@ function montrerPhoto(id) {
   if (liste) {
     const i = liste.indexOf(id);
     if (i >= 0 && i + 1 < liste.length) new Image().src = `/photo/${liste[i + 1]}`;
-    if (i >= 0 && liste.length - i < 10) (V.groupe === 'peut' ? chargerPeut : chargerPrincipal)();
+    // Les « moins probables » ne se chargent qu'à la demande : au bout de la liste (photoVoisine).
+    if (i >= 0 && liste.length - i < 10 && V.groupe !== 'proches') chargeurDe(V.groupe)();
   }
 }
 
 function majNavigation() {
   const liste = listeDe(V.groupe);
   const i = liste ? liste.indexOf(V.id) : -1;
-  const L = V.groupe === 'peut' ? R.peut : R.principal;
-  const total = L ? (V.groupe === 'peut' ? L.total : L.total) : 0;
+  const L = listeGroupe(V.groupe) || R.principal;
+  const total = L ? L.total : 0;
   $('#v-prec').disabled = !(i > 0);
   $('#v-suiv').disabled = !(i >= 0 && (i + 1 < liste.length || (L && !L.fin)));
   $('#v-position').textContent = i >= 0 ? `${nombre.format(i + 1)} sur ${nombre.format(Math.max(total, liste.length))}` : '';
@@ -1666,7 +1806,7 @@ async function photoVoisine(delta) {
   let j = i + delta;
   if (j < 0) return;
   if (j >= liste.length) {
-    await (V.groupe === 'peut' ? chargerPeut() : chargerPrincipal());
+    await chargeurDe(V.groupe)();
     if (j >= liste.length) return;
   }
   montrerPhoto(liste[j]);
@@ -1719,6 +1859,8 @@ function majReglages(e) {
       details: detailsTelechargement(t), bouton: {texte: 'Annuler', action: annulerTelechargement}});
   } else if (e.changement) {
     barreProgression(zt, {titre: `Préparation du moteur « ${e.changement.nom} »…`, pourcent: null, details: ''});
+  } else if (e.preparation) {
+    barreProgression(zt, {titre: PREPARATION, pourcent: null, details: ''});
   } else if (t && t.etat === 'erreur') {
     zt.replaceChildren(el('p', {classe: 'alerte erreur', texte: t.message}));
   } else {
@@ -1820,6 +1962,8 @@ function brancher() {
     setTimeout(() => chargerSiVisibles([...$('#grille-peut').children]), 30);
     requestAnimationFrame(verifierFin);
   });
+  $('#proches-voir').addEventListener('click', voirProches);
+  $('#proches-plus').addEventListener('click', () => chargerProches());
   observateurFin.observe($('#sentinelle'));
   observateurFin.observe($('#sentinelle-peut'));
   document.addEventListener('click', (ev) => {

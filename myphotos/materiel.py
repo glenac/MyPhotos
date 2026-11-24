@@ -186,10 +186,15 @@ __all__ = ['analyser', 'recommander', 'mesurer', 'estimer_duree', 'exigences', '
 # ================================================================ petits outils
 
 def _nombre(x):
-    """x s'il s'agit d'un nombre fini (pas d'un booléen), sinon None."""
+    """x en flottant s'il s'agit d'un nombre fini (pas d'un booléen), sinon None. Ne lève jamais : un entier trop grand
+    pour un flottant (10**400) faisait lever OverflowError jusque dans recommander() et formater_duree()."""
     if isinstance(x, bool) or not isinstance(x, (int, float)):
         return None
-    return float(x) if math.isfinite(x) else None
+    try:
+        x = float(x)
+    except (OverflowError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
 
 
 def _entier(x):
@@ -678,8 +683,9 @@ def analyser(nb_photos=None):
     """
     debut = time.perf_counter()
     a = {'systeme': None, 'processeur': None, 'memoire': None, 'cartes': None, 'directml': None, 'disque': None,
-         'alimentation': None, 'onnxruntime': None, 'nb_photos': _entier(nb_photos), 'duree_analyse_s': None}
+         'alimentation': None, 'onnxruntime': None, 'nb_photos': None, 'duree_analyse_s': None}
     try:
+        a['nb_photos'] = _entier(nb_photos)
         a['systeme'] = _sur(_systeme)
         a['processeur'] = _sur(_processeur)
         if os.name == 'nt':
@@ -783,7 +789,8 @@ def _cles_proposees():
 def _facteur_coeur(processeur, systeme, alimentation):
     """Vitesse d'un cœur par rapport à un cœur de Ryzen 5 5600X (1,0). EXTRAPOLATION PRUDENTE, d'après le nom :
     on préfère annoncer une analyse plus longue qu'elle ne le sera."""
-    nom = (processeur.get('nom') or '').lower()
+    nom = processeur.get('nom')
+    nom = nom.lower() if isinstance(nom, str) else ''      # un nom illisible ne doit pas coûter tout le conseil
     f = 1.0
     if re.search(r'celeron|pentium|atom|athlon|sempron|phenom|turion|\bamd [ae]\d*-|\bfx-', nom):
         f *= 0.45                                       # gammes économiques ou très anciennes
@@ -944,7 +951,7 @@ def _option(cle, profil, n):
         'vision': vision,
         'texte': texte,
         'materiel': materiel,
-        'indice_carte': profil.carte.get('indice') if materiel == 'carte' else None,
+        'indice_carte': _entier(profil.carte.get('indice')) if materiel == 'carte' else None,   # JSON sûr
         'fils': profil.coeurs,
         'telechargement_octets': telechargement,
         'debit_estime': round(debit, 1) if debit else None,
@@ -1199,7 +1206,11 @@ def recommander(analyse, nb_photos=None):
         return _recommander(analyse, nb_photos)
     except Exception:
         _journal.warning('matériel : conseil impossible, repli sur le modèle standard', exc_info=True)
+    try:
         return _conseil_de_secours(analyse, nb_photos)
+    except Exception:                        # analyse impossible à lire, même pour le secours (objet hostile…)
+        _journal.warning('matériel : analyse illisible, conseil standard', exc_info=True)
+        return _conseil_de_secours(None, None)
 
 
 def _recommander(analyse, nb_photos):

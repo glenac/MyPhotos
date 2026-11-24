@@ -7,20 +7,24 @@ Le serveur tourne dans un sous-processus, sur un port d'essai, avec ses propres 
     .venv\\Scripts\\python -m unittest tests.test_serveur -v
 
 Les moteurs déjà téléchargés (donnees/modele, ou MYPHOTOS_MODELES) servent tels quels : aucun téléchargement.
+Les serveurs d'essai ne proposent aucun dossier : les dossiers d'images de cet ordinateur ne sont jamais parcourus.
 Aucune photo personnelle : l'essai de bout en bout prend des images publiques (Wikimedia Commons), nommées
 d'après ce qu'elles montrent (chien-1.jpg, plage-2.jpg…). Aucune fenêtre ne s'ouvre : « Ouvrir » et « Afficher
 dans le dossier » sont essayés dans ce processus, les appels à Windows étant simulés.
 """
+import base64
 import http.client
 import json
 import os
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 import urllib.parse
 from pathlib import Path
@@ -59,8 +63,9 @@ def api(chemin, corps=None, **kw):
     if corps is None:
         statut, _, d = requete('GET', chemin, **kw)
     else:
+        origine = f'http://{kw.get("hote", HOTE)}'
         statut, _, d = requete('POST', chemin, corps,
-                               {'X-MyPhotos': '1', 'Origin': f'http://{HOTE}', 'Sec-Fetch-Site': 'same-origin'}, **kw)
+                               {'X-MyPhotos': '1', 'Origin': origine, 'Sec-Fetch-Site': 'same-origin'}, **kw)
     return statut, json.loads(d or b'null')
 
 
@@ -80,14 +85,17 @@ def arreter_par_pid(proc):
     proc.wait(timeout=30)
 
 
-def lancer_serveur(donnees, port=PORT, **variables):
+def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
+    """neutre=True : aucun dossier proposé (les dossiers d'images de cet ordinateur ne sont jamais parcourus)."""
     env = dict(os.environ, MYPHOTOS_PORT=str(port), MYPHOTOS_SANS_PAGE='1', MYPHOTOS_DOSSIER=str(donnees),
                MYPHOTOS_MODELES=str(MODELES), PYTHONIOENCODING='utf-8')
     env.pop('MYPHOTOS_TELECHARGEMENT_FACTICE', None)
     env.update(variables)
     Path(donnees).mkdir(parents=True, exist_ok=True)
     sortie = open(Path(donnees) / 'essai-serveur.err', 'ab')
-    proc = subprocess.Popen([sys.executable, '-X', 'faulthandler', '-m', 'myphotos'], cwd=str(RACINE), env=env,
+    lancement = ['-c', 'import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
+                       's.dossier_images = lambda: None; sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
+    proc = subprocess.Popen([sys.executable, '-X', 'faulthandler', *lancement], cwd=str(RACINE), env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=sortie,
                             creationflags=SANS_FENETRE)
     proc.sortie = sortie
@@ -118,6 +126,16 @@ def attendre(condition, delai, pas=0.5):
     return condition()
 
 
+def icone_64():
+    """Image de 64 px de construction/MyPhotos.ico (chaque taille y est enregistrée en PNG)."""
+    data = (RACINE / 'construction' / 'MyPhotos.ico').read_bytes()
+    for i in range(struct.unpack_from('<H', data, 4)[0]):
+        largeur, _, _, _, _, _, taille, debut = struct.unpack_from('<BBBBHHII', data, 6 + 16 * i)
+        if largeur == 64:
+            return data[debut:debut + taille]
+    raise AssertionError('MyPhotos.ico sans image de 64 px')
+
+
 class EssaiServeur(unittest.TestCase):
     proc = None
 
@@ -125,7 +143,7 @@ class EssaiServeur(unittest.TestCase):
     def setUpClass(cls):
         if not port_libre(PORT):
             raise unittest.SkipTest(f'le port {PORT} est déjà pris')
-        cls.proc = lancer_serveur(DONNEES)
+        cls.proc = lancer_serveur(DONNEES, neutre=True)     # jamais les dossiers d'images de cet ordinateur
         try:
             attendre_serveur(cls.proc)
         except Exception:
@@ -297,10 +315,15 @@ class TestReponses(EssaiServeur):
         self.assertEqual(statut, 200)
         self.assertEqual(e['nom'], 'MyPhotos')
         for cle in ('version', 'assistant', 'moteur', 'telechargement', 'changement', 'analyse', 'photos',
-                    'nb_dossiers', 'recherche_prete', 'generation', 'arret'):
+                    'nb_dossiers', 'recherche_prete', 'generation', 'arret', 'preparation'):
             self.assertIn(cle, e)
         self.assertEqual(set(e['photos']), {'total', 'analysees', 'a_faire', 'erreurs', 'indisponibles', 'en_attente'})
         self.assertFalse(e['arret'])
+        self.assertIsInstance(e['preparation'], bool)
+        if e['moteur'] is None:
+            self.assertFalse(e['preparation'])
+        else:
+            self.assertIsInstance(e['moteur']['pret'], bool)
 
     def test_02_materiel(self):
         statut, m = api('/api/materiel')
@@ -341,16 +364,53 @@ class TestReponses(EssaiServeur):
     def test_04_moteur_et_recherche(self):
         statut, d = api('/api/moteur/choisir', {'cle': 'base', 'vision': 'fp16'})
         self.assertEqual(statut, 200, d)
+        # Pendant le changement et la préparation du moteur, la recherche attend : « préparation », jamais d'erreur.
+        statut, r = api('/api/recherche?q=chien&n=10')
+        self.assertEqual(statut, 200, r)
+        self.assertEqual(r['mode'], 'recherche')
+        if r['preparation']:
+            self.assertEqual((r['sures'], r['peut_etre'], r['requete']), ([], [], 'chien'))
         e = attendre(lambda: (lambda x: x if x['recherche_prete'] and not x['changement'] else None)(api('/api/etat')[1]), 60)
         self.assertTrue(e, 'le moteur n\'a pas été activé')
         self.assertEqual(e['moteur']['cle'], 'base')
+        self.assertTrue(e['moteur']['pret'])
+        self.assertFalse(e['preparation'])
         self.assertEqual(api('/api/moteur/choisir', {'cle': 'base', 'vision': 'fp16'})[1], {'deja': True})
         statut, r = api('/api/recherche?q=chien&n=10')
         self.assertEqual(statut, 200, r)
         self.assertEqual(r['mode'], 'recherche')
-        for cle in ('requete', 'total_sures', 'total_peut_etre', 'sures', 'peut_etre', 'suivant', 'analysees'):
+        self.assertFalse(r['preparation'])
+        for cle in ('requete', 'total_sures', 'total_peut_etre', 'total_proches', 'sures', 'peut_etre', 'suivant',
+                    'analysees'):
             self.assertIn(cle, r)
+        # « Voir les photos les plus proches » : la suite, sous les seuils, par pages.
+        statut, p = api('/api/recherche?q=chien&proches=1&n=60')
+        self.assertEqual(statut, 200, p)
+        self.assertEqual((p['mode'], p['preparation'], p['debut']), ('proches', False, 0))
+        self.assertEqual(p['total_proches'], r['total_proches'])
+        self.assertLessEqual(len(p['proches']), 60)
+        self.assertEqual(p['suivant'], len(p['proches']))
+        self.assertEqual(api('/api/recherche?q=&proches=1')[1]['mode'], 'dates')     # sans mots : par date
         self.vivant()
+
+    def test_05_page_logo_et_proches(self):
+        statut, _, corps = requete('GET', '/')
+        self.assertEqual(statut, 200)
+        page = corps.decode('utf-8')
+        # Le logo de l'en-tête est l'icône de MyPhotos : son image de 64 px, une seule fois dans la page.
+        self.assertNotIn('href="#logo"', page)
+        self.assertEqual(page.count('class="logo"'), 4)
+        debut = '.logo {\n  display: inline-block; width: 40px; height: 40px; flex: none;\n  background: url("'
+        self.assertEqual(page.count(debut), 1)
+        uri = page.split(debut, 1)[1].split('"', 1)[0]
+        self.assertTrue(uri.startswith('data:image/png;base64,'))
+        png = base64.b64decode(uri.split(',', 1)[1])
+        self.assertEqual(struct.unpack('>II', png[16:24]), (64, 64))
+        self.assertEqual(png, icone_64(), 'logo différent de construction/MyPhotos.ico (image de 64 px)')
+        # Bouton « Voir les photos les plus proches », section « Moins probables ».
+        for texte in ('id="proches-voir"', 'Voir les photos les plus proches', '>Moins probables<',
+                      'id="grille-proches"'):
+            self.assertIn(texte, page)
 
 
 @unittest.skipUnless(PHOTOS and Path(PHOTOS).is_dir(), 'MYPHOTOS_ESSAI_PHOTOS : dossier d\'images publiques')
@@ -504,11 +564,11 @@ class TestInstances(unittest.TestCase):
         if not port_libre(self.PORT2):
             self.skipTest(f'port {self.PORT2} déjà pris')
         donnees = DONNEES / 'essai-instances'
-        proc = lancer_serveur(donnees, self.PORT2, MYPHOTOS_INACTIVITE_S='4')
+        proc = lancer_serveur(donnees, self.PORT2, neutre=True, MYPHOTOS_INACTIVITE_S='4')
         try:
             attendre_serveur(proc, self.PORT2)
             # Deuxième lancement sur le même port : il voit MyPhotos et s'arrête aussitôt, sans erreur.
-            second = lancer_serveur(donnees, self.PORT2)
+            second = lancer_serveur(donnees, self.PORT2, neutre=True)
             try:
                 self.assertEqual(second.wait(timeout=60), 0)
             finally:
@@ -663,6 +723,338 @@ class TestOutils(unittest.TestCase):
         self.assertEqual(d['Carte graphique'], 'Intel UHD 620')
         self.assertEqual(d['Place libre'], '42 Go sur le disque C:')
         self.assertEqual(resume_materiel(None), [])
+
+
+class TestDemarrage(unittest.TestCase):
+    """Lancement avec un moteur déjà choisi : la page et /api/etat répondent avant que le moteur ne se charge
+    (« préparation ») ; une recherche lancée pendant ce temps attend sans erreur, puis aboutit. Vrai serveur, vrai
+    moteur « base », sur un autre port et d'autres données ; dossiers proposés neutralisés."""
+
+    PORT3 = PORT + 2
+
+    def test_page_avant_le_moteur(self):
+        if not port_libre(self.PORT3):
+            self.skipTest(f'port {self.PORT3} déjà pris')
+        from myphotos import base
+        donnees = DONNEES / 'essai-demarrage'
+        donnees.mkdir(parents=True, exist_ok=True)
+        b = base.Base(donnees / 'index.db', donnees / 'miniatures.db')
+        try:
+            for cle, valeur in (('moteur', 'base'), ('moteur_vision', 'fp16'), ('moteur_materiel', 'auto'),
+                                ('assistant', 'fini'), ('telechargement', None)):
+                b.meta_set(cle, valeur)
+        finally:
+            b.fermer()
+        hote = f'127.0.0.1:{self.PORT3}'
+        proc = lancer_serveur(donnees, self.PORT3, neutre=True)
+        try:
+            # Le port s'ouvre avant que MyPhotos ne serve : on attend qu'il accepte, sans requête HTTP.
+            fin = time.monotonic() + 40
+            while port_libre(self.PORT3):
+                self.assertIsNone(proc.poll(), 'le serveur s\'est arrêté au démarrage')
+                self.assertLess(time.monotonic(), fin, 'le serveur ne s\'ouvre pas')
+                time.sleep(0.05)
+            debut = time.monotonic()
+            statut, _, _ = requete('GET', '/', hote=hote, port=self.PORT3)
+            duree_page = time.monotonic() - debut
+            self.assertEqual(statut, 200)
+            statut, e = api('/api/etat', hote=hote, port=self.PORT3)
+            self.assertEqual(statut, 200)
+            # Rien ne se charge avant la première réponse à la page, puis un moment de calme : encore en préparation.
+            self.assertTrue(e['preparation'], e)
+            self.assertFalse(e['recherche_prete'])
+            self.assertEqual((e['moteur']['cle'], e['moteur']['pret']), ('base', False))
+            statut, r = api('/api/recherche?q=chien&n=10', hote=hote, port=self.PORT3)
+            self.assertEqual(statut, 200, r)
+            self.assertTrue(r['preparation'])
+            self.assertEqual((r['sures'], r['peut_etre']), ([], []))
+            statut, r = api('/api/recherche?q=chien&proches=1&n=60', hote=hote, port=self.PORT3)
+            self.assertEqual((statut, r['mode'], r['preparation'], r['proches']), (200, 'proches', True, []))
+            self.assertLess(duree_page, 3.0, 'la page attend le moteur')
+            # Puis le moteur se prépare tout seul, et la même recherche aboutit.
+            e = attendre(lambda: (lambda x: x if x['recherche_prete'] else None)(
+                api('/api/etat', hote=hote, port=self.PORT3)[1]), 90)
+            self.assertTrue(e, 'le moteur ne s\'est pas préparé')
+            self.assertFalse(e['preparation'])
+            self.assertTrue(e['moteur']['pret'])
+            statut, r = api('/api/recherche?q=chien&n=10', hote=hote, port=self.PORT3)
+            self.assertEqual((statut, r['mode'], r['preparation']), (200, 'recherche', False), r)
+            self.assertIsNone(proc.poll())
+        finally:
+            try:
+                if proc.poll() is None:
+                    api('/api/quitter', {}, hote=hote, port=self.PORT3)
+                    proc.wait(timeout=90)
+            except Exception:
+                pass
+            finally:
+                arreter_par_pid(proc)
+                proc.sortie.close()
+        self.assertEqual(proc.returncode, 0)
+
+
+class EssaiApplication(unittest.TestCase):
+    """Application dans ce processus, sur une base temporaire. Moteur, matériel et dossiers proposés simulés : rien
+    n'est chargé ni parcouru. Le faux moteur attend self.barriere avant d'être « chargé »."""
+
+    def setUp(self):
+        import numpy as np
+        from myphotos import serveur
+        self.serveur = serveur
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-preparation-'))
+        self.barriere = threading.Event()
+        self.crees = []
+        essai = self
+
+        class FauxMoteur:
+            def __init__(self, cle=None, vision=None, texte=None, materiel='auto', carte=0, **options):
+                essai.crees.append({'cle': cle, 'vision': vision, 'materiel': materiel, 'carte': carte})
+                essai.barriere.wait(20)                     # chargement « long », relâché par l'essai
+                self.cle, self.carte = cle, carte
+                self.materiel = self.materiel_texte = 'processeur'
+
+            def vecteurs_textes(self, textes):
+                v = np.zeros((len(textes), 8), np.float32)
+                v[:, 0] = 1
+                return v
+
+            def vecteurs_images(self, lot):
+                v = np.zeros((len(lot), 8), np.float32)
+                v[:, 0] = 1
+                return v
+
+        conseil = {'cle': 'base', 'vision': 'fp16', 'materiel': 'carte', 'indice_carte': 1, 'alternatives': [
+            {'cle': 'rapide', 'vision': 'fp16', 'materiel': 'carte', 'indice_carte': 1}]}
+        self.correctifs = [
+            mock.patch.object(serveur.config, 'BASE', self.tmp / 'index.db'),
+            mock.patch.object(serveur.config, 'MINIATURES', self.tmp / 'miniatures.db'),
+            mock.patch.object(serveur.modele, 'Moteur', FauxMoteur),
+            mock.patch.object(serveur.modele, 'manquants', lambda *a, **k: []),
+            mock.patch.object(serveur, 'dossiers_proposes', lambda: []),
+            mock.patch.object(serveur, 'dossier_images', lambda: None),
+            mock.patch.object(serveur.materiel, 'analyser', lambda n=None: {'directml': True}),
+            mock.patch.object(serveur.materiel, 'recommander', lambda analyse, n=None: conseil),
+            mock.patch.object(serveur, 'SANS_PAGE', True),
+        ]
+        for c in self.correctifs:
+            c.start()
+        self.app = serveur.Application(serveur=mock.Mock())
+
+    def tearDown(self):
+        self.barriere.set()
+        try:
+            self.app.fermer()
+        finally:
+            for c in reversed(self.correctifs):
+                c.stop()
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def prete(self, cle=None):
+        e = self.app.etat()
+        return (e['recherche_prete'] and not self.app.changement and (cle is None or e['moteur']['cle'] == cle)
+                and e)
+
+
+class TestPreparation(EssaiApplication):
+
+    def test_rien_avant_la_page_puis_preparation(self):
+        app = self.app
+        for cle, valeur in (('moteur', 'base'), ('moteur_vision', 'fp16'), ('moteur_carte', 1),
+                            ('assistant', 'fini')):
+            app.base.meta_set(cle, valeur)
+        app.demarrer()
+        e = app.etat()
+        self.assertTrue(e['preparation'])
+        self.assertFalse(e['recherche_prete'])
+        self.assertFalse(e['moteur']['pret'])
+        # Une recherche pendant la préparation : réponse vide marquée « préparation », jamais une erreur.
+        r = app.chercher('chien', 0, 10)
+        self.assertEqual((r['mode'], r['preparation'], r['sures'], r['peut_etre']), ('recherche', True, [], []))
+        r = app.chercher('chien', 0, 60, proches=True)
+        self.assertEqual((r['mode'], r['preparation'], r['proches']), ('proches', True, []))
+        self.assertEqual(app.chercher('', 0, 10)['mode'], 'dates')
+        time.sleep(0.6)
+        self.assertEqual(self.crees, [], 'moteur chargé avant que le serveur ne soit prêt')
+        app.serveur_pret()
+        time.sleep(0.6)
+        self.assertEqual(self.crees, [], 'moteur chargé avant la première réponse à la page')
+        app.page_servie()
+        self.assertTrue(attendre(lambda: self.crees, 5, 0.05), 'le moteur ne se charge pas')
+        self.assertTrue(app.etat()['preparation'])          # chargement en cours : toujours « préparation »
+        self.assertTrue(app.chercher('chien', 0, 10)['preparation'])
+        self.barriere.set()
+        e = attendre(self.prete, 10, 0.05)
+        self.assertTrue(e, 'la préparation ne finit pas')
+        self.assertFalse(e['preparation'])
+        self.assertTrue(e['moteur']['pret'])
+        r = app.chercher('chien', 0, 10)
+        self.assertEqual((r['mode'], r['preparation'], r['total_proches']), ('recherche', False, 0))
+        # Un seul chargement, partagé par l'analyse et la recherche, sur la carte mémorisée avec le moteur.
+        self.assertEqual(self.crees, [{'cle': 'base', 'vision': 'fp16', 'materiel': 'auto', 'carte': 1}])
+        self.assertTrue(attendre(lambda: app.indexeur.actif or app.etat()['analyse']['phase'] == 'termine', 5, 0.05))
+
+    def test_sans_page_le_moteur_se_prepare_quand_meme(self):
+        app = self.app
+        app.base.meta_set('moteur', 'base')
+        app.demarrer()
+        self.barriere.set()
+        app.serveur_pret()                                   # aucune page : préparation au bout de 2 s
+        self.assertTrue(attendre(self.prete, 10, 0.1))
+        self.assertEqual(self.crees[0]['carte'], 0)          # aucune carte mémorisée : la carte principale
+
+    def test_carte_conseillee_memorisee(self):
+        app = self.app
+        app.base.meta_set('assistant', 'fini')
+        app.demarrer()
+        self.barriere.set()
+        app.serveur_pret()
+        app.page_servie()
+        self.assertEqual(app.choisir_moteur('base', 'fp16', 'carte'), {'deja': False})
+        self.assertTrue(attendre(lambda: self.prete('base'), 15, 0.05))
+        self.assertEqual(app.base.meta_get('moteur_carte'), 1)          # materiel.recommander()['indice_carte']
+        self.assertEqual(self.crees[-1]['carte'], 1)
+        self.assertEqual(app.moteur['carte'], 1)
+        # Sur le processeur : aucune carte.
+        self.assertEqual(app.choisir_moteur('rapide', 'fp16', 'processeur'), {'deja': False})
+        self.assertTrue(attendre(lambda: self.prete('rapide'), 15, 0.05))
+        self.assertIsNone(app.base.meta_get('moteur_carte'))
+        self.assertEqual((self.crees[-1]['cle'], self.crees[-1]['materiel'], self.crees[-1]['carte']),
+                         ('rapide', 'processeur', 0))
+
+
+class TestRechercheProches(unittest.TestCase):
+    """recherche.chercher(..., proches=True) : les photos sous les seuils, de la plus proche à la moins proche, par
+    pages sans doublon ; les résultats et les seuils (REGLAGES) ne changent pas."""
+
+    def setUp(self):
+        import numpy as np
+        from myphotos import modele, recherche
+        self.recherche = recherche
+        r = recherche.reglages('base')
+        m = modele.info('base')
+
+        def cosinus(p):                                        # probabilité -> cosinus (inverse de probabilite)
+            return (np.log(p / (1 - p)) - m['biais']) / m['echelle']
+        # 3 sûres, 2 « peut-être », 9 au-dessous, dont deux photos identiques (même score : ordre stable).
+        c = ([cosinus(r['seuil_sur']) + d for d in (0.03, 0.02, 0.01)]
+             + [cosinus(r['seuil_peut_etre']) + d for d in (0.004, 0.002)]
+             + [cosinus(r['seuil_peut_etre']) - d for d in (0.01, 0.05, 0.02, 0.02, 0.3, 0.08, 0.1, 0.2, 0.03)])
+        dim = 16
+        mat = np.zeros((len(c), dim), np.float32)
+        for i, x in enumerate(c):
+            mat[i, 0] = x
+            mat[i, 1 + (i % (dim - 1))] = np.sqrt(1 - x * x)
+        mat[8] = mat[7]                                        # deux photos identiques
+        self.ids = np.arange(101, 101 + len(c), dtype=np.int64)
+        self.mat = mat / np.linalg.norm(mat, axis=1, keepdims=True)
+        self.scores = self.mat[:, 0]
+        p = modele.probabilite(self.scores, 'base')
+        self.garde = {int(i) for i in self.ids[p >= r['seuil_peut_etre']]}
+        self.sures = {int(i) for i in self.ids[p >= r['seuil_sur']]}
+        ids, matrice = self.ids, self.mat
+
+        class Base:
+            def generation(self):
+                return 1
+
+            def vecteurs(self, cle):
+                return ids, matrice, np.full(len(ids), np.datetime64('NaT', 's'))
+
+        class Texte:
+            def vecteurs_textes(self, textes):
+                v = np.zeros((len(textes), dim), np.float32)
+                v[:, 0] = 1
+                return v
+        self.reglages_avant = {k: dict(v) for k, v in recherche.REGLAGES.items()}
+        self.r = recherche.Recherche(Base(), Texte, 'base')
+
+    def test_resultats_inchanges_et_total_proches(self):
+        res = self.r.chercher('chien', 0, 100)
+        self.assertEqual((res['total_sures'], res['total_peut_etre'], res['total_proches']), (3, 2, 9))
+        self.assertEqual({i['id'] for i in res['sures']}, self.sures)
+        self.assertEqual({i['id'] for i in res['sures'] + res['peut_etre']}, self.garde)
+        self.assertNotIn('proches', res)
+        self.assertEqual(self.recherche.REGLAGES, self.reglages_avant)
+
+    def test_proches_par_pages(self):
+        tout = self.r.chercher('chien', 0, None, proches=True)
+        ids = [i['id'] for i in tout['proches']]
+        self.assertEqual((tout['total_proches'], len(ids)), (9, 9))
+        self.assertFalse(set(ids) & self.garde)                 # aucun résultat « repêché »
+        self.assertEqual(set(ids) | self.garde, {int(i) for i in self.ids})
+        scores = [i['score'] for i in tout['proches']]
+        self.assertEqual(scores, sorted(scores, reverse=True))  # de la plus proche à la moins proche
+        self.assertLess(ids.index(108), ids.index(109))         # même score : ordre stable
+        self.assertNotIn('sures', tout)
+        pages = []
+        for debut in range(0, 12, 4):
+            p = self.r.chercher('chien', debut, 4, proches=True)
+            self.assertEqual(p['debut'], debut)
+            pages += [i['id'] for i in p['proches']]
+        self.assertEqual(pages, ids)                             # pages contiguës, sans doublon
+        self.assertEqual(self.r.chercher('chien', 50, 4, proches=True)['proches'], [])
+        self.assertIsNone(self.r.chercher('   ', 0, 4, proches=True))
+
+
+class TestCarte(unittest.TestCase):
+    """modele.Moteur(carte=…) : indice DirectML transmis à ONNX Runtime ; carte refusée : la carte principale, puis
+    le processeur. ONNX Runtime est simulé : aucun moteur réel n'est chargé."""
+
+    @staticmethod
+    def faux_ort(acceptees):
+        essais = []
+
+        class Session:
+            def __init__(self, chemin, sess_options=None, providers=None):
+                p = providers[0]
+                if isinstance(p, tuple):
+                    essais.append(p[1]['device_id'])
+                    if p[1]['device_id'] not in acceptees:
+                        raise RuntimeError('carte refusée')
+                    self.fournisseurs = ['DmlExecutionProvider', 'CPUExecutionProvider']
+                else:
+                    essais.append('processeur')
+                    self.fournisseurs = ['CPUExecutionProvider']
+
+            def get_providers(self):
+                return self.fournisseurs
+
+            def get_inputs(self):
+                return [types.SimpleNamespace(name='pixel_values', type='tensor(float16)')]
+
+            def get_outputs(self):
+                return [types.SimpleNamespace(name='pooler_output')]
+        ort = types.SimpleNamespace(
+            InferenceSession=Session, SessionOptions=types.SimpleNamespace,
+            GraphOptimizationLevel=types.SimpleNamespace(ORT_ENABLE_BASIC=1, ORT_ENABLE_ALL=99),
+            ExecutionMode=types.SimpleNamespace(ORT_SEQUENTIAL=0),
+            get_available_providers=lambda: ['DmlExecutionProvider', 'CPUExecutionProvider'])
+        return ort, essais
+
+    def moteur(self, acceptees, **options):
+        from myphotos import modele
+        ort, essais = self.faux_ort(acceptees)
+        with mock.patch.dict(sys.modules, {'onnxruntime': ort}):
+            m = modele.Moteur('base', vision='fp16', texte='fp16', charger_texte=False, **options)
+        return m, essais
+
+    def test_carte_choisie(self):
+        m, essais = self.moteur({0, 1}, carte=1)
+        self.assertEqual((m.materiel, m.carte, essais), ('carte graphique', 1, [1]))
+
+    def test_carte_principale_par_defaut(self):
+        m, essais = self.moteur({0, 1})
+        self.assertEqual((m.carte, essais), (0, [0]))
+        for bizarre in (None, -1, 64, True, '1', 1.0):
+            self.assertEqual(self.moteur({0, 1}, carte=bizarre)[1], [0], bizarre)
+
+    def test_carte_refusee(self):
+        m, essais = self.moteur({0}, carte=2)
+        self.assertEqual((m.materiel, m.carte, essais), ('carte graphique', 0, [2, 0]))
+        m, essais = self.moteur(set(), carte=2)
+        self.assertEqual((m.materiel, essais), ('processeur', [2, 0, 'processeur']))
+        m, essais = self.moteur({0, 1}, carte=1, materiel='processeur')
+        self.assertEqual((m.materiel, essais), ('processeur', ['processeur']))
 
 
 if __name__ == '__main__':

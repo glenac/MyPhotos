@@ -117,13 +117,18 @@ class Recherche:
 
     # ------------------------------------------------ recherche
 
-    def chercher(self, texte, debut=0, n=200):
+    def chercher(self, texte, debut=0, n=200, proches=False):
         """Photos qui correspondent au texte, de la plus probable à la moins probable.
 
         Renvoie None si le texte est vide (afficher alors les photos par date), sinon
-        {requete, total_sures, total_peut_etre, sures: [{id, score, proba}], peut_etre: [...], debut,
-        analysees, duree_ms}. La page [debut, debut + n) court sur la liste complète : les sûres d'abord,
-        puis les « peut-être ». score = cosinus, proba = probabilité calibrée.
+        {requete, total_sures, total_peut_etre, total_proches, sures: [{id, score, proba}], peut_etre: [...],
+        debut, analysees, duree_ms}. La page [debut, debut + n) court sur la liste complète : les sûres d'abord,
+        puis les « peut-être ». score = cosinus, proba = probabilité calibrée. total_proches : photos analysées
+        restantes, sous les seuils.
+
+        proches=True : ces photos restantes, de la plus proche à la moins proche, pour qui veut aller voir au-delà
+        des résultats ({…, proches: [...]} ; la page [debut, debut + n) court sur elles seules). Les seuils
+        (REGLAGES) sont les mêmes : rien n'est « repêché » parmi les résultats.
         """
         t0 = time.perf_counter()
         requete = normaliser_requete(texte)
@@ -148,13 +153,24 @@ class Recherche:
         else:
             garde = garde[np.argsort(-scores[garde], kind='stable')]
         nb_sures = int(np.count_nonzero(proba[garde] >= r['seuil_sur']))
-        page = garde[debut:] if n is None else garde[debut:debut + n]
-        items = [{'id': int(ids[i]), 'score': round(float(scores[i]), 4), 'proba': float(f'{proba[i]:.4g}')}
-                 for i in page]
-        k = max(0, min(len(items), nb_sures - debut))
-        return {'requete': requete, 'total_sures': nb_sures, 'total_peut_etre': int(len(garde)) - nb_sures,
-                'sures': items[:k], 'peut_etre': items[k:], 'debut': debut, 'analysees': int(len(ids)),
-                'duree_ms': round((time.perf_counter() - t0) * 1000, 1)}
+        res = {'requete': requete, 'total_sures': nb_sures, 'total_peut_etre': int(len(garde)) - nb_sures,
+               'total_proches': int(len(scores) - len(garde)), 'debut': debut, 'analysees': int(len(ids))}
+
+        def fiches(indices):
+            return [{'id': int(ids[i]), 'score': round(float(scores[i]), 4), 'proba': float(f'{proba[i]:.4g}')}
+                    for i in indices]
+        if proches:
+            reste = np.ones(len(scores), dtype=bool)
+            reste[garde] = False
+            reste = np.flatnonzero(reste)
+            reste = reste[np.argsort(-scores[reste], kind='stable')]   # ordre stable : pages sans doublon
+            res['proches'] = fiches(reste[debut:] if n is None else reste[debut:debut + n])
+        else:
+            items = fiches(garde[debut:] if n is None else garde[debut:debut + n])
+            k = max(0, min(len(items), nb_sures - debut))
+            res['sures'], res['peut_etre'] = items[:k], items[k:]
+        res['duree_ms'] = round((time.perf_counter() - t0) * 1000, 1)
+        return res
 
     # ------------------------------------------------ vecteur de la requête
 

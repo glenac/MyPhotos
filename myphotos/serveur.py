@@ -6,6 +6,10 @@ Une seule instance : si le port est déjà pris par MyPhotos, on ouvre la page e
 /api/etat toutes les 2 s (toutes les 30 s quand elle est cachée) ; sans aucune requête pendant 3 minutes, le
 serveur s'arrête proprement (fin du lot d'analyse en cours, fermeture des bases).
 
+Au lancement, le moteur de reconnaissance se charge en arrière-plan, après la première réponse à la page : la page
+s'affiche tout de suite, /api/etat dit « preparation » pendant ce temps et la recherche répond « préparation »
+(la page la relance d'elle-même) au lieu d'une erreur.
+
 Sécurité : n'importe quel site ouvert dans le navigateur peut viser 127.0.0.1. D'où :
 - Host obligatoire : 127.0.0.1:PORT ou localhost:PORT (parade au « DNS rebinding ») ;
 - POST : en-tête X-MyPhotos: 1 (un autre site ne peut pas le poser sans autorisation CORS, jamais donnée),
@@ -75,6 +79,16 @@ COTE_CONVERSION = 2560             # TIFF : converti en JPEG de 2560 px au plus 
 MARGE_DISQUE = 200 * 1024 * 1024
 CHOIX_DOSSIER_S = 900              # la fenêtre « Choisir un dossier » attend au plus 15 minutes
 ORDRE_MOTEURS = ('rapide', 'base', 'precis', 'tres_precis')
+# Préparation du moteur. Pendant qu'ONNX Runtime crée ses sessions (3 à 6 s), il garde le GIL jusqu'à 1,2 s
+# d'affilée : chargé au lancement, le moteur retardait la page de 6 s (mesuré le 24/11/2026). Il attend donc que
+# la page (ou /api/etat) ait répondu, puis un court moment sans requête : la page s'affiche d'abord.
+PAGE_ATTENDUE_S = 15.0             # aucune page servie : préparation quand même au bout de 15 s…
+SANS_PAGE_ATTENTE_S = 2.0          # … ou de 2 s quand MyPhotos est lancé sans ouvrir la page (MYPHOTOS_SANS_PAGE)
+CALME_S = 0.4                      # après la première réponse : 0,4 s sans aucune requête…
+CALME_MAX_S = 2.0                  # … sans attendre plus de 2 s
+PREPARATION_MAX_S = 300            # un changement de moteur attend sa préparation au plus 5 minutes
+ATTENTE_RECHERCHE_S = 2.0          # moteur en plein chargement : une recherche attend jusqu'à 2 s qu'il soit prêt
+PREPARATION = 'Préparation du moteur de reconnaissance…'
 
 # Images que le navigateur affiche telles quelles ; les autres extensions de config.EXTENSIONS (TIFF) sont
 # converties en JPEG à la volée.
@@ -663,10 +677,19 @@ class Application:
         self._partage = None                     # (clé, MoteurPartage) du moteur actif
         self._verrou_partage = threading.Lock()
         self._verrou_carte = threading.Lock()    # un seul calcul à la fois sur la carte graphique
+        # Préparation du moteur actif : {'etat': 'attente'|'en_cours'|'pret'|'erreur', 'fil', 'duree_s'}.
+        self._preparation = None
+        self._premiere_reponse = threading.Event()   # la page (ou /api/etat) a répondu une première fois
+        self._feu_vert = threading.Event()           # le moteur peut se charger
+        self._requetes = 0                           # requêtes HTTP en cours
+        self._derniere_requete = time.monotonic()    # début ou fin de la plus récente
+        self._verrou_requetes = threading.Lock()
 
     # ------------------------------------------------ démarrage et arrêt
 
     def demarrer(self):
+        if self.serveur is None:
+            self._feu_vert.set()                 # pas de page à servir : rien à attendre
         self._nb_dossiers = len(self.base.dossiers())
         cle = self.base.meta_get('moteur')
         if isinstance(cle, str) and cle in modele.MODELES_DISPO:
@@ -676,7 +699,7 @@ class Application:
                 if FACTICE:
                     self.factices.add((cle, vision))
                 if self.pret(cle, vision):
-                    self._activer(cle, vision, texte, materiel_pref)
+                    self._activer(cle, vision, texte, materiel_pref, self._carte_enregistree())
                 else:
                     journal.warning('moteur %s : fichiers absents, à télécharger de nouveau', cle)
             except Refus as e:
@@ -696,6 +719,39 @@ class Application:
 
     def activite(self):
         self.derniere_activite = time.monotonic()
+
+    # ------------------------------------------------ feu vert pour le moteur
+
+    def serveur_pret(self):
+        """Le serveur accepte les requêtes : le moteur se préparera après la première réponse à la page."""
+        threading.Thread(target=self._donner_feu_vert, name='myphotos-feu-vert', daemon=True).start()
+
+    def page_servie(self):
+        """La page ou /api/etat vient de répondre (une page déjà ouverte se contente de /api/etat)."""
+        self._premiere_reponse.set()
+
+    def debut_requete(self):
+        with self._verrou_requetes:
+            self._requetes += 1
+            self._derniere_requete = time.monotonic()
+
+    def fin_requete(self):
+        with self._verrou_requetes:
+            self._requetes -= 1
+            self._derniere_requete = time.monotonic()
+
+    def _donner_feu_vert(self):
+        """Première réponse à la page (ou délai dépassé), puis CALME_S sans requête (CALME_MAX_S au plus) : la page
+        a ce qu'il lui faut pour s'afficher avant que le chargement du moteur ne ralentisse le serveur."""
+        self._premiere_reponse.wait(SANS_PAGE_ATTENTE_S if SANS_PAGE else PAGE_ATTENDUE_S)
+        debut = time.monotonic()
+        while not self._fin.is_set() and time.monotonic() - debut < CALME_MAX_S:
+            with self._verrou_requetes:
+                calme = self._requetes <= 0 and time.monotonic() - self._derniere_requete >= CALME_S
+            if calme:
+                break
+            time.sleep(0.05)
+        self._feu_vert.set()
 
     def _veiller(self):
         while not self._fin.wait(2.0):
@@ -733,6 +789,7 @@ class Application:
             self._ferme = True
             self.arret_lance = True
         self._fin.set()
+        self._feu_vert.set()                     # une préparation en attente se réveille… et renonce
         t = self.telechargement
         if t is not None:
             t.arret.set()
@@ -744,6 +801,7 @@ class Application:
                 journal.exception('arrêt de l\'analyse')
         if t is not None and t.fil.is_alive():
             t.fil.join(timeout=10)
+        self._attendre_preparation(self._preparation, 60)   # jamais de sortie au milieu d'un chargement
         self._liberer_moteurs()                  # dans un ordre sûr, plutôt qu'au hasard de la sortie de Python
         self.base.fermer()
 
@@ -786,16 +844,44 @@ class Application:
             return sum(modele.info(cle)['fichiers'][n][0] for n in self._noms(cle, vision))
         return modele.taille_telechargement(cle, vision, texte)
 
-    def _moteur_commun(self, cle, vision, texte, prefere):
+    def _moteur_commun(self, cle, vision, texte, prefere, carte=None):
         """Le moteur (vision + texte) du moteur actif, chargé une fois au premier besoin (voir MoteurPartage)."""
-        cle_partage = (cle, vision, texte, prefere)
+        cle_partage = (cle, vision, texte, prefere, carte)
         with self._verrou_partage:
             if self._partage is not None and self._partage[0] == cle_partage:
                 return self._partage[1]
-            m = MoteurPartage(modele.Moteur(cle, vision=vision, texte=texte, materiel=prefere), self._verrou_carte)
+            if self.arret_lance:
+                raise RuntimeError('MyPhotos s\'arrête')
+            debut = time.monotonic()
+            m = MoteurPartage(modele.Moteur(cle, vision=vision, texte=texte, materiel=prefere,
+                                            carte=modele.indice_carte(carte)), self._verrou_carte)
             self._partage = (cle_partage, m)
-            journal.info('moteur %s chargé : images sur %s, texte sur %s', cle, m.materiel, m.materiel_texte)
+            journal.info('moteur %s chargé en %.1f s : images sur %s, texte sur %s (carte %s)', cle,
+                         time.monotonic() - debut, m.materiel, m.materiel_texte, getattr(m, 'carte', '?'))
             return m
+
+    def _carte_enregistree(self):
+        """Indice DirectML mémorisé avec le moteur choisi (None : pas encore connu, la carte principale sert)."""
+        c = self.base.meta_get('moteur_carte')
+        try:
+            c = int(c) if c is not None else None
+        except (TypeError, ValueError):
+            return None
+        return c if c is not None and 0 <= c < 64 else None
+
+    def _indice_carte(self, cle):
+        """Indice DirectML de la carte graphique conseillée par materiel.recommander() pour ce moteur (0 à défaut)."""
+        try:
+            self.infos_materiel()                      # analyse gardée 10 minutes
+            with self._verrou_materiel:
+                cartes = dict((self._materiel[1] if self._materiel else {}).get('_cartes') or {})
+        except Exception:
+            journal.debug('choix de la carte graphique', exc_info=True)
+            return 0
+        c = cartes.get(cle)
+        if c is None:                                  # moteur conseillé sur le processeur : la carte des autres
+            c = next((x for x in cartes.values() if x is not None), None)
+        return modele.indice_carte(c)
 
     def _liberer_moteurs(self):
         """Libère l'analyse, la recherche et leur moteur commun d'un coup (changement de moteur, arrêt)."""
@@ -805,34 +891,80 @@ class Application:
             self._partage = None
         gc.collect()
 
-    def _activer(self, cle, vision, texte, materiel_pref):
+    def _activer(self, cle, vision, texte, materiel_pref, carte=None):
+        """Moteur actif : analyse et recherche prêtes à servir, moteur chargé en arrière-plan (_preparer)."""
         prefere = 'processeur' if materiel_pref == 'processeur' else 'auto'
+        carte = None if prefere == 'processeur' else carte
 
         def fabrique(materiel='auto'):
+            self._feu_vert.wait()                       # jamais avant que la page ait répondu
             if materiel == 'processeur' and prefere != 'processeur':
                 # Repli de l'indexeur quand la carte graphique a échoué : images seules, sur le processeur.
                 return modele.Moteur(cle, vision=vision, texte=texte, materiel='processeur', charger_texte=False)
-            return self._moteur_commun(cle, vision, texte, prefere)
+            return self._moteur_commun(cle, vision, texte, prefere, carte)
 
         def fournisseur():
-            return self._moteur_commun(cle, vision, texte, prefere)
+            self._feu_vert.wait()
+            return self._moteur_commun(cle, vision, texte, prefere, carte)
 
-        self.moteur = {'cle': cle, 'vision': vision, 'texte': texte, 'materiel': prefere}
+        self.moteur = {'cle': cle, 'vision': vision, 'texte': texte, 'materiel': prefere, 'carte': carte}
         self.indexeur = Indexeur(self.base, fabrique, cle, inventaire_auto_s=INVENTAIRE_AUTO_S)
         self.recherche = Recherche(self.base, fournisseur, cle)
-        self.indexeur.demarrer()
-        self._prechauffer(self.recherche)
-        journal.info('moteur actif : %s (%s, %s)', cle, vision, prefere)
+        prep = {'etat': 'attente', 'fil': None, 'duree_s': None, 'finie': threading.Event()}
+        prep['fil'] = threading.Thread(target=self._preparer, args=(prep, cle, vision, texte, prefere, carte),
+                                       name='myphotos-preparation', daemon=True)
+        self._preparation = prep
+        prep['fil'].start()
+        journal.info('moteur actif : %s (%s, %s, carte %s)', cle, vision, prefere, carte)
+
+    def _perimee(self, prep):
+        return prep is not self._preparation or self.arret_lance
+
+    def _preparer(self, prep, *moteur):
+        try:
+            self._preparer_moteur(prep, *moteur)
+        finally:
+            prep['finie'].set()
+
+    def _preparer_moteur(self, prep, cle, vision, texte, prefere, carte):
+        """Charge le moteur, les photos analysées et un premier calcul de texte (la 1re recherche sera rapide),
+        puis lance l'analyse. Attend le feu vert : la page et /api/etat répondent d'abord."""
+        while not self._feu_vert.wait(0.2):
+            if self._perimee(prep):                    # moteur changé ou arrêt avant même le feu vert
+                return
+        if self._perimee(prep):
+            return
+        prep['etat'] = 'en_cours'
+        debut = time.monotonic()
+        ok = False
+        try:
+            self._moteur_commun(cle, vision, texte, prefere, carte)
+            r = self.recherche
+            if r is not None and not self._perimee(prep):
+                r.chercher('photo', 0, 1)
+            ok = True
+        except Exception as e:
+            journal.warning('préparation du moteur %s impossible : %s', cle, e)
+        if self._perimee(prep):
+            return
+        prep['duree_s'] = round(time.monotonic() - debut, 2)
+        prep['etat'] = 'pret' if ok else 'erreur'      # en erreur, la recherche réessaiera et dira pourquoi
+        if ok:
+            journal.info('moteur %s prêt en %.1f s', cle, prep['duree_s'])
+        ix = self.indexeur
+        if ix is not None:
+            ix.demarrer()                              # sans effet s'il tourne déjà (dossier ajouté entre-temps)
 
     @staticmethod
-    def _prechauffer(r):
-        """Charge le moteur de texte et les photos analysées tout de suite : la 1re recherche sera rapide."""
-        def travail():
-            try:
-                r.chercher('photo', 0, 1)
-            except Exception as e:
-                journal.info('préchauffage de la recherche : %s', e)
-        threading.Thread(target=travail, name='myphotos-prechauffage', daemon=True).start()
+    def _attendre_preparation(prep, delai):
+        fil = prep.get('fil') if prep else None
+        if fil is not None and fil is not threading.current_thread() and fil.is_alive():
+            fil.join(timeout=delai)
+
+    def en_preparation(self):
+        """Vrai tant que le moteur actif se charge (ou attend son feu vert)."""
+        prep = self._preparation
+        return self.moteur is not None and prep is not None and prep['etat'] in ('attente', 'en_cours')
 
     def telecharger(self, cle, vision=None, materiel_pref=None, activer=True):
         cle, vision, texte = self._variante(cle, vision)
@@ -893,16 +1025,22 @@ class Application:
 
     def _changer_moteur(self, cle, vision, texte, prefere):
         try:
+            # Carte graphique conseillée par l'analyse du matériel (déjà faite pour proposer les moteurs).
+            carte = None if prefere == 'processeur' else self._indice_carte(cle)
             ancien = self.indexeur
             if ancien is not None:
                 ancien.arreter(attendre=True)          # fin du lot en cours
             if self.arret_lance:
                 return
+            prep, self._preparation = self._preparation, None   # l'ancienne préparation renonce…
+            self._attendre_preparation(prep, PREPARATION_MAX_S)  # … après la fin d'un chargement commencé
             self._liberer_moteurs()                    # l'ancien moteur part en entier avant le nouveau
             self.base.meta_set('moteur', cle)
             self.base.meta_set('moteur_vision', vision)
             self.base.meta_set('moteur_materiel', prefere)
-            self._activer(cle, vision, texte, prefere)
+            self.base.meta_set('moteur_carte', carte)
+            self._activer(cle, vision, texte, prefere, carte)
+            self._attendre_preparation(self._preparation, PREPARATION_MAX_S)
         except Exception:
             journal.exception('changement de moteur')
         finally:
@@ -989,12 +1127,15 @@ class Application:
                 'conseille': cle == conseille,
                 'taille_totale': sum(fiche['fichiers'][x][0] for x in self._noms(cle, vision)),
             })
+        # Indice DirectML de la carte conseillée, par moteur (usage interne : jamais envoyé à la page).
+        cartes = {cle: o.get('indice_carte') for cle, o in options.items()
+                  if isinstance(o.get('indice_carte'), int) and not isinstance(o.get('indice_carte'), bool)}
         return {'resume': resume_materiel(analyse), 'carte': carte, 'nb_photos': n, 'nb_photos_origine': origine,
-                'conseil': conseille, 'moteurs': moteurs}
+                'conseil': conseille, 'moteurs': moteurs, '_cartes': cartes}
 
     def _avec_etat_moteurs(self, res):
         """Ce qui bouge d'une fois à l'autre : moteur actuel et octets restant à télécharger."""
-        res = dict(res)
+        res = {k: v for k, v in res.items() if not k.startswith('_')}
         actuel = self.moteur['cle'] if self.moteur else None
         moteurs = []
         for m in res['moteurs']:
@@ -1094,6 +1235,8 @@ class Application:
         m = self.moteur
         t = self.telechargement
         partage = self._partage
+        prep = self._preparation
+        pret = m is not None and prep is not None and prep['etat'] == 'pret'
         sur = (analyse or {}).get('materiel') or (partage[1].materiel if partage is not None else None)
         return {
             'nom': NOM, 'version': config.VERSION,
@@ -1101,13 +1244,15 @@ class Application:
             'moteur': None if m is None else {
                 'cle': m['cle'], 'nom': modele.info(m['cle']).get('nom') or m['cle'],
                 'description': sans_jargon(modele.info(m['cle']).get('description')), 'vision': m['vision'],
-                'materiel': sur},
+                'materiel': sur, 'pret': pret},
             'telechargement': t.resume() if t is not None else None,
             'changement': self.changement,
+            # Le moteur se charge (quelques secondes après le lancement) : la recherche attend, sans erreur.
+            'preparation': self.en_preparation(),
             'analyse': analyse,
             'photos': photos,
             'nb_dossiers': self._nb_dossiers,
-            'recherche_prete': self.recherche is not None,
+            'recherche_prete': self.recherche is not None and pret,
             'generation': self.base.generation(),
             'arret': self.arret_lance,
             'factice': FACTICE,
@@ -1115,16 +1260,22 @@ class Application:
 
     # ------------------------------------------------ photos
 
-    def chercher(self, q, debut, n):
+    def chercher(self, q, debut, n, proches=False):
+        """Résultats d'une recherche (mode 'recherche'), ou, avec proches=True, les photos suivantes sous les seuils
+        (mode 'proches', « moins probables »). Pendant la préparation du moteur : réponse vide marquée
+        preparation=True, que la page relance d'elle-même, jamais une erreur."""
         if not (q or '').strip():
             return self.photos_par_date(debut, n)
         r = self.recherche
+        prep = self._preparation
+        if not self.changement and r is not None and prep is not None and prep['etat'] == 'en_cours':
+            prep['finie'].wait(ATTENTE_RECHERCHE_S)   # moteur en plein chargement : la réponse attend un peu
+        if self.changement or (r is not None and self.en_preparation()):
+            return self._attente_preparation(q, debut, proches)
         if r is None:
-            if self.changement:
-                raise Refus('Changement de moteur en cours : la recherche revient dans un instant.', 503)
             raise Refus('La recherche sera possible dès que le moteur de reconnaissance sera installé.', 503)
         try:
-            res = r.chercher(q, debut, n)
+            res = r.chercher(q, debut, n, proches=True) if proches else r.chercher(q, debut, n)
         except getattr(_recherche, 'MoteurIndisponible', RuntimeError) as e:
             raise Refus(sans_jargon(str(e)), 503)
         except Exception:
@@ -1132,7 +1283,8 @@ class Application:
             raise Refus('La recherche a rencontré un problème. Réessayez ; si cela continue, relancez MyPhotos.', 500)
         if res is None:
             return self.photos_par_date(debut, n)
-        page = list(res.get('sures') or []) + list(res.get('peut_etre') or [])
+        groupes = ('proches',) if proches else ('sures', 'peut_etre')
+        page = [i for g in groupes for i in (res.get(g) or [])]
         infos = {p['id']: p for p in self.base.photos([i['id'] for i in page])}
 
         def enrichir(items):
@@ -1143,11 +1295,21 @@ class Application:
                     sortie.append({'id': i['id'], 'proba': i.get('proba'), 'date': p['date'],
                                    'largeur': p['largeur'], 'hauteur': p['hauteur']})
             return sortie
-        return {'mode': 'recherche', 'requete': res.get('requete'), 'debut': res.get('debut', debut),
-                'suivant': res.get('debut', debut) + len(page),
-                'total_sures': res.get('total_sures', 0), 'total_peut_etre': res.get('total_peut_etre', 0),
-                'sures': enrichir(res.get('sures')), 'peut_etre': enrichir(res.get('peut_etre')),
-                'analysees': res.get('analysees'), 'duree_ms': res.get('duree_ms')}
+        reponse = {'mode': 'proches' if proches else 'recherche', 'preparation': False,
+                   'requete': res.get('requete'), 'debut': res.get('debut', debut),
+                   'suivant': res.get('debut', debut) + len(page),
+                   'total_sures': res.get('total_sures', 0), 'total_peut_etre': res.get('total_peut_etre', 0),
+                   'total_proches': res.get('total_proches', 0),
+                   'analysees': res.get('analysees'), 'duree_ms': res.get('duree_ms')}
+        for g in groupes:
+            reponse[g] = enrichir(res.get(g))
+        return reponse
+
+    def _attente_preparation(self, q, debut, proches):
+        return {'mode': 'proches' if proches else 'recherche', 'preparation': True, 'message': PREPARATION,
+                'requete': _recherche.normaliser_requete(q), 'debut': debut, 'suivant': debut,
+                'total_sures': 0, 'total_peut_etre': 0, 'total_proches': 0, 'sures': [], 'peut_etre': [],
+                'proches': [], 'analysees': None, 'duree_ms': 0}
 
     def photos_par_date(self, debut, n):
         r = self.base.photos_par_date(debut, n)
@@ -1365,6 +1527,15 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
 
     def _traiter(self, methode):
         app = self.server.app
+        if app is None:
+            return self._aiguiller(app, methode)
+        app.debut_requete()                      # requêtes en cours : le moteur attend un moment de calme
+        try:
+            self._aiguiller(app, methode)
+        finally:
+            app.fin_requete()
+
+    def _aiguiller(self, app, methode):
         try:
             if app is None:
                 return self._erreur(503, 'MyPhotos démarre, un instant…', fermer=True)
@@ -1418,9 +1589,11 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
 
     def _get(self, app, chemin, params):
         if chemin in ('/', '/index.html'):
-            return self._page()
+            self._page()
+            return app.page_servie()                  # le moteur pourra se préparer
         if chemin == '/api/etat':
-            return self._json(app.etat())
+            self._json(app.etat())
+            return app.page_servie()
         if chemin == '/api/materiel':
             return self._json(app.infos_materiel(refaire=(params.get('refaire') or [''])[-1] == '1'))
         if chemin == '/api/dossiers':
@@ -1431,6 +1604,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 raise Refus('Recherche trop longue.', 400)
             debut = self._entier(params, 'debut', 0, 0, 10 ** 8)
             n = self._entier(params, 'n', LISTE_DEFAUT, 1, LISTE_MAX)
+            if (params.get('proches') or [''])[-1] == '1' and q.strip():
+                return self._json(app.chercher(q, debut, n, proches=True))   # « voir les plus proches »
             return self._json(app.chercher(q, debut, n))
         for prefixe, action in (('/api/photo/', self._info_photo), ('/miniature/', self._miniature),
                                 ('/photo/', self._photo)):
@@ -1585,6 +1760,7 @@ def main(argv=None):
         print(f'{NOM} : {adresse}  (Ctrl+C pour arrêter)', flush=True)
     if not SANS_PAGE:
         ouvrir_page(adresse)
+    app.serveur_pret()                           # le moteur se chargera après la première réponse à la page
     try:
         serveur.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

@@ -6,6 +6,7 @@ Images générées par Pillow dans un dossier temporaire (jamais de vraies photo
 import io
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -13,11 +14,12 @@ import time
 import unittest
 import zlib
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np                                     # noqa: E402
-from PIL import Image                                  # noqa: E402
+from PIL import Image, ImageDraw                       # noqa: E402
 
 import images_essai as ie                              # noqa: E402
 from myphotos import indexation, modele, recherche  # noqa: E402
@@ -99,6 +101,20 @@ class Fabrique:
     @property
     def images(self):
         return sum(m.images for m in self.moteurs)
+
+
+class MoteurRetenu(MoteurFactice):
+    """Moteur dont chaque lot attend le feu vert : un lot très long, que l'arrêt de l'indexeur n'interrompt pas."""
+
+    def __init__(self, feu):
+        super().__init__()
+        self.feu = feu
+        self.dans_un_lot = threading.Event()
+
+    def vecteurs_images(self, lot):
+        self.dans_un_lot.set()
+        self.feu.wait(30)
+        return super().vecteurs_images(lot)
 
 
 class Modifie:
@@ -731,6 +747,314 @@ class TestRecherche(EssaiAvecImages):
         r = Recherche(self.base, lambda: self.texte, 'base')
         r.prechauffer(attendre=True)
         self.assertIsNotNone(r._matrice)
+
+
+# ---------------------------------------------------------------- relecture adverse du 24/11/2026
+# Chaque essai ci-dessous échouait avant la correction du défaut qu'il décrit.
+
+class TestRobustesse(EssaiAvecImages):
+
+    def test_nom_unicode_invalide(self):
+        """Un nom de fichier avec une moitié de caractère seule (UTF-16 invalide, que NTFS accepte) arrêtait toute
+        l'indexation : 0 photo indexée, phase « erreur »."""
+        bizarre = str(self.photos / 'serie' / 'photo\udc00x.jpg')
+        try:
+            ie.jpeg(bizarre, couleur=ie.BLEU)
+        except (OSError, UnicodeError):
+            self.skipTest('nom impossible à créer sur ce disque')
+        ix, _ = self.indexer()
+        self.assertEqual(ix.etat()['phase'], 'termine', ix.etat()['message'])
+        self.assertEqual(self.base.compter()['total'], self.jeu['attendues'])     # toutes les autres, sans elle
+        album = self.photos / 'album\udc00'
+        os.makedirs(chemin_systeme(str(album)))
+        with self.assertRaisesRegex(DossierRefuse, 'caractère'):
+            self.base.ajouter_dossier(album)
+
+    def test_base_abimee_mise_de_cote(self):
+        """Un index.db ou un miniatures.db qui n'est plus une base empêchait MyPhotos de démarrer, à chaque fois."""
+        self.assertEqual(self.base.ecartes, [])
+        dechets = b'ceci n est pas une base SQLite ' * 200
+        for nom in ('index.db', 'miniatures.db'):
+            with self.subTest(fichier=nom):
+                d = self.tmp / f'abimee-{nom}'
+                d.mkdir()
+                (d / nom).write_bytes(dechets)
+                b = Base(d / 'index.db', d / 'miniatures.db')
+                try:
+                    self.assertEqual(len(b.ecartes), 1)
+                    self.assertTrue(b.ecartes[0].startswith(str(d / nom) + '.abimee-'), b.ecartes)
+                    self.assertEqual(Path(b.ecartes[0]).read_bytes(), dechets)      # mis de côté, rien d'effacé
+                    b.meta_set('essai', 1)
+                    self.assertEqual((b.meta_get('essai'), b.compter()['total']), (1, 0))
+                finally:
+                    b.fermer()
+
+    def test_lecture_et_ouverture_pendant_une_ecriture(self):
+        """Chaque connexion neuve demandait le verrou d'écriture (PRAGMA auto_vacuum) : une lecture depuis un fil neuf
+        (requête du serveur) attendait la fin de l'écriture en cours, et MyPhotos ne démarrait plus du tout
+        (« database is locked » au bout de 30 s) si un autre programme écrivait dans la base."""
+        autre = sqlite3.connect(self.base.chemin_index, isolation_level=None)
+        autre.execute('BEGIN IMMEDIATE')
+        autre.execute("INSERT OR REPLACE INTO meta(cle, valeur) VALUES ('autre', 1)")
+        resultats = []
+
+        def lire():
+            try:
+                resultats.append(self.base.compter()['total'])
+                deuxieme = Base(self.base.chemin_index, self.base.chemin_miniatures)
+                resultats.append(deuxieme.generation())
+                deuxieme.fermer()
+            except Exception as e:                       # noqa: BLE001
+                resultats.append(repr(e))
+
+        fil = threading.Thread(target=lire, daemon=True)
+        try:
+            fil.start()
+            fil.join(5)
+            self.assertEqual(resultats, [0, 0])
+        finally:
+            autre.execute('ROLLBACK')
+            autre.close()
+            fil.join(40)
+
+    def test_miniatures_perdues_puis_refaites(self):
+        """miniatures.db perdue (ou mise de côté) : les photos analysées sortaient de la frise pour toujours, sans
+        jamais être refaites. Même cas qu'une coupure de courant entre les écritures des deux fichiers."""
+        ix, _ = self.indexer()
+        ix.arreter()
+        self.base.fermer()
+        mini = self.tmp / 'donnees' / 'miniatures.db'
+        for suffixe in ('', '-wal', '-shm'):
+            Path(str(mini) + suffixe).unlink(missing_ok=True)
+        self.base = Base(self.tmp / 'donnees' / 'index.db', mini)
+        _, f = self.indexer(dossier=False)
+        self.assertEqual(f.images, self.ok())                               # refaites…
+        self.assertEqual(self.base.photos_par_date(0, 1000)['total'], self.ok())   # … et de retour dans la frise
+        self.assertIsNotNone(self.base.miniature(self.id_de('exif')))
+
+    def test_changement_de_moteur_pendant_un_lot(self):
+        """L'ancien indexeur finit son lot après le démarrage du nouveau (arrêt qui tarde : disque réseau lent, gros
+        modèle) : ses photos restaient analysées par l'ancien moteur, jamais refaites et introuvables."""
+        self.base.ajouter_dossier(self.photos)
+        feu = threading.Event()
+        ancien = MoteurRetenu(feu)
+        a, _ = self.indexeur(lambda materiel='auto': ancien, cle='moteur-a')
+        a.demarrer()
+        self.assertTrue(ancien.dans_un_lot.wait(30))
+        a.arreter(attendre=False)                        # l'arrêt n'attend pas la fin du lot
+        b, _ = self.indexeur(cle='moteur-b')
+        b.demarrer()
+        self.assertTrue(b.attendre(60))
+        feu.set()
+        a.arreter()                                      # l'ancien écrit son lot, puis s'arrête
+        b.relancer()
+        self.assertTrue(b.attendre(60))
+        par_modele = dict(self.base._cnx().execute(
+            'SELECT modele, COUNT(*) FROM photos WHERE modele IS NOT NULL GROUP BY modele'))
+        self.assertEqual(par_modele, {'moteur-b': self.ok()})
+        self.assertEqual(self.base.meta_get('modele'), 'moteur-b')
+
+    def test_relance_pendant_un_passage(self):
+        """Une relance reçue pendant un passage en provoque un seul autre : son réveil, resté levé, en lançait un
+        troisième pour rien juste après la mise au repos (attendre() rendait la main, puis l'inventaire repartait)."""
+        self.plus_d_images()
+        self.base.ajouter_dossier(self.photos)
+        ix, f = self.indexeur(Fabrique(lenteur=0.1))
+        inventaires = []
+        vrai = ix._inventaire
+
+        def compte():
+            inventaires.append(1)
+            vrai()
+
+        ix._inventaire = compte
+        ix.demarrer()
+        self.assertTrue(attendre_que(lambda: f.images > 0))
+        ix.relancer()
+        self.assertTrue(ix.attendre(60))
+        time.sleep(0.3)
+        self.assertEqual((len(inventaires), ix.etat()['phase']), (2, 'termine'))
+
+    def test_relance_au_moment_de_la_mise_au_repos(self):
+        """Une relance arrivée entre la fin d'un passage et la mise au repos était écrasée par ce repos : attendre()
+        rendait la main alors que le passage demandé n'avait pas eu lieu."""
+        self.base.ajouter_dossier(self.photos)
+        ix, _ = self.indexeur()
+        nouvelle = self.photos / 'arrivee_a_la_fin.jpg'
+        vu, relances = [], []
+
+        class Repos(threading.Event):                    # place la relance juste avant la mise au repos
+            def set(s):
+                if not relances and threading.current_thread() is ix._fil:
+                    ie.jpeg(nouvelle, couleur=ie.BLEU)
+                    t = threading.Thread(target=ix.relancer)
+                    relances.append(t)
+                    t.start()
+                    t.join(0.5)                          # bloquée par le verrou de l'indexeur, une fois corrigé
+                    super().set()
+                    vu.append(ix._inventaire_demande)    # au repos avec une relance en attente ?
+                    return
+                super().set()
+
+        ix._repos = Repos()
+        ix.demarrer()
+        self.assertTrue(attendre_que(lambda: relances, 60))
+        relances[0].join(10)
+        self.assertEqual(vu, [False])
+        self.assertTrue(ix.attendre(60))
+        self.assertIn(cle_chemin(str(nouvelle)), self.ids())
+
+
+class TestFormats(unittest.TestCase):
+    """preparer() sur des images que le jeu commun n'a pas."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-formats-'))
+
+    def tearDown(self):
+        ie.nettoyer(self.tmp)
+
+    @staticmethod
+    def degrade(w=300, h=200):
+        a = np.zeros((h, w, 3), np.uint8)
+        a[..., 0] = np.linspace(0, 255, w)[None, :]
+        a[..., 1] = np.linspace(0, 255, h)[:, None]
+        a[..., 2] = 90
+        return Image.fromarray(a)
+
+    def miniature(self, r):
+        self.assertNotIn('erreur', r, r.get('erreur'))
+        with Image.open(io.BytesIO(r['miniature'])) as m:
+            return np.asarray(m.convert('RGB'), np.float32)
+
+    def test_gris_16_et_32_bits(self):
+        """Pillow écrête à 255 : une numérisation en gris 16 bits devenait toute blanche, un TIFF flottant tout noir."""
+        rampe = np.linspace(0, 65535, 300)[None, :].repeat(200, 0)
+        Image.fromarray(rampe.astype(np.uint16)).save(self.tmp / 'gris16.png')
+        Image.fromarray(rampe.astype(np.int32)).save(self.tmp / 'entier32.tif')
+        Image.fromarray((rampe / 65535).astype(np.float32)).save(self.tmp / 'flottant.tif')
+        for nom in ('gris16.png', 'entier32.tif', 'flottant.tif'):
+            with self.subTest(nom):
+                r = indexation.preparer(str(self.tmp / nom), 32)
+                a = self.miniature(r)
+                self.assertEqual((r['largeur'], r['hauteur']), (300, 200))
+                self.assertLess(abs(a.mean() - 127.5), 12)
+                self.assertGreater(a[:, -10:].mean() - a[:, :10].mean(), 200)     # du noir au blanc
+
+    def test_formats_hors_liste_refuses(self):
+        """Un « .jpg » qui est en fait un PostScript allait jusqu'à Ghostscript, un programme extérieur, s'il est
+        installé ; un TGA déguisé n'est pas une photo non plus."""
+        from PIL import EpsImagePlugin
+        (self.tmp / 'eps.jpg').write_bytes(b'%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 300 200\nshowpage\n%%EOF\n')
+        self.degrade().save(self.tmp / 'tga.jpg', 'TGA')
+        with mock.patch.object(EpsImagePlugin, 'Ghostscript', side_effect=AssertionError('Ghostscript')) as gs:
+            for nom in ('eps.jpg', 'tga.jpg'):
+                self.assertEqual(indexation.preparer(str(self.tmp / nom), 32).get('erreur'),
+                                 'illisible : format non reconnu', nom)
+        gs.assert_not_called()
+        self.degrade().save(self.tmp / 'webp.jpg', 'WEBP')                      # format admis, extension fausse
+        self.miniature(indexation.preparer(str(self.tmp / 'webp.jpg'), 32))
+
+    def test_grande_image_preparee_a_part(self):
+        """Une très grande image non JPEG se décode en entier, et le chemin habituel en faisait trois ou quatre copies :
+        3,4 Go pour un PNG de 178 Mpx, et jusqu'à quatre à la fois (4 PNG de 45 Mpx : +3,3 Go mesurés). Elle passe
+        maintenant seule et réduite tout de suite (+0,35 Go). Seuil abaissé pour l'essai."""
+        exif = Image.Exif()
+        exif[0x0112] = 6                                                       # à tourner d'un quart de tour
+        png = Image.new('RGBA', (1200, 900), (30, 50, 210, 255))
+        png.paste((0, 0, 0, 0), (600, 0, 1200, 900))                           # moitié droite transparente
+        png.save(self.tmp / 'grand.png', exif=exif.tobytes())
+        self.degrade(1200, 900).convert('P', palette=Image.Palette.ADAPTIVE).save(self.tmp / 'palette.gif')
+        habituel = self.miniature(indexation.preparer(str(self.tmp / 'palette.gif'), 32))
+        appels = []
+        vrai = indexation._ouvrir_a_part
+
+        def espion(f):
+            appels.append(1)
+            return vrai(f)
+
+        with Modifie(indexation, 'GRANDE_IMAGE', 500_000), Modifie(indexation, '_ouvrir_a_part', espion):
+            r = indexation.preparer(str(self.tmp / 'grand.png'), 32)
+            a_part = self.miniature(indexation.preparer(str(self.tmp / 'palette.gif'), 32))
+        self.assertEqual(len(appels), 2)
+        self.assertEqual((r['largeur'], r['hauteur']), (900, 1200))           # dans le sens d'affichage
+        a = self.miniature(r)
+        self.assertEqual(a.shape[:2], (360, 270))
+        haut, bas = a[:60].mean(axis=(0, 1)), a[-60:].mean(axis=(0, 1))
+        self.assertTrue(haut[2] > 150 and haut[0] < 90, haut)                 # la moitié bleue, en haut
+        self.assertTrue(all(v > 235 for v in bas), bas)                       # la transparente, blanche, en bas
+        self.assertEqual(a_part.shape, habituel.shape)
+        self.assertLess(np.abs(a_part - habituel).mean(), 8)                  # même image que le chemin habituel
+
+
+def _moteur_reel_present():
+    try:
+        return not modele.manquants('base', modele.fichiers_necessaires('base'))
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
+@unittest.skipUnless(_moteur_reel_present(), 'moteur « base » absent de MYPHOTOS_MODELES : essai sauté')
+class TestMoteurReel(unittest.TestCase):
+    """Bout à bout avec le vrai moteur SigLIP 2 « base » (modele.Moteur('base'), carte graphique si possible) sur des
+    images générées : inventaire, analyse par l'indexeur, vecteurs en base, et des mots qui retrouvent leur image."""
+
+    COULEURS = {'rouge': ie.ROUGE, 'verte': ie.VERT, 'bleue': ie.BLEU, 'jaune': (230, 210, 30)}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.moteur = modele.Moteur('base')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.moteur = None
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-moteur-'))
+        self.base = Base(self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db')
+
+    def tearDown(self):
+        self.base.fermer()
+        ie.nettoyer(self.tmp)
+
+    def fabrique(self, materiel='auto'):
+        if materiel == 'processeur':                     # repli de l'indexeur si la carte graphique échoue
+            return modele.Moteur('base', materiel='processeur', charger_texte=False)
+        return self.moteur
+
+    def test_bout_a_bout(self):
+        photos = self.tmp / 'photos'
+        for nom, couleur in self.COULEURS.items():
+            ie.jpeg(photos / f'{nom}.jpg', (320, 240), couleur)
+        cercle = Image.new('RGB', (320, 240), 'white')
+        ImageDraw.Draw(cercle).ellipse((60, 20, 260, 220), fill='black')
+        cercle.save(photos / 'cercle.jpg')
+        self.base.ajouter_dossier(photos)
+        ix = Indexeur(self.base, self.fabrique, 'base', fils_decodage=2)
+        try:
+            ix.demarrer()
+            self.assertTrue(ix.attendre(300), 'analyse trop longue')
+            e = ix.etat()
+        finally:
+            ix.arreter()
+        self.assertEqual((e['phase'], e['analysees'], e['erreurs']), ('termine', 5, 0), e['message'])
+        self.assertIn(e['materiel'], ('carte graphique', 'processeur'))
+        dim = modele.info('base')['dimension']
+        ids, mat, _ = self.base.vecteurs('base')
+        self.assertEqual(mat.shape, (5, dim))
+        np.testing.assert_allclose(np.linalg.norm(mat, axis=1), 1, atol=1e-3)
+        blob = self.base._cnx().execute('SELECT vecteur FROM photos WHERE vecteur IS NOT NULL').fetchone()[0]
+        self.assertEqual(len(blob), 2 * dim)                                   # float16 en base
+        noms = {p['id']: os.path.splitext(p['nom'])[0] for p in self.base.photos(ids)}
+        textes = {f'une photo {n}': n for n in self.COULEURS} | {'un cercle noir': 'cercle'}
+        cos = mat @ self.moteur.vecteurs_textes(list(textes)).T               # (images, textes)
+        attendus = list(textes.values())
+        for j, texte in enumerate(textes):
+            self.assertEqual(noms[int(ids[np.argmax(cos[:, j])])], attendus[j], texte)   # le texte trouve son image
+        for i, pid in enumerate(ids):
+            self.assertEqual(attendus[int(np.argmax(cos[i]))], noms[int(pid)])            # l'image, son texte
+        p = modele.probabilite(cos, 'base')
+        self.assertTrue(np.all((p >= 0) & (p <= 1)))
 
 
 if __name__ == '__main__':

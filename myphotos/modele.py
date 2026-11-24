@@ -328,18 +328,28 @@ def probabilite(cosinus, cle=None):
     return 1.0 / (1.0 + np.exp(-x))
 
 
+def indice_carte(carte):
+    """Indice DirectML valide (entier de 0 à 63) ; 0, la carte principale, pour tout le reste."""
+    if isinstance(carte, bool) or not isinstance(carte, int) or not 0 <= carte < 64:
+        return 0
+    return carte
+
+
 class Moteur:
     """Les deux moitiés du modèle : vision (photos -> vecteurs) et texte (mots -> vecteur).
 
     materiel : 'auto' (carte graphique si possible, sinon processeur), 'carte' ou 'processeur'.
     materiel_texte : idem pour le texte. Sur la carte : 11 ms par requête et peu de mémoire vive ;
     sur le processeur : environ 90 ms (mesures du 23/11/2026, modèle base).
+    carte : indice DirectML de la carte graphique à utiliser (0 = la carte principale ; voir
+    materiel.recommander()['indice_carte']). Si elle refuse, on essaie la carte principale, puis le processeur.
     """
 
     def __init__(self, cle=None, vision=None, texte=None, materiel='auto', fils=None, charger_texte=True,
-                 charger_vision=True, racine=None, materiel_texte=None):
+                 charger_vision=True, racine=None, materiel_texte=None, carte=0):
         import onnxruntime as ort
         self.ort = ort
+        self.carte = indice_carte(carte)
         self.cle = cle or MODELE_DEFAUT
         self.info = info(self.cle)
         self.dossier = dossier_modele(self.cle, racine)
@@ -390,14 +400,17 @@ class Moteur:
         ort = self.ort
         chemin = str(self.dossier / nom)
         if materiel in ('auto', 'carte') and 'DmlExecutionProvider' in ort.get_available_providers():
-            try:
-                s = ort.InferenceSession(chemin, sess_options=self._options(nom, True),
-                                         providers=[('DmlExecutionProvider', {'device_id': 0}), 'CPUExecutionProvider'])
-                if s.get_providers()[0] == 'DmlExecutionProvider':
-                    self.materiel = 'carte graphique'
-                    return s
-            except Exception:
-                pass                                 # pilote graphique récalcitrant : on passe au processeur
+            for carte in dict.fromkeys((self.carte, 0)):   # la carte choisie, sinon la carte principale
+                try:
+                    s = ort.InferenceSession(chemin, sess_options=self._options(nom, True),
+                                             providers=[('DmlExecutionProvider', {'device_id': carte}),
+                                                        'CPUExecutionProvider'])
+                    if s.get_providers()[0] == 'DmlExecutionProvider':
+                        self.materiel = 'carte graphique'
+                        self.carte = carte            # la vision et le texte sur la même carte
+                        return s
+                except Exception:
+                    pass                             # pilote graphique récalcitrant : carte suivante, puis processeur
         return ort.InferenceSession(chemin, sess_options=self._options(nom, False), providers=['CPUExecutionProvider'])
 
     @staticmethod

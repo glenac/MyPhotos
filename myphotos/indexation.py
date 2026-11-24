@@ -23,7 +23,7 @@ import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
 from . import config, modele
-from .base import chemin_affiche, chemin_systeme, cle_chemin, iso_depuis_ns, maintenant
+from .base import chemin_affiche, chemin_systeme, cle_chemin, enregistrable, iso_depuis_ns, maintenant
 
 journal = logging.getLogger(__name__)
 
@@ -39,6 +39,21 @@ COTE_MINIATURE = 360
 QUALITE_MINIATURE = 80
 PAQUET_INVENTAIRE = 500
 ECHECS_AVANT_CONTROLE = 3      # erreurs de lecture d'affilée avant de vérifier que le dossier répond
+
+# Formats lus (ceux de config.EXTENSIONS), quel que soit le nom du fichier. Pillow en connaît d'autres, dont EPS, qui
+# lance Ghostscript, un programme extérieur : un « .jpg » qui serait en fait un PostScript ne doit pas y arriver.
+Image.init()
+FORMATS = tuple(f for f in ('JPEG', 'PNG', 'WEBP', 'BMP', 'DIB', 'GIF', 'TIFF') if f in Image.OPEN)
+# Préparées à part (voir _ouvrir_a_part) : les images non JPEG de plus de GRANDE_IMAGE pixels, que Pillow ne sait
+# décoder qu'en entier (PNG de 178 Mpx : 3,4 Go pour une seule image, mesuré le 24/11/2026), et les niveaux de gris
+# sur 16 ou 32 bits, que Pillow écrête à 255 (une numérisation 16 bits deviendrait toute blanche).
+GRANDE_IMAGE = 16_000_000
+COTE_DECODAGE = 448            # comme modele.ouvrir_image : le plus petit côté reste d'au moins 448 px
+_MODES_PROFONDS = frozenset({'I', 'I;16', 'I;16B', 'I;16L', 'I;16N', 'F'})
+_UNE_A_LA_FOIS = threading.Semaphore(1)
+_SENS_EXIF = {2: Image.Transpose.FLIP_LEFT_RIGHT, 3: Image.Transpose.ROTATE_180, 4: Image.Transpose.FLIP_TOP_BOTTOM,
+              5: Image.Transpose.TRANSPOSE, 6: Image.Transpose.ROTATE_270, 7: Image.Transpose.TRANSVERSE,
+              8: Image.Transpose.ROTATE_90}
 
 PHASES = ('attente', 'inventaire', 'analyse', 'pause', 'termine', 'erreur')
 
@@ -70,6 +85,8 @@ class Parcours:
     Ne suit ni les liens symboliques ni les jonctions (pas de boucle possible) ; ignore les dossiers
     cachés, système et ceux de NOMS_IGNORES. Lève OSError si le dossier lui-même est injoignable.
     Les sous-dossiers illisibles sont notés : leurs photos connues ne sont pas considérées disparues.
+    Un nom qui n'est pas de l'Unicode valide (base.enregistrable) est sauté et compté dans `sautes` : impossible à
+    enregistrer, il arrêtait toute l'indexation.
     """
 
     def __init__(self, racine, extensions=None):
@@ -78,6 +95,7 @@ class Parcours:
         self.echecs = []           # clés (cle_chemin) des sous-dossiers illisibles, terminées par os.sep
         self.vide = False          # le dossier ne contient strictement rien
         self.courant = racine      # dossier en cours de lecture (pour l'affichage)
+        self.sautes = 0            # fichiers et dossiers au nom impossible à enregistrer
 
     def sous_echec(self, chemin):
         k = cle_chemin(chemin)
@@ -102,6 +120,9 @@ class Parcours:
             self.courant = chemin_affiche(d)
             racine_disque = _racine_de_disque(d)
             for e in entrees:
+                if not enregistrable(e.name):
+                    self.sautes += 1
+                    continue
                 try:
                     if e.is_dir(follow_symlinks=False):
                         if not self._dossier_ignore(e, racine_disque):
@@ -248,20 +269,71 @@ def _message_erreur(e):
     return 'illisible : fichier abîmé'
 
 
+def _a_part(im0):
+    """Image que modele.ouvrir_image traiterait mal (voir GRANDE_IMAGE)."""
+    return im0.mode in _MODES_PROFONDS or (im0.format not in ('JPEG', 'MPO')
+                                          and im0.width * im0.height > GRANDE_IMAGE)
+
+
+def _vers_8_bits(im):
+    """Niveaux de gris 'I' (32 bits) ou 'F' (flottants) -> 'L', en gardant les nuances : 16 bits (0-65 535) et
+    flottants entre 0 et 1 sont ramenés à 0-255, comme le font les visionneuses."""
+    a = np.nan_to_num(np.asarray(im, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    haut = float(a.max()) if a.size else 0.0
+    if im.mode == 'F' and haut <= 1.0:
+        plafond = 1.0
+    elif haut <= 255:
+        plafond = 255.0
+    elif haut <= 65535:
+        plafond = 65535.0
+    else:
+        plafond = haut
+    return Image.fromarray(np.clip(a * (255.0 / plafond), 0, 255).astype(np.uint8))
+
+
+def _ouvrir_a_part(f):
+    """Comme modele.ouvrir_image (dans le bon sens, en RVB, plus petit côté >= COTE_DECODAGE), pour une image que
+    Pillow décode en entier : une seule à la fois (4 fils x 3 Go, c'est trop pour un PC de 8 Go) et réduite dès le
+    décodage fini, au lieu des trois ou quatre copies pleine taille du chemin habituel."""
+    with _UNE_A_LA_FOIS:
+        im = Image.open(f, formats=FORMATS)
+        try:
+            sens = _SENS_EXIF.get(im.getexif().get(0x0112))
+        except Exception:
+            sens = None                          # informations EXIF abîmées : l'image reste telle quelle
+        im.load()
+        if im.mode.startswith('I;16'):
+            im = im.convert('I')                 # 16 -> 32 bits, valeurs gardées, et réductible
+        facteur = min(im.size) // COTE_DECODAGE
+        if facteur >= 2:
+            if im.mode in ('P', 'PA', '1'):
+                im = modele.vers_rvb(im)         # une moyenne d'indices de palette donnerait n'importe quelle couleur
+            try:
+                im = im.reduce(facteur)
+            except ValueError:                   # autre mode que reduce() refuse : d'abord en couleurs
+                im = modele.vers_rvb(im).reduce(facteur)
+        if im.mode in ('I', 'F'):
+            im = _vers_8_bits(im)
+        if sens is not None:
+            im = im.transpose(sens)
+        return modele.vers_rvb(im)
+
+
 def preparer(chemin, taille_modele):
     """Lit une photo. Ne lève jamais : renvoie un dict
     - réussite : largeur, hauteur, date_prise, lat, lon, miniature (JPEG), pixels ((3, t, t) float32) ;
     - échec    : erreur (message), passagere (bool), et largeur/hauteur si connues."""
     try:
         with open(chemin_systeme(chemin), 'rb') as f:
-            im0 = Image.open(f)                  # en-tête seulement : dimensions d'origine et EXIF
+            im0 = Image.open(f, formats=FORMATS)     # en-tête seulement : format, dimensions d'origine et EXIF
             largeur, hauteur = im0.size
             date, lat, lon = lire_metadonnees(im0)
+            a_part = _a_part(im0)
             del im0                              # (pas de close() : il fermerait aussi le fichier)
             if min(largeur, hauteur) < config.COTE_MIN:
                 return {'erreur': 'trop petite', 'passagere': False, 'largeur': largeur, 'hauteur': hauteur}
             f.seek(0)
-            im = modele.ouvrir_image(f)
+            im = _ouvrir_a_part(f) if a_part else modele.ouvrir_image(f)
             im.load()
             if (im.width >= im.height) != (largeur >= hauteur):
                 largeur, hauteur = hauteur, largeur      # photo tournée par l'EXIF : sens d'affichage
@@ -389,11 +461,11 @@ class Indexeur:
     def relancer(self, erreurs=False):
         """Refait un inventaire (après l'ajout ou le retrait d'un dossier, par exemple), puis analyse ce qui
         manque. erreurs=True redonne aussi une chance aux photos en erreur."""
-        with self._verrou:
+        with self._verrou:                       # demande et réveil ensemble (voir _cycle)
             self._inventaire_demande = True
             self._effacer_erreurs = self._effacer_erreurs or bool(erreurs)
             self._repos.clear()
-        self._reveil.set()
+            self._reveil.set()
         self.demarrer()
 
     def attendre(self, timeout=None):
@@ -492,9 +564,12 @@ class Indexeur:
                     break
                 with self._verrou:
                     encore = self._inventaire_demande
+                    if not encore:
+                        # Sous le verrou : une relance arrivée juste avant ne peut plus être effacée par ce « repos »
+                        # (attendre() rendait la main alors que le passage demandé n'avait pas eu lieu).
+                        self._repos.set()
                 if encore:
                     continue
-                self._repos.set()
                 self._reveil.wait(self.inventaire_auto_s)
                 self._reveil.clear()
         finally:
@@ -513,6 +588,9 @@ class Indexeur:
         with self._verrou:
             self._inventaire_demande = False
             effacer, self._effacer_erreurs = self._effacer_erreurs, False
+            # Ce passage répond aux relances déjà reçues : leur réveil, resté levé, en lançait un second pour rien
+            # juste après la mise au repos (attendre() rendait la main, puis l'inventaire repartait).
+            self._reveil.clear()
         self._passees.clear()
         try:
             self._attendre_reprise()
@@ -565,8 +643,7 @@ class Indexeur:
     def _verifier_modele(self):
         """Si le modèle a changé depuis la dernière fois, tous les vecteurs sont à refaire (pas les miniatures)."""
         if self.base.meta_get('modele') != self.cle_modele:
-            n = self.base.effacer_vecteurs(sauf=self.cle_modele)
-            self.base.meta_set('modele', self.cle_modele)
+            n = self.base.adopter_modele(self.cle_modele)   # d'un seul coup (voir Base.adopter_modele)
             if n:
                 journal.info('modèle changé (%s) : %d vecteurs à refaire', self.cle_modele, n)
 
@@ -618,6 +695,9 @@ class Indexeur:
             journal.info('dossier injoignable, ses photos sont gardées : %s (%s)', racine, e)
             self.base.marquer_dossier(did, disponible=False)
             return
+        if parcours.sautes:
+            journal.info('%d nom(s) de fichier ou de dossier impossibles à enregistrer, ignorés, dans %s',
+                         parcours.sautes, racine)
         if nouveaux:
             self.base.ajouter_photos(did, nouveaux)
         if modifies:

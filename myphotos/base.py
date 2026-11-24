@@ -73,9 +73,40 @@ _SCHEMA_MINIATURES = (
 _COLONNES_PHOTO = ('p.id, p.chemin, p.dossier_id, p.taille, p.modifie, p.largeur, p.hauteur, p.date_prise, '
                    'p.date_fichier, p.lat, p.lon, p.modele, p.erreur, p.vu, p.miniature, d.chemin, d.disponible')
 
+_ABIMEE = (11, 26)                    # SQLITE_CORRUPT, SQLITE_NOTADB : fichier qui n'est plus une base lisible
+
 
 class DossierRefuse(ValueError):
     """Dossier impossible à ajouter ; le message, en français, peut s'afficher tel quel."""
+
+
+def enregistrable(texte):
+    """Faux pour un nom que Windows accepte mais qui n'est pas de l'Unicode valide (moitié de caractère laissée seule
+    par un vieux logiciel ou un disque abîmé) : SQLite ne peut pas l'enregistrer."""
+    try:
+        texte.encode('utf-8')
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _abimee(e):
+    """L'erreur dit-elle que le fichier n'est pas, ou plus, une base SQLite ?"""
+    code = getattr(e, 'sqlite_errorcode', None)
+    return isinstance(e, sqlite3.DatabaseError) and isinstance(code, int) and (code & 0xFF) in _ABIMEE
+
+
+def _lisible(chemin):
+    """Vrai si le fichier est une base SQLite lisible. Une base occupée par un autre programme est lisible."""
+    c = None
+    try:
+        c = sqlite3.connect(chemin, timeout=5)
+        return c.execute('PRAGMA quick_check(1)').fetchone()[0] == 'ok'
+    except sqlite3.DatabaseError as e:
+        return not _abimee(e)
+    finally:
+        if c is not None:
+            c.close()
 
 
 # ---------------------------------------------------------------- dates et chemins
@@ -187,7 +218,12 @@ def _paquets(valeurs, n=PAQUET):
 
 
 class Base:
-    """Index des photos (voir l'en-tête du module). Utilisable depuis plusieurs fils à la fois."""
+    """Index des photos (voir l'en-tête du module). Utilisable depuis plusieurs fils à la fois.
+
+    Un fichier qui n'est plus une base lisible (disque abîmé, fichier écrasé) est mis de côté à l'ouverture, renommé
+    « index.db.abimee-AAAAMMJJ-HHMMSS » sans rien effacer, puis recréé vide : `ecartes` donne les nouveaux noms.
+    Sans cela, MyPhotos refuserait de démarrer à chaque lancement.
+    """
 
     def __init__(self, chemin_index, chemin_miniatures):
         self.chemin_index = os.path.abspath(os.fspath(chemin_index))
@@ -199,8 +235,33 @@ class Base:
         self._verrou_connexions = threading.Lock()
         self._ecriture = threading.RLock()            # une écriture à la fois dans ce programme
         self._fermee = False
-        with self._ecriture:
-            self._migrer(self._cnx())
+        self.ecartes = []
+        try:
+            with self._ecriture:
+                self._migrer(self._cnx())
+        except sqlite3.DatabaseError as e:
+            if not _abimee(e):
+                raise
+            self._oublier_connexions()
+            self.ecartes = self._ecarter_abimes()
+            if not self.ecartes:
+                raise
+            with self._ecriture:
+                self._migrer(self._cnx())
+
+    def _ecarter_abimes(self):
+        """Renomme (journaux WAL compris) ceux des deux fichiers qui ne sont plus une base lisible ; ils seront
+        recréés vides. Renvoie les nouveaux noms des bases mises de côté."""
+        quand = datetime.now().strftime('%Y%m%d-%H%M%S')
+        ecartes = []
+        for p in (self.chemin_index, self.chemin_miniatures):
+            if not os.path.exists(p) or _lisible(p):
+                continue
+            for suffixe in ('', '-wal', '-shm'):
+                if os.path.exists(p + suffixe):
+                    os.replace(p + suffixe, f'{p}.abimee-{quand}{suffixe}')
+            ecartes.append(f'{p}.abimee-{quand}')
+        return ecartes
 
     # ------------------------------------------------ connexions et transactions
 
@@ -211,15 +272,23 @@ class Base:
         if self._fermee:
             raise RuntimeError('base fermée')
         c = sqlite3.connect(self.chemin_index, timeout=30, isolation_level=None, check_same_thread=False)
-        # auto_vacuum avant le WAL : sans effet sur une base existante, actif sur une base neuve.
-        c.execute('PRAGMA auto_vacuum = INCREMENTAL')
-        c.execute('PRAGMA journal_mode = WAL').fetchall()
-        c.execute('PRAGMA synchronous = NORMAL')
-        c.execute('PRAGMA temp_store = MEMORY')
-        c.execute('ATTACH DATABASE ? AS mini', (self.chemin_miniatures,))
-        c.execute('PRAGMA mini.auto_vacuum = INCREMENTAL')
-        c.execute('PRAGMA mini.journal_mode = WAL').fetchall()
-        c.execute('PRAGMA mini.synchronous = NORMAL')
+        try:
+            # auto_vacuum avant le WAL, et sur une base neuve seulement : sur une base existante il est sans effet,
+            # mais il demande le verrou d'écriture. Chaque connexion neuve (chaque fil du serveur) attendait alors la
+            # fin de l'écriture en cours, et MyPhotos ne démarrait plus si un autre programme écrivait dans la base.
+            if not c.execute('PRAGMA page_count').fetchone()[0]:
+                c.execute('PRAGMA auto_vacuum = INCREMENTAL')
+            c.execute('PRAGMA journal_mode = WAL').fetchall()
+            c.execute('PRAGMA synchronous = NORMAL')
+            c.execute('PRAGMA temp_store = MEMORY')
+            c.execute('ATTACH DATABASE ? AS mini', (self.chemin_miniatures,))
+            if not c.execute('PRAGMA mini.page_count').fetchone()[0]:
+                c.execute('PRAGMA mini.auto_vacuum = INCREMENTAL')
+            c.execute('PRAGMA mini.journal_mode = WAL').fetchall()
+            c.execute('PRAGMA mini.synchronous = NORMAL')
+        except BaseException:
+            c.close()                                 # sinon le fichier reste ouvert (et impossible à renommer)
+            raise
         h = _Connexion(c)
         self._local.h = h
         with self._verrou_connexions:
@@ -253,6 +322,9 @@ class Base:
     def fermer(self):
         """Ferme toutes les connexions (à l'arrêt du programme, une fois l'indexation arrêtée)."""
         self._fermee = True
+        self._oublier_connexions()
+
+    def _oublier_connexions(self):
         with self._verrou_connexions:
             liste, self._connexions = self._connexions, []
         for _, h in liste:
@@ -354,6 +426,9 @@ class Base:
         L'inventaire n'est pas lancé ici : appeler ensuite Indexeur.relancer().
         """
         p = normaliser_chemin(chemin)
+        if not enregistrable(p):
+            raise DossierRefuse('Le nom de ce dossier contient un caractère que MyPhotos ne sait pas enregistrer : '
+                                'renommez-le, puis recommencez.')
         if not os.path.isdir(chemin_systeme(p)):
             raise DossierRefuse(f'Ce dossier est introuvable : « {p} ».')
         p = casse_reelle(p)
@@ -573,10 +648,14 @@ class Base:
 
         analyses : [{id, taille, modifie, largeur, hauteur, date_prise, lat, lon, vecteur (octets float16),
         miniature (JPEG)}] ; erreurs : [{id, taille, modifie, erreur, largeur, hauteur}].
-        Une photo modifiée ou retirée entre-temps (taille/date différentes, fiche disparue) est ignorée.
+        Une photo modifiée ou retirée entre-temps (taille/date différentes, fiche disparue) est ignorée, et tout le lot
+        l'est si un autre moteur a été adopté entre-temps (voir adopter_modele) : ses vecteurs ne serviraient à rien.
         """
         ecrites = 0
         with self._transaction() as c:
+            actuel = c.execute("SELECT valeur FROM meta WHERE cle = 'modele'").fetchone()
+            if actuel is not None and actuel[0] is not None and actuel[0] != modele:
+                return 0
             for a in analyses:
                 r = c.execute('UPDATE photos SET largeur = ?, hauteur = ?, date_prise = ?, lat = ?, lon = ?, '
                               'vecteur = ?, modele = ?, erreur = NULL, miniature = 1 '
@@ -610,15 +689,36 @@ class Base:
             self._nouvelle_generation(c)
         return n
 
+    def adopter_modele(self, cle):
+        """Le modèle `cle` devient celui de l'index, d'un seul coup : les vecteurs des autres modèles sont effacés (pas
+        les miniatures) et enregistrer() refusera désormais les leurs. Un ancien indexeur qui finit son lot après un
+        changement de moteur ne laisse donc pas de photos analysées par un moteur qui ne sert plus (jamais refaites,
+        introuvables par la recherche). Renvoie le nombre de vecteurs effacés."""
+        with self._transaction() as c:
+            n = c.execute('UPDATE photos SET vecteur = NULL, modele = NULL '
+                          'WHERE modele IS NOT NULL AND modele <> ?', (cle,)).rowcount
+            c.execute("INSERT INTO meta(cle, valeur) VALUES ('modele', ?) "
+                      'ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur', (cle,))
+            if n:
+                self._nouvelle_generation(c)
+        return n
+
     def effacer_erreurs(self):
         """Redonne une chance aux photos en erreur (elles seront analysées de nouveau)."""
         with self._transaction() as c:
             return c.execute('UPDATE photos SET erreur = NULL WHERE erreur IS NOT NULL').rowcount
 
     def reparer(self):
-        """Remet d'accord les deux fichiers après un arrêt brutal : miniatures orphelines, drapeaux faux."""
+        """Remet d'accord les deux fichiers : miniatures orphelines, drapeaux faux. En WAL, une transaction n'est pas
+        atomique d'un fichier à l'autre (coupure de courant pendant l'écriture) ; et miniatures.db peut être perdue ou
+        abîmée (mise de côté à l'ouverture). Une photo analysée sans miniature n'apparaîtrait plus dans la frise et ne
+        serait jamais refaite : elle repart à l'analyse, qui refait sa miniature."""
         with self._transaction() as c:
             n = c.execute('DELETE FROM mini.miniatures WHERE id NOT IN (SELECT id FROM main.photos)').rowcount
             n += c.execute('UPDATE photos SET miniature = 0 WHERE miniature = 1 '
                            'AND id NOT IN (SELECT id FROM mini.miniatures)').rowcount
-        return n
+            refaites = c.execute('UPDATE photos SET vecteur = NULL, modele = NULL '
+                                 'WHERE modele IS NOT NULL AND miniature = 0').rowcount
+            if refaites:
+                self._nouvelle_generation(c)
+        return n + refaites
