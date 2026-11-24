@@ -3,8 +3,12 @@ import os
 import sys
 from pathlib import Path
 
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 NOM = 'MyPhotos'
+
+# Mutex nommé tenu par MyPhotos tant qu'il tourne : l'installateur (Inno Setup, AppMutex) s'en sert. Ne change jamais
+# (même identifiant que l'AppId de l'installateur).
+MUTEX = 'MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED'
 
 HOTE = '127.0.0.1'
 PORT = int(os.environ.get('MYPHOTOS_PORT') or 7796)

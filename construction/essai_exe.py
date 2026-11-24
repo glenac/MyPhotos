@@ -5,8 +5,9 @@ MyPhotos.exe, pour vérifier la chaîne de construction après une mise à jour 
 PyInstaller ou de Python.
 
 Il charge les mêmes bibliothèques que MyPhotos, fait un vrai calcul avec le moteur (carte graphique
-via DirectML, puis processeur), écrit tout dans un journal et s'arrête seul. Il n'ouvre aucune
-fenêtre : l'exécutable est construit sans console, d'où le journal.
+via DirectML, puis processeur), charge la pile de la fenêtre (pythonnet, pywebview, WebView2), écrit
+tout dans un journal et s'arrête seul. Il n'ouvre aucune fenêtre : l'exécutable est construit sans
+console, d'où le journal.
 
     MyPhotos-essai.exe --modele <dossier>\\onnx\\vision_model_fp16.onnx [--journal essai.log]
                        [--reseau] [--attendre 30] [--sans-carte]
@@ -440,6 +441,19 @@ class Essai:
             racine.destroy()
         return d
 
+    # -- fenêtre de MyPhotos : pythonnet (.NET Framework), pywebview et WebView2, chargés sans ouvrir de fenêtre
+    def fenetre(self):
+        import clr  # noqa: F401 - charge .NET Framework
+        import System
+        from myphotos import fenetre
+        d = {'dotnet': str(System.Environment.Version), 'webview2': fenetre.version_webview2()}
+        if d['webview2']:                               # sinon pywebview passerait sur MSHTML : on ne l'importe pas
+            import webview.platforms.winforms as winforms
+            d['moteur'] = winforms.renderer
+            if winforms.renderer != 'edgechromium':
+                raise RuntimeError(f'pywebview utiliserait {winforms.renderer}, pas WebView2')
+        return d
+
     # -- réseau (facultatif) : HTTPS, certificats Windows, redirection vers le CDN, reprise (Range)
     def reseau(self):
         import ssl
@@ -484,6 +498,7 @@ def main():
     e.etape('sqlite', e.sqlite)
     e.etape('http', e.http)
     e.etape('tkinter', e.tkinter)
+    e.etape('fenetre', e.fenetre)
     e.etape('donnees', e.donnees, obligatoire=False)
     if args['reseau']:
         e.etape('reseau', e.reseau)

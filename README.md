@@ -2,7 +2,7 @@
 
 **Retrouvez vos photos en tapant ce qu'elles montrent.** Tapez « chien » : toutes vos photos de chiens apparaissent. MyPhotos fonctionne entièrement sur votre ordinateur Windows ; vos photos ne sont envoyées nulle part.
 
-![Recherche « chien » dans MyPhotos : les photos de chiens s'affichent](docs/captures/recherche.png)
+![MyPhotos dans sa fenêtre : la recherche « chien » affiche les photos de chiens](docs/captures/fenetre.png)
 
 *English version below: [In English](#in-english).*
 
@@ -21,7 +21,7 @@ Inutile d'avoir rangé, renommé ou étiqueté vos photos : MyPhotos comprend l
 
 ## Vos photos restent chez vous
 
-- **Tout est local.** La reconnaissance et la recherche se font sur votre ordinateur, avec sa carte graphique ou son processeur. MyPhotos s'affiche dans votre navigateur, mais à une adresse locale (`http://127.0.0.1:7796`), inaccessible depuis Internet comme depuis les autres appareils de votre réseau.
+- **Tout est local.** La reconnaissance et la recherche se font sur votre ordinateur, avec sa carte graphique ou son processeur. MyPhotos s'ouvre dans sa propre fenêtre, qui affiche une page servie par MyPhotos lui-même à une adresse locale (`http://127.0.0.1:7796`), inaccessible depuis Internet comme depuis les autres appareils de votre réseau.
 - **Aucun compte**, aucune inscription, aucune publicité, aucune télémétrie : MyPhotos ne collecte rien et n'envoie rien.
 - **Un seul téléchargement** : le moteur de reconnaissance, au premier lancement, depuis Hugging Face. C'est une version figée, dont chaque fichier est contrôlé par son empreinte SHA-256. Ensuite, MyPhotos n'a plus besoin d'Internet.
 - **Vos photos ne sont jamais modifiées.** MyPhotos ne les supprime que si vous le lui demandez, après confirmation, et alors vers la **Corbeille de Windows**, d'où vous pouvez les restaurer : jamais de suppression définitive (un disque sans Corbeille, comme une clé USB ou un disque réseau, est refusé). Ce qu'il retient de vos photos (miniatures, dates, description chiffrée de chaque photo) reste dans son propre dossier, sur votre ordinateur.
@@ -37,28 +37,34 @@ Inutile d'avoir rangé, renommé ou étiqueté vos photos : MyPhotos comprend l
 | Carte graphique | facultative | compatible DirectX 12 ; 6 Go de mémoire pour le moteur Précis |
 | Disque | le moteur (de 749 Mo à 2,1 Go), plus environ 35 Ko par photo | |
 | Internet | une seule fois, pour télécharger le moteur | |
-| Navigateur | Microsoft Edge (fourni avec Windows) ou un autre navigateur récent | |
+| Affichage | WebView2 et .NET Framework 4.7.2, fournis avec Windows 11 et la plupart des Windows 10 | |
 
-Sans carte graphique utilisable, le processeur fait tout le travail : c'est plus lent, mais cela fonctionne.
+Sans carte graphique utilisable, le processeur fait tout le travail : c'est plus lent, mais cela fonctionne. Si WebView2 manque, MyPhotos s'ouvre dans Microsoft Edge en mode application, et à défaut dans votre navigateur (voir [Questions fréquentes](#myphotos-souvre-dans-edge-ou-dans-mon-navigateur)).
 
 Formats reconnus : JPEG (`.jpg`, `.jpeg`, `.jfif`), PNG, WebP, BMP, GIF et TIFF. Pas encore : HEIC (iPhone), vidéos, formats RAW. Les images de moins de 96 pixels de côté (icônes, émojis) sont ignorées.
 
 ## Installation
 
-1. Téléchargez **MyPhotos.exe** (un seul fichier d'environ 48 Mo) depuis la page [Releases](https://github.com/glenac/MyPhotos/releases) du projet.
-2. Rangez-le où vous voulez, par exemple dans vos Documents : il n'y a rien à installer.
-3. Double-cliquez sur MyPhotos.exe.
+**Avec l'installateur (conseillé).**
 
-**Avertissement de Windows.** Au premier lancement, Windows peut afficher « Windows a protégé votre ordinateur » (Microsoft Defender SmartScreen). Ce message apparaît pour les logiciels récents qui n'ont pas de signature numérique payante, ce qui est le cas de MyPhotos. Cliquez sur **Informations complémentaires**, puis sur **Exécuter quand même**.
+1. Téléchargez **MyPhotos-<version>-installation.exe** (environ 40 Mo) depuis la page [Releases](https://github.com/glenac/MyPhotos/releases) du projet.
+2. Double-cliquez dessus. Laissez cochée (ou décochez) **Mettre une icône MyPhotos sur le Bureau**, puis cliquez sur **Installer**. MyPhotos s'installe pour vous seul, sans droits d'administrateur, dans `%LOCALAPPDATA%\Programs\MyPhotos`, avec un raccourci dans le menu Démarrer.
+3. Laissez cochée **Lancer MyPhotos**, puis cliquez sur **Terminer**.
+
+La version installée démarre environ trois fois plus vite que MyPhotos.exe seul (environ 0,5 s au lieu de 1,6 s sur le PC d'essai) : elle n'a pas à se décompresser à chaque lancement. Pour passer à une nouvelle version, lancez simplement son installateur : il remplace l'ancienne et garde vos données. Si MyPhotos est ouvert, l'installateur vous demande de le fermer.
+
+**Sans installation.** **MyPhotos.exe** (un seul fichier d'environ 50 Mo) reste publié, ainsi que l'archive **MyPhotos-<version>-windows.zip** (le même MyPhotos.exe, avec le mode d'emploi et les licences des composants). Rangez MyPhotos.exe où vous voulez, par exemple dans vos Documents, puis double-cliquez dessus : il n'y a rien à installer.
+
+**Avertissement de Windows.** Au premier lancement, Windows peut afficher « Windows a protégé votre ordinateur » (Microsoft Defender SmartScreen), pour l'installateur comme pour MyPhotos.exe. Ce message apparaît pour les logiciels récents qui n'ont pas de signature numérique payante, ce qui est le cas de MyPhotos. Cliquez sur **Informations complémentaires**, puis sur **Exécuter quand même**.
 
 ## Premier lancement
 
-MyPhotos s'ouvre dans votre navigateur et vous guide en trois étapes : **Votre ordinateur**, **Vos photos**, **Analyse**.
+MyPhotos s'ouvre dans sa propre fenêtre, comme un logiciel ordinaire, et vous guide en trois étapes : **Votre ordinateur**, **Vos photos**, **Analyse**.
 
 ![Étape « Votre ordinateur » : MyPhotos décrit le PC et conseille un moteur](docs/captures/premier-lancement.png)
 
 1. **Votre ordinateur.** MyPhotos examine votre PC (système, processeur, mémoire, carte graphique, place libre) et vous conseille un moteur de reconnaissance, marqué « Conseillé pour cet ordinateur ». Il annonce la taille du téléchargement, la durée prévue de l'analyse et ce qui fera le travail : « la carte graphique » ou « le processeur ». Cliquez sur **Télécharger** (la taille est indiquée sur le bouton), ou sur **Autres choix** pour prendre un autre moteur. Dès que le téléchargement a commencé, vous pouvez cliquer sur **Continuer** : il se poursuit pendant que vous choisissez vos photos.
-2. **Vos photos.** Choisissez les dossiers où se trouvent vos photos. MyPhotos propose votre dossier **Images** (et **Images de OneDrive** s'il existe), avec le nombre approximatif de photos qu'il contient : cliquez sur **Ajouter**. Pour un autre dossier, un disque externe par exemple, cliquez sur **Ajouter un dossier…**, ou tapez son emplacement sous « Ou tapez l'emplacement du dossier ». Les dossiers retenus apparaissent sous « Dossiers choisis ». Cliquez ensuite sur **Continuer**.
+2. **Vos photos.** Choisissez les dossiers où se trouvent vos photos. MyPhotos propose votre dossier **Images** (et **Images de OneDrive** s'il existe), avec le nombre approximatif de photos qu'il contient : cliquez sur **Ajouter**. Pour un autre dossier, un disque externe par exemple, cliquez sur **Ajouter un dossier…**, ou tapez son emplacement sous « Ou tapez l'emplacement du dossier ». Avant d'ajouter un dossier, MyPhotos compte en quelques secondes les photos de ses plus gros sous-dossiers et les présente dans une liste à cocher. Les dossiers de **captures d'écran** et de **fonds d'écran** (« Captures d'écran », « Screenshots », « Wallpapers », « Fonds d'écran »…) sont décochés d'office, avec la raison ; tout le reste est coché. Décochez ce qui ne contient pas vos photos, puis cliquez sur **Ajouter ce dossier** : les sous-dossiers décochés sont exclus (voir les Réglages), et rien n'est supprimé de votre ordinateur. Les dossiers retenus apparaissent sous « Dossiers choisis ». Cliquez ensuite sur **Continuer**.
 3. **Analyse.** MyPhotos regarde chacune de vos photos une seule fois, en commençant par les plus récentes. Une barre de progression indique où il en est et le temps restant. Vous pouvez cliquer tout de suite sur **Commencer à chercher** : les résultats s'enrichissent au fur et à mesure.
 
 L'analyse continue en arrière-plan. Le bandeau en haut de la page permet de la mettre en **Pause** puis de la **Reprendre**. Si vous arrêtez MyPhotos, elle reprendra où elle en était au lancement suivant.
@@ -70,19 +76,22 @@ L'analyse continue en arrière-plan. Le bandeau en haut de la page permet de la 
 - Peu de résultats ? Le bouton **Voir les photos les plus proches** montre, 60 par 60, celles qui s'approchent le plus de votre recherche, dans la rubrique **Moins probables**.
 - Cliquez sur une photo pour l'ouvrir dans la **visionneuse**.
 
+![Recherche « chien » : les photos de chiens s'affichent](docs/captures/recherche.png)
+
 ![La visionneuse de MyPhotos](docs/captures/visionneuse.jpg)
 
 Dans la visionneuse, les flèches (à l'écran, ou ← et → au clavier) passent d'une photo à l'autre. En bas s'affichent la date de la photo et son dossier. **Ouvrir avec la visionneuse Windows** ouvre la photo dans le logiciel habituel de Windows, **Afficher dans le dossier** ouvre l'Explorateur sur la photo, et **Fermer** (ou la touche Échap) ramène aux résultats. **Copier**, **Copier dans un dossier…** et **Supprimer** agissent sur la photo affichée (voir ci-dessous).
 
 Le bouton **Réglages**, en haut à droite, regroupe :
 
-- **Vos dossiers de photos** : ajouter un dossier (**Ajouter un dossier…**) ou en retirer un (**Retirer**). Retirer un dossier ne supprime aucune photo : MyPhotos cesse simplement de s'en occuper.
-- **Analyse des photos** : MyPhotos repère seul les photos ajoutées, modifiées ou supprimées, à chaque démarrage puis toutes les heures. **Chercher les nouvelles photos maintenant** le fait sur-le-champ.
+- **Vos dossiers de photos** : ajouter un dossier (**Ajouter un dossier…**) ou en retirer un (**Retirer**). Retirer un dossier ne supprime aucune photo : MyPhotos cesse simplement de s'en occuper. **Exclure un sous-dossier…** ouvre la fenêtre « Choisir un dossier » dans ce dossier. Le sous-dossier choisi (captures d'écran, fonds d'écran…) n'est plus regardé, et ses photos disparaissent de MyPhotos sans être supprimées de l'ordinateur. Un dossier situé ailleurs est refusé. Les sous-dossiers exclus sont listés sous leur dossier ; **Ne plus exclure** les fait revenir.
+- **Analyse des photos** : MyPhotos repère seul les photos ajoutées, modifiées ou supprimées, à chaque démarrage puis toutes les heures. **Actualiser**, ici ou au-dessus des photos, refait tout de suite le tour de tous vos dossiers. Les nouvelles photos sont ajoutées puis analysées, et celles qui ne sont plus sur le disque sont oubliées. Un dossier inaccessible (disque débranché) garde ses photos. À la fin, MyPhotos dit ce qui a changé, par exemple « 3 nouvelles photos, 5 012 photos retirées ». La recherche reste possible pendant ce temps.
 - **Moteur de reconnaissance** : le moteur utilisé, et le bouton **Changer de moteur**.
 - **Votre ordinateur** : ce que MyPhotos sait de votre PC.
+- **Raccourci** (MyPhotos.exe seul) : **Créer un raccourci sur le Bureau et dans le menu Démarrer**. La version installée a déjà le sien.
 - **Arrêter MyPhotos**.
 
-MyPhotos s'arrête aussi tout seul environ trois minutes après la fermeture de sa page. Pour le retrouver, double-cliquez de nouveau sur MyPhotos.exe ; s'il tourne encore, sa page s'ouvre simplement.
+**Fermer la fenêtre arrête MyPhotos.** Si un travail est en cours (analyse, copie, recherche des doublons, téléchargement du moteur), MyPhotos demande d'abord s'il faut vraiment l'arrêter ; l'analyse reprendra au lancement suivant. Un double-clic sur MyPhotos alors qu'il est déjà ouvert ramène simplement sa fenêtre au premier plan. MyPhotos retient la place et la taille de sa fenêtre d'une fois sur l'autre.
 
 ## Choisir, copier, supprimer
 
@@ -154,17 +163,49 @@ Dans le dossier `%LOCALAPPDATA%\MyPhotos` (copiez ce chemin dans la barre d'adre
 - `index.db` : vos dossiers, ce que MyPhotos sait de chaque photo (date, dimensions, position GPS si l'appareil l'a enregistrée, description chiffrée calculée par le moteur) et les empreintes qui servent à repérer les doublons ;
 - `miniatures.db` : les miniatures affichées dans les résultats ;
 - `modele\` : le ou les moteurs téléchargés ;
-- `journal.log` : le journal de fonctionnement, utile en cas de problème.
+- `journal.log` : le journal de fonctionnement, utile en cas de problème ;
+- `fenetre.json` : la place et la taille de la fenêtre ; `webview2\` : les fichiers de travail de la fenêtre, effacés à sa fermeture ; `edge\` : ceux d'Edge, seulement si MyPhotos a dû s'ouvrir dans Edge.
 
-MyPhotos n'écrit rien dans vos dossiers de photos, sauf les copies que vous lui demandez (**Copier dans un dossier…**). À chaque lancement, MyPhotos.exe se décompresse aussi dans un dossier temporaire (`%TEMP%\_MEI…`), effacé à l'arrêt.
+MyPhotos n'écrit rien dans vos dossiers de photos, sauf les copies que vous lui demandez (**Copier dans un dossier…**). À chaque lancement, MyPhotos.exe seul se décompresse aussi dans un dossier temporaire (`%TEMP%\_MEI…`), effacé à l'arrêt ; la version installée, déjà décompressée, n'en a pas besoin.
+
+### MyPhotos s'ouvre dans Edge ou dans mon navigateur
+
+Pour s'afficher dans sa propre fenêtre, MyPhotos utilise **WebView2**, le moteur d'affichage de Microsoft Edge, fourni avec Windows 11 et la plupart des Windows 10, ainsi que le .NET Framework 4.7.2 ou plus récent. S'ils manquent, MyPhotos s'ouvre dans **Microsoft Edge en mode application** (une fenêtre sans barre d'adresse), et à défaut dans votre navigateur. Tout fonctionne de la même façon. Fermer la fenêtre d'Edge arrête MyPhotos ; dans un navigateur, MyPhotos s'arrête tout seul environ trois minutes après la fermeture de sa page. Pour retrouver la fenêtre de MyPhotos, installez le « Runtime WebView2 » depuis le site de Microsoft, ou faites les mises à jour de Windows.
 
 ### Comment désinstaller MyPhotos ?
 
-1. Dans les Réglages, cliquez sur **Arrêter MyPhotos**.
+**Version installée.** Fermez MyPhotos, puis ouvrez **Paramètres** > **Applications** > **Applications installées** (sous Windows 10 : **Applications et fonctionnalités**), cherchez **MyPhotos** et choisissez **Désinstaller**. Une fois le programme retiré, une question s'affiche : « Supprimer aussi l'analyse de vos photos et le moteur téléchargé ? », avec la place qu'ils occupent.
+
+- **Non** (le choix proposé) garde l'analyse et le moteur dans `%LOCALAPPDATA%\MyPhotos` : si vous réinstallez MyPhotos, il retrouve tout sans rien refaire.
+- **Oui** les supprime. Seuls les fichiers créés par MyPhotos sont effacés ; un fichier que vous auriez rangé dans ce dossier est gardé, et le dossier avec.
+
+Vos photos ne sont jamais touchées. Les raccourcis de MyPhotos (Bureau, menu Démarrer) sont retirés, y compris ceux créés depuis les Réglages s'ils désignent la version désinstallée.
+
+**Sans installation (MyPhotos.exe seul).**
+
+1. Fermez MyPhotos (dans les Réglages : **Arrêter MyPhotos**).
 2. Supprimez MyPhotos.exe.
 3. Supprimez le dossier `%LOCALAPPDATA%\MyPhotos`.
 
-MyPhotos n'installe rien d'autre : ni service, ni entrée dans le registre, ni démarrage automatique. Vos photos restent intactes.
+MyPhotos n'installe ni service ni démarrage automatique. MyPhotos.exe seul n'écrit rien dans le registre ; la version installée y ajoute seulement son entrée dans « Applications installées », retirée à la désinstallation. Vos photos restent intactes.
+
+### Installer sans questions, sur plusieurs PC
+
+L'installateur accepte les options habituelles d'Inno Setup. Il installe toujours pour le compte qui le lance : lancé « en tant qu'administrateur » avec un autre compte, il installerait MyPhotos pour cet autre compte.
+
+```bat
+rem Installation silencieuse, avec une icône sur le Bureau et un raccourci dans le menu Démarrer.
+rem Sans icône sur le Bureau, ajouter /MERGETASKS="!desktopicon" ; sans raccourci dans le menu Démarrer, /NOICONS.
+rem Autre dossier, /DIR="D:\Programmes\MyPhotos" ; journal, /LOG="C:\chemin\installation.log".
+MyPhotos-<version>-installation.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+
+rem Désinstallation silencieuse, qui garde l'analyse des photos et le moteur...
+"%LOCALAPPDATA%\Programs\MyPhotos\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+rem ... ou qui les supprime aussi (seuls les fichiers créés par MyPhotos).
+"%LOCALAPPDATA%\Programs\MyPhotos\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SUPPRIMERDONNEES
+```
+
+Codes de sortie : `0` fait ; `1` MyPhotos est ouvert, rien n'a été touché ; `7` dossier refusé (il contient un autre programme, ou son chemin est trop long). Passez toujours `/NORESTART` : sans lui, une installation silencieuse peut redémarrer Windows si un redémarrage est nécessaire.
 
 ### Mes photos sont-elles modifiées ?
 
@@ -172,7 +213,15 @@ Non. MyPhotos ne modifie jamais vos photos : il ne les déplace pas et ne les r
 
 ### J'ai supprimé une photo par erreur.
 
-Ouvrez la Corbeille de Windows (icône du Bureau), faites un clic droit sur la photo, puis **Restaurer** : elle retrouve sa place. MyPhotos la retrouve à son prochain passage, ou tout de suite avec **Chercher les nouvelles photos maintenant**, dans les Réglages.
+Ouvrez la Corbeille de Windows (icône du Bureau), faites un clic droit sur la photo, puis **Restaurer** : elle retrouve sa place. MyPhotos la retrouve à son prochain passage, ou tout de suite avec **Actualiser**.
+
+### J'ai supprimé des photos (ou tout un dossier), mais MyPhotos les montre encore.
+
+Cliquez sur **Actualiser**, au-dessus des photos ou dans les Réglages : MyPhotos refait le tour de vos dossiers et oublie les photos qui ne sont plus sur le disque. Une photo que vous ouvrez alors que son fichier a disparu est aussi retirée tout de suite (« Cette photo n'existe plus sur le disque : MyPhotos l'a retirée. »). Si son disque est seulement débranché, MyPhotos ne retire rien.
+
+### Mon dossier Images contient des captures d'écran ou des fonds d'écran.
+
+Dans les Réglages, sous le dossier, cliquez sur **Exclure un sous-dossier…** et choisissez le dossier des captures : ses images disparaissent de MyPhotos, sans être supprimées de l'ordinateur. Au premier lancement, MyPhotos les décoche d'office.
 
 ### Puis-je chercher avec plusieurs mots ?
 
@@ -200,26 +249,28 @@ python -m venv .venv
 .venv\Scripts\python -m myphotos
 ```
 
-`python -m myphotos` (ou `python lancer.py`, le point d'entrée de l'exécutable) lance le serveur local puis ouvre la page. Depuis les sources, les données vont dans `donnees\`, ignoré par git ; MyPhotos.exe les range dans `%LOCALAPPDATA%\MyPhotos`.
+`python -m myphotos` (ou `python lancer.py`, le point d'entrée de l'exécutable) lance le serveur local puis ouvre la fenêtre de MyPhotos (pywebview et WebView2). Depuis les sources, les données vont dans `donnees\`, ignoré par git ; MyPhotos.exe les range dans `%LOCALAPPDATA%\MyPhotos`.
 
 | Variable d'environnement | Effet |
 |---|---|
 | `MYPHOTOS_DOSSIER` | dossier des données (index, miniatures, journal) |
 | `MYPHOTOS_MODELES` | dossier des moteurs, pour réutiliser un moteur déjà téléchargé |
 | `MYPHOTOS_PORT` | port local (7796 par défaut) |
-| `MYPHOTOS_SANS_PAGE=1` | n'ouvre pas le navigateur |
-| `MYPHOTOS_INACTIVITE_S` | délai d'arrêt automatique sans page ouverte (180 s par défaut) |
+| `MYPHOTOS_SANS_PAGE=1` | n'ouvre ni fenêtre ni page (essais) |
+| `MYPHOTOS_NAVIGATEUR=1` (ou l'option `--navigateur`) | ouvre la page dans le navigateur, comme avant la 0.3.0, au lieu de la fenêtre |
+| `MYPHOTOS_DEBUG=1` | outils de développement de la fenêtre (depuis les sources ; MyPhotos.exe demande en plus l'option `--essai-debogage`) |
+| `MYPHOTOS_INACTIVITE_S` | dans le navigateur, délai d'arrêt automatique sans page ouverte (180 s par défaut) |
 | `MYPHOTOS_TELECHARGEMENT_FACTICE=1` | simule le téléchargement du moteur, pour essayer l'interface |
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (199 essais) :
+**Tests** (292 essais) :
 
 ```powershell
-.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction
+.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre
 ```
 
-`test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
+`test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`, `--dossier`, `--installateur`) et les règles de l'installateur (`construction/MyPhotos.iss`) ; son essai réel (compilation, installation dans un dossier d'essai, mise à jour, désinstallations) ne tourne qu'à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`). `test_fenetre` essaie la fenêtre et ses replis (Edge, navigateur), la relance et la fermeture ; ses essais réels, sur un bureau Windows invisible et pilotés par le protocole DevTools, ne tournent qu'à la demande (`MYPHOTOS_ESSAI_FENETRE=1`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
 
 **Construction de MyPhotos.exe** (un seul fichier, sans console, avec PyInstaller, dans un environnement séparé) :
 
@@ -229,7 +280,7 @@ python -m venv .venv-build
 construction\construire.ps1
 ```
 
-Le résultat est `dist\MyPhotos.exe`. `construction\construire.ps1 --essai` construit le programme d'essai (`construction/essai_exe.py`), qui vérifie la chaîne de construction après une mise à jour de Python, d'ONNX Runtime ou de PyInstaller. Une fois MyPhotos.exe essayé, `construction\construire.ps1 --paquet` prépare la publication : l'archive `MyPhotos-<version>-windows.zip` (avec le mode d'emploi et les licences des composants) et les empreintes SHA-256. Détails : [construction/LISEZMOI.md](construction/LISEZMOI.md).
+Le résultat est `dist\MyPhotos.exe`. `construction\construire.ps1 --essai` construit le programme d'essai (`construction/essai_exe.py`), qui vérifie la chaîne de construction après une mise à jour de Python, d'ONNX Runtime ou de PyInstaller. Une fois MyPhotos.exe essayé, `construction\construire.ps1 --paquet` prépare la publication : l'archive `MyPhotos-<version>-windows.zip` (avec le mode d'emploi et les licences des composants) et les empreintes SHA-256. `construction\construire.ps1 --dossier` construit la version « dossier » (`dist\MyPhotos\`, déjà décompressée), puis `construction\construire.ps1 --installateur` en fait `dist\MyPhotos-<version>-installation.exe` avec Inno Setup 6 (`construction/MyPhotos.iss`). Détails : [construction/LISEZMOI.md](construction/LISEZMOI.md).
 
 **Outils** : `outils/evaluation.py` mesure la qualité de la recherche et règle les seuils (résumé dans `outils/EVALUATION.md`) ; `outils/banc_essai.py` compare la vitesse et la fidélité des variantes d'un moteur ; `outils/telecharger_tout.py` télécharge tous les fichiers d'un moteur ; `outils/calibrer_doublons.py` règle les seuils des doublons sur des images publiques (résumé dans `outils/DOUBLONS.md`) ; `outils/verifier_publication.py` vérifie qu'aucune donnée personnelle n'entre dans le dépôt.
 
@@ -247,7 +298,10 @@ Le flux : **matériel → moteur → analyse → recherche**. Au premier lancem
 | `myphotos/base.py` | index SQLite et miniatures |
 | `myphotos/recherche.py` | recherche par mots, seuils « sûres » et « moins sûres » |
 | `myphotos/doublons.py` | doublons : copies identiques, copies retouchées, rafales |
-| `myphotos/config.py` | version, port, emplacement des données |
+| `myphotos/fenetre.py` | la fenêtre de MyPhotos (pywebview, WebView2), ses replis (Edge en mode application, navigateur), la relance et la fermeture |
+| `myphotos/raccourci.py` | raccourcis du Bureau et du menu Démarrer (MyPhotos.exe seul) |
+| `myphotos/config.py` | version, port, emplacement des données, nom du mutex de l'installateur |
+| `construction/MyPhotos.iss` | l'installateur (Inno Setup) : installation pour l'utilisateur seul, mise à jour, désinstallation et question sur les données |
 
 Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Un mode d'emploi d'une page, à imprimer, est disponible en [PDF](docs/MyPhotos_mode_emploi.pdf).
 
@@ -255,7 +309,7 @@ Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md
 
 - **MyPhotos** : licence MIT, © 2026 glenac. Voir [LICENSE](LICENSE).
 - **Moteur de reconnaissance** : SigLIP 2, © Google, licence Apache-2.0, dans les exports ONNX publiés par onnx-community sur Hugging Face. MyPhotos le télécharge depuis Hugging Face ; il n'est pas inclus dans MyPhotos.exe.
-- **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, Tcl/Tk et le chargeur de PyInstaller, chacun sous sa propre licence. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, pywebview et les DLL WebView2 de Microsoft, pythonnet, Tcl/Tk et le chargeur de PyInstaller, chacun sous sa propre licence. L'installateur est fait avec Inno Setup. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **Choix des moteurs** : banc d'essai multilingue du projet Immich (jeu Crossmodal-3600).
 - **Captures d'écran** : photos de Wikimedia Commons versées dans le domaine public (CC0). Voir [docs/captures/CREDITS.md](docs/captures/CREDITS.md).
 
@@ -274,13 +328,17 @@ Des idées pour les versions suivantes, sans date promise :
 
 **Find your photos by typing what they show.** Type "dog" (or, preferably, the French « chien ») and every photo with a dog appears. MyPhotos runs entirely on your Windows PC: your photos are never uploaded anywhere. The interface is in French.
 
-**Privacy.** Recognition and search run locally, on your graphics card or processor. The interface is a page served at `http://127.0.0.1:7796`, unreachable from the Internet or from your local network. No account, no ads, no telemetry from MyPhotos. The only download is the recognition engine, once, from Hugging Face (pinned revision, every file checked against its SHA-256 hash). Your photos are never modified. MyPhotos only deletes them when you ask it to, after confirmation, and then to the Windows Recycle Bin, never permanently (drives without a Recycle Bin, such as USB sticks or network drives, are refused). Note: ONNX Runtime and DirectML, the Microsoft libraries that run the engine, may emit Windows diagnostic events, which Windows only sends to Microsoft if your diagnostic data settings allow it (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+**Privacy.** Recognition and search run locally, on your graphics card or processor. MyPhotos opens in its own window (WebView2, built into Windows), which shows a page served by MyPhotos itself at `http://127.0.0.1:7796`, unreachable from the Internet or from your local network. Without WebView2, it opens in Microsoft Edge in app mode, or else in your browser. No account, no ads, no telemetry from MyPhotos. The only download is the recognition engine, once, from Hugging Face (pinned revision, every file checked against its SHA-256 hash). Your photos are never modified. MyPhotos only deletes them when you ask it to, after confirmation, and then to the Windows Recycle Bin, never permanently (drives without a Recycle Bin, such as USB sticks or network drives, are refused). Note: ONNX Runtime and DirectML, the Microsoft libraries that run the engine, may emit Windows diagnostic events, which Windows only sends to Microsoft if your diagnostic data settings allow it (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
-**Requirements.** Windows 10 64-bit (version 1809 or later) or Windows 11; 4 GB of RAM (8 GB recommended, 16 GB for the "Précis" engine); an optional DirectX 12 graphics card; the engine (749 MB to 2.1 GB) plus about 35 KB per photo of disk space; Internet access once. Supported formats: JPEG, PNG, WebP, BMP, GIF, TIFF (no HEIC, video or RAW yet).
+**Requirements.** Windows 10 64-bit (version 1809 or later) or Windows 11; 4 GB of RAM (8 GB recommended, 16 GB for the "Précis" engine); WebView2 and .NET Framework 4.7.2 (built into Windows 11 and most Windows 10 PCs); an optional DirectX 12 graphics card; the engine (749 MB to 2.1 GB) plus about 35 KB per photo of disk space; Internet access once. Supported formats: JPEG, PNG, WebP, BMP, GIF, TIFF (no HEIC, video or RAW yet).
 
-**Installation.** Download **MyPhotos.exe** from the [Releases](https://github.com/glenac/MyPhotos/releases) page and double-click it; there is nothing to install. If Microsoft Defender SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway** (MyPhotos is not signed with a paid certificate).
+**Installation.** The recommended way is **MyPhotos-<version>-installation.exe** from the [Releases](https://github.com/glenac/MyPhotos/releases) page: it installs MyPhotos for the current user only, without administrator rights, in `%LOCALAPPDATA%\Programs\MyPhotos`, with a Start menu shortcut and an optional desktop icon. The installed version starts about three times faster (about 0.5 s instead of 1.6 s), and running a newer installer updates it in place, keeping your data. **MyPhotos.exe** (a single file, nothing to install) and the **MyPhotos-<version>-windows.zip** archive are still published. Silent install: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (add `/MERGETASKS="!desktopicon"` or `/NOICONS` to skip the shortcuts). If Microsoft Defender SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway** (MyPhotos is not signed with a paid certificate).
 
-**First run.** A three-step assistant opens in your browser: « Votre ordinateur » (MyPhotos describes your PC and recommends an engine; click « Télécharger »), « Vos photos » (pick your photo folders with « Ajouter » or « Ajouter un dossier… »), and « Analyse » (each photo is analysed once; you can start searching right away with « Commencer à chercher »).
+**First run.** MyPhotos opens in its own window, with a three-step assistant: « Votre ordinateur » (MyPhotos describes your PC and recommends an engine; click « Télécharger »), « Vos photos » (pick your photo folders with « Ajouter » or « Ajouter un dossier… »), and « Analyse » (each photo is analysed once; you can start searching right away with « Commencer à chercher »). Before a folder is added, MyPhotos lists its largest subfolders with their photo counts; screenshot and wallpaper folders are unticked by default and become excluded subfolders.
+
+**Window.** Closing the window stops MyPhotos (it asks first if work is in progress); launching MyPhotos again while it runs brings its window back. MyPhotos.exe alone can create its own desktop and Start menu shortcuts (« Réglages » > « Raccourci »).
+
+**Refresh and exclude.** « Actualiser » (above the photos and in « Réglages ») rescans all folders right away: new photos are added, deleted ones are forgotten, unreachable drives keep their photos, and MyPhotos reports what changed. In « Réglages », « Exclure un sous-dossier… » hides a subfolder from MyPhotos without deleting anything; « Ne plus exclure » brings it back. A photo whose file has disappeared is forgotten as soon as you open it, unless its drive is simply unplugged.
 
 **Search.** Type what you are looking for and press Enter; "sure" results come first, then « Moins sûres » (less sure). When a search finds few results, « Voir les photos les plus proches » shows the closest photos, 60 at a time.
 
@@ -299,8 +357,8 @@ Des idées pour les versions suivantes, sans date promise :
 
 Speeds were measured for the engine alone on a Ryzen 5 5600X with a Radeon RX 6600 XT; a regular hard disk limits a first pass to about 10 photos/s. On 306 public test images, 93 to 94% of the "sure" results are correct ([outils/EVALUATION.md](outils/EVALUATION.md)). You can switch engines in « Réglages » > « Changer de moteur ».
 
-**FAQ.** Data lives in `%LOCALAPPDATA%\MyPhotos` (index, thumbnails, engine, log). To uninstall, click « Arrêter MyPhotos » in « Réglages », then delete MyPhotos.exe and that folder; nothing else is installed. Multi-word queries work well ("chien sur la plage"). French is the reference language; English gives comparable results.
+**FAQ.** Data lives in `%LOCALAPPDATA%\MyPhotos` (index, thumbnails, engine, log). To uninstall the installed version, close MyPhotos and use Settings > Apps > Installed apps; you are then asked whether to also delete the analysis of your photos and the downloaded engine (No by default; only files created by MyPhotos are ever deleted, never your photos). Silent uninstall: `"%LOCALAPPDATA%\Programs\MyPhotos\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, plus `/SUPPRIMERDONNEES` to delete that data too. For MyPhotos.exe alone, click « Arrêter MyPhotos » in « Réglages », then delete MyPhotos.exe and that folder; nothing else is installed. Multi-word queries work well ("chien sur la plage"). French is the reference language; English gives comparable results.
 
-**Development.** Python 3.14 on 64-bit Windows: `python -m venv .venv`, `.venv\Scripts\python -m pip install -r requirements.txt`, then `.venv\Scripts\python -m myphotos`. Tests: `.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction`. The executable is built with `construction\construire.ps1` (see `construction/LISEZMOI.md`, in French). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
+**Development.** Python 3.14 on 64-bit Windows: `python -m venv .venv`, `.venv\Scripts\python -m pip install -r requirements.txt`, then `.venv\Scripts\python -m myphotos`. Tests: `.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre`. The executable is built with `construction\construire.ps1` (see `construction/LISEZMOI.md`, in French). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
 
 **License.** MyPhotos is released under the MIT license, © 2026 glenac. Third-party components and their licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

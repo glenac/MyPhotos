@@ -14,6 +14,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import warnings
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
@@ -23,7 +24,7 @@ import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
 from . import config, modele
-from .base import chemin_affiche, chemin_systeme, cle_chemin, enregistrable, iso_depuis_ns, maintenant
+from .base import chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, iso_depuis_ns, maintenant
 
 journal = logging.getLogger(__name__)
 
@@ -68,6 +69,46 @@ NOMS_SYSTEME_RACINE = {'windows', 'windows.old', 'program files', 'program files
                        'perflogs', 'recovery', 'msocache', 'intel', 'amd', 'nvidia', 'drivers', 'boot', 'efi'}
 
 
+# Sous-dossiers que l'assistant propose de laisser de côté (décochés d'office) : captures d'écran et fonds d'écran.
+# Noms comparés sans accents, sans casse, apostrophes et tirets ramenés à des espaces (voir nature_sous_dossier).
+# Sources (recherche du 24/11/2026) : Windows 10 et 11 enregistrent Win + Impr. écran dans Images\Screenshots, affiché
+# « Captures d'écran » en français (dossier spécial, nom localisé par desktop.ini) ; OneDrive peut y enregistrer les
+# captures sous un vrai dossier « Captures d'écran » ; la Xbox Game Bar range les siennes dans « Captures » ; les fonds
+# d'écran (Bing Wallpaper, Windows à la une, téléchargés) se rangent souvent dans « Wallpapers » ou « Fonds d'écran ».
+NOMS_CAPTURES = {'screenshots', 'screenshot', 'screen shots', 'captures d ecran', 'capture d ecran', 'captures ecran',
+                 'captures', 'captures decran', 'capture decran', 'impressions d ecran', 'impression d ecran'}
+NOMS_FONDS = {'wallpapers', 'wallpaper', 'fonds d ecran', 'fond d ecran', 'fonds ecran', 'fond ecran',
+              'fonds decran', 'fond decran', 'bing wallpaper', 'bing wallpapers', 'bingwallpaper', 'windows spotlight',
+              'spotlight', 'windows a la une', 'a la une', 'arriere plans', 'arriere plan', 'backgrounds',
+              'desktop backgrounds', 'lock screen', 'ecran de verrouillage'}
+# Débuts de noms qui suffisent (« Fonds d'écran Windows », « Wallpapers HD », « Screenshots 2023 »…).
+DEBUTS_CAPTURES = ('screenshot', 'captures d ecran', 'capture d ecran')
+DEBUTS_FONDS = ('wallpaper', 'fonds d ecran', 'fond d ecran', 'bing wallpaper')
+EXAMEN_SOUS_DOSSIERS = 12          # l'assistant montre au plus les 12 plus gros sous-dossiers…
+EXAMEN_PROFONDEUR = 3              # … et les captures ou fonds d'écran trouvés jusqu'à 3 niveaux sous le dossier
+
+
+def _nom_simple(nom):
+    """« Fonds d’écran » -> « fonds d ecran » : sans accents ni casse, ponctuation ramenée à une espace."""
+    s = re.sub(r"['‘’ʼ`´]", ' ', nom)          # apostrophes droites ou typographiques
+    s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii').lower()
+    s = re.sub(r"[^a-z0-9]+", ' ', s)
+    return s.strip()
+
+
+def nature_sous_dossier(nom):
+    """'captures', 'fonds' ou None : le nom d'un dossier dit-il qu'il contient des captures d'écran ou des fonds
+    d'écran (et donc pas de vraies photos) ?"""
+    n = _nom_simple(nom)
+    if not n:
+        return None
+    if n in NOMS_CAPTURES or n.startswith(DEBUTS_CAPTURES):
+        return 'captures'
+    if n in NOMS_FONDS or n.startswith(DEBUTS_FONDS):
+        return 'fonds'
+    return None
+
+
 class MoteurIndisponible(RuntimeError):
     """Le modèle de reconnaissance ne peut pas être chargé ou ne répond plus (message affichable)."""
 
@@ -89,9 +130,11 @@ class Parcours:
     enregistrer, il arrêtait toute l'indexation.
     """
 
-    def __init__(self, racine, extensions=None):
+    def __init__(self, racine, extensions=None, exclus=()):
         self.racine = racine
         self.extensions = extensions or config.EXTENSIONS
+        # Sous-dossiers exclus (clés de cle_chemin) : jamais parcourus.
+        self.exclus = frozenset(exclus)
         self.echecs = []           # clés (cle_chemin) des sous-dossiers illisibles, terminées par os.sep
         self.vide = False          # le dossier ne contient strictement rien
         self.courant = racine      # dossier en cours de lecture (pour l'affichage)
@@ -125,7 +168,8 @@ class Parcours:
                     continue
                 try:
                     if e.is_dir(follow_symlinks=False):
-                        if not self._dossier_ignore(e, racine_disque):
+                        if not self._dossier_ignore(e, racine_disque) and not (
+                                self.exclus and cle_chemin(e.path) in self.exclus):
                             pile.append(e.path)
                     elif e.is_file(follow_symlinks=False):
                         r = self._image(e)
@@ -160,6 +204,55 @@ class Parcours:
         if getattr(st, 'st_file_attributes', 0) & (_CACHE | _SYSTEME):
             return None
         return chemin_affiche(e.path), st.st_size, st.st_mtime_ns
+
+
+def examiner_dossier(racine, limite_s=4.0, exclus=()):
+    """Ce que l'assistant montre avant d'ajouter un dossier : ses plus gros sous-dossiers, avec leur nombre de photos
+    (sans en ouvrir aucune, en limite_s secondes au plus, comme le comptage du premier lancement), et les sous-dossiers
+    de captures d'écran ou de fonds d'écran (nature_sous_dossier), jusqu'à EXAMEN_PROFONDEUR niveaux.
+
+    Renvoie {'total', 'complet', 'sous_dossiers': [{chemin, nom, photos, nature}]} : les EXAMEN_SOUS_DOSSIERS plus
+    gros du premier niveau (au moins une photo), puis les captures et fonds d'écran plus profonds. Sans comptage
+    complet, les nombres sont des minimums. Lève OSError si le dossier est injoignable."""
+    parcours = Parcours(racine, exclus=exclus)
+    debut = time.monotonic()
+    base = chemin_affiche(racine).rstrip('\\/')
+    longueur = len(base) + 1
+    premiers, reconnus = {}, {}                  # nom (1er niveau) -> photos ; parties (tuple) -> [nature, photos]
+    total, complet = 0, True
+    for chemin, _taille, _modifie in parcours:
+        total += 1
+        parties = chemin[longueur:].split(os.sep)[:-1]
+        if parties:
+            premiers[parties[0]] = premiers.get(parties[0], 0) + 1
+            for i, nom in enumerate(parties[:EXAMEN_PROFONDEUR]):
+                cle = tuple(parties[:i + 1])
+                r = reconnus.get(cle)
+                if r is None:
+                    nature = nature_sous_dossier(nom)
+                    r = reconnus[cle] = [nature, 0]
+                if r[0]:
+                    r[1] += 1
+                    break                       # le plus haut dossier reconnu compte seul
+        if total % 256 == 0 and time.monotonic() - debut > limite_s:
+            complet = False
+            break
+    sous = []
+    for nom, n in sorted(premiers.items(), key=lambda x: (-x[1], x[0].lower()))[:EXAMEN_SOUS_DOSSIERS]:
+        sous.append({'chemin': base + os.sep + nom, 'nom': nom, 'photos': n,
+                     'nature': nature_sous_dossier(nom)})
+    deja = {cle_chemin(s['chemin']) for s in sous}
+    for parties, (nature, n) in sorted(reconnus.items(), key=lambda x: (-x[1][1], x[0])):
+        if not nature or not n:
+            continue
+        chemin = base + os.sep + os.sep.join(parties)
+        k = cle_chemin(chemin)
+        # Déjà montré, ou dans un dossier reconnu montré (qui sera décoché d'office) : rien à ajouter.
+        if k in deja or any(dedans(k, cle_chemin(s['chemin'])) and s['nature'] for s in sous):
+            continue
+        sous.append({'chemin': chemin, 'nom': os.path.join(*parties), 'photos': n, 'nature': nature})
+        deja.add(k)
+    return {'total': total, 'complet': complet, 'sous_dossiers': sous}
 
 
 # ---------------------------------------------------------------- lecture d'une photo
@@ -422,6 +515,15 @@ class Indexeur:
         self._reveil = threading.Event()
         self._repos = threading.Event()          # levé quand le travail est fini (termine ou erreur)
         self._inventaire_demande = False
+        # Inventaires demandés : numéro de la dernière demande, numéro couvert par le dernier inventaire complet, et
+        # son bilan {numero, nouvelles, retirees, injoignables, dossiers, quand} (bouton « Actualiser »).
+        self._demande = 0
+        self._fait = 0
+        self._en_traitement = 0                  # numéro de demande du passage en cours (une erreur ne vaut que pour lui)
+        self._bilan = None
+        self._bilan_courant = None
+        self._cibles = set()                     # dossiers à revoir seulement (« Ne plus exclure ») ; vide = tous
+        self._tous = False
         self._effacer_erreurs = False
         self._repare = False
         self._passees = set()                    # photos momentanément illisibles : pas avant le prochain passage
@@ -459,15 +561,24 @@ class Indexeur:
         if attendre and fil is not None and fil is not threading.current_thread():
             fil.join(timeout=120)
 
-    def relancer(self, erreurs=False):
+    def relancer(self, erreurs=False, dossiers=None):
         """Refait un inventaire (après l'ajout ou le retrait d'un dossier, par exemple), puis analyse ce qui
-        manque. erreurs=True redonne aussi une chance aux photos en erreur."""
+        manque. erreurs=True redonne aussi une chance aux photos en erreur ; dossiers (identifiants) : ne revoir que
+        ceux-là (sinon tous). Renvoie le numéro de la demande : elle est satisfaite quand etat()['inventaire_fait'] l'a
+        atteint (le bilan de cet inventaire est alors dans etat()['bilan'])."""
         with self._verrou:                       # demande et réveil ensemble (voir _cycle)
             self._inventaire_demande = True
             self._effacer_erreurs = self._effacer_erreurs or bool(erreurs)
+            if dossiers is None:
+                self._tous = True
+            else:
+                self._cibles.update(int(d) for d in dossiers)
+            self._demande += 1
+            numero = self._demande
             self._repos.clear()
             self._reveil.set()
         self.demarrer()
+        return numero
 
     def attendre(self, timeout=None):
         """Attend que le travail en cours soit fini (phase 'termine' ou 'erreur'). Vrai si c'est le cas."""
@@ -489,6 +600,10 @@ class Indexeur:
         with self._verrou:
             e = dict(self._etat)
             mesures = list(self._mesures)
+            e['inventaire_demande'] = self._demande
+            e['inventaire_fait'] = self._fait
+            e['inventaire_en_cours'] = self._en_traitement
+            e['bilan'] = dict(self._bilan) if self._bilan else None
         c = self._comptes()
         if not self._en_marche.is_set() and e['phase'] in ('inventaire', 'analyse'):
             e['phase'] = 'pause'
@@ -589,6 +704,10 @@ class Indexeur:
         with self._verrou:
             self._inventaire_demande = False
             effacer, self._effacer_erreurs = self._effacer_erreurs, False
+            numero = self._demande
+            self._en_traitement = numero
+            cibles = None if (self._tous or not self._cibles) else set(self._cibles)
+            self._tous, self._cibles = False, set()
             # Ce passage répond aux relances déjà reçues : leur réveil, resté levé, en lançait un second pour rien
             # juste après la mise au repos (attendre() rendait la main, puis l'inventaire repartait).
             self._reveil.clear()
@@ -601,7 +720,12 @@ class Indexeur:
             self._verifier_modele()
             if effacer:
                 self.base.effacer_erreurs()
-            self._inventaire()
+            self._inventaire(cibles)
+            if not self._arret.is_set():
+                with self._verrou:
+                    self._fait = max(self._fait, numero)
+                    self._bilan = dict(self._bilan_courant, numero=numero, quand=maintenant(),
+                                   tous=cibles is None)
             if self._interrompu():
                 return
             self._analyser()
@@ -650,9 +774,12 @@ class Indexeur:
 
     # ------------------------------------------------ inventaire
 
-    def _inventaire(self):
+    def _inventaire(self, cibles=None):
         self._changer('inventaire', dossier_courant=None, trouvees=0)
+        self._bilan_courant = {'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'dossiers': 0}
         for d in self.base.dossiers():
+            if cibles is not None and d['id'] not in cibles:
+                continue
             if self._arret.is_set():
                 return
             self._attendre_reprise()
@@ -663,7 +790,11 @@ class Indexeur:
         did, racine = d['id'], d['chemin']
         self._changer(dossier_courant=racine, trouvees=0)
         connus = self.base.connus(did)
-        parcours = Parcours(racine)
+        parcours = Parcours(racine, exclus={cle_chemin(x['chemin']) for x in self.base.exclusions(did)})
+        bilan = self._bilan_courant if self._bilan_courant is not None else {
+            'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'dossiers': 0}
+        bilan['dossiers'] += 1
+        ajoutees = 0
         nouveaux, modifies, vus = [], [], set()
         par_empreinte = {}                       # (taille, modifie) -> nouveaux chemins (déplacements)
         trouvees = 0
@@ -680,7 +811,7 @@ class Indexeur:
                     if info[1] != taille or info[2] != modifie:
                         modifies.append((info[0], taille, modifie, iso_depuis_ns(modifie)))
                 if len(nouveaux) >= PAQUET_INVENTAIRE:
-                    self.base.ajouter_photos(did, nouveaux)
+                    ajoutees += self.base.ajouter_photos(did, nouveaux)
                     nouveaux = []
                 if len(modifies) >= PAQUET_INVENTAIRE:
                     self.base.marquer_modifiees(modifies)
@@ -695,21 +826,26 @@ class Indexeur:
         except OSError as e:
             journal.info('dossier injoignable, ses photos sont gardées : %s (%s)', racine, e)
             self.base.marquer_dossier(did, disponible=False)
+            bilan['injoignables'].append(racine)
+            bilan['nouvelles'] += ajoutees
             return
         if parcours.sautes:
             journal.info('%d nom(s) de fichier ou de dossier impossibles à enregistrer, ignorés, dans %s',
                          parcours.sautes, racine)
         if nouveaux:
-            self.base.ajouter_photos(did, nouveaux)
+            ajoutees += self.base.ajouter_photos(did, nouveaux)
         if modifies:
             self.base.marquer_modifiees(modifies)
         self._changer(trouvees=trouvees)
         if not complet:
+            bilan['nouvelles'] += ajoutees
             return                               # arrêt demandé : rien n'est déclaré disparu
         if parcours.vide and connus:
             # Un partage réseau monté sans son disque paraît vide : prudence, on garde tout.
             journal.info('dossier vide alors que des photos y étaient connues, considéré injoignable : %s', racine)
             self.base.marquer_dossier(did, disponible=False)
+            bilan['injoignables'].append(racine)
+            bilan['nouvelles'] += ajoutees
             return
         disparus = [(ch, info) for ch, info in connus.items() if ch not in vus and not parcours.sous_echec(ch)]
         if disparus:
@@ -724,8 +860,11 @@ class Indexeur:
                     oublies.append(pid)
             if deplaces:
                 self.base.deplacer_photos(deplaces)
+                ajoutees -= len(deplaces)        # une photo déplacée n'est ni nouvelle ni retirée
             if oublies:
                 self.base.oublier_photos(oublies)
+                bilan['retirees'] += len(oublies)
+        bilan['nouvelles'] += max(0, ajoutees)
         self.base.marquer_dossier(did, disponible=True, vu=maintenant())
 
     # ------------------------------------------------ analyse

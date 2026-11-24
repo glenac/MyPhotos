@@ -381,6 +381,23 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
   background: var(--surface); color: var(--texte); font: inherit;
 }
 .encart { padding: 14px 18px; border-radius: 14px; background: var(--accent-doux); margin: 18px 0 0; }
+.exclusions { display: grid; gap: 4px; margin-top: 6px; }
+.liste-exclusions { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
+.liste-exclusions li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-size: .92rem; }
+.exclu-chemin { overflow-wrap: anywhere; }
+.dossier-texte > .bouton-lien { justify-self: start; margin-top: 4px; }
+.liste-cases { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 8px; }
+.liste-cases li { padding: 10px 14px; border: 1px solid var(--bordure); border-radius: 12px; background: var(--surface); }
+.liste-cases label { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.liste-cases input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.liste-cases .nom-sd { font-weight: 650; overflow-wrap: anywhere; }
+.liste-cases .note { margin: 4px 0 0 34px; }
+#sd-total { overflow-wrap: anywhere; }
+.actualiser { display: inline-flex; align-items: center; gap: 6px; }
+.actualiser .icone { width: 1.1em; height: 1.1em; }
+.actualiser[aria-busy="true"] .icone { animation: tourner 1.2s linear infinite; }
+@keyframes tourner { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .actualiser[aria-busy="true"] .icone { animation: none; } }
 .etat-analyse { display: grid; gap: 10px; margin: 18px 0; }
 .etat-analyse .titre { font-size: 1.15rem; font-weight: 650; }
 .etat-analyse progress { height: 14px; }
@@ -412,6 +429,8 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 .panneau-corps h3 { margin-bottom: 10px; }
 .r-fin { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .r-fin .note { margin: 0; }
+.r-fin .r-fermeture { flex-basis: 100%; }
+#r-raccourci { white-space: normal; max-width: 100%; text-align: left; }
 
 /* ------------------------------------------------ visionneuse */
 .visionneuse {
@@ -728,6 +747,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     <div class="ligne-compte">
       <p id="compte" class="compte" aria-live="polite"></p>
       <p id="maj" class="maj" hidden>De nouvelles photos sont prêtes. <button id="maj-bouton" class="bouton-lien" type="button">Mettre à jour</button></p>
+      <button id="actualiser" class="bouton-lien actualiser" type="button" hidden title="Refaire le tour de vos dossiers : ajouter les nouvelles photos, oublier celles que vous avez supprimées"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg><span>Actualiser</span></button>
     </div>
     <div id="vide" class="vide" hidden></div>
     <div id="resultats" class="resultats"></div>
@@ -806,6 +826,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   <div class="panneau-corps">
     <section aria-labelledby="r-t-dossiers">
       <h3 id="r-t-dossiers">Vos dossiers de photos</h3>
+      <p class="note">« Exclure un sous-dossier » : MyPhotos ne regarde plus ce sous-dossier (captures et fonds d’écran…). Rien n’est supprimé de votre ordinateur.</p>
       <ul id="r-dossiers" class="liste-dossiers"></ul>
       <button id="r-ajouter" class="bouton" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ajouter un dossier…</button>
       <div id="r-manuel" class="manuel" hidden>
@@ -817,7 +838,9 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     <section aria-labelledby="r-t-analyse">
       <h3 id="r-t-analyse">Analyse des photos</h3>
       <p id="r-analyse"></p>
-      <button id="r-relancer" class="bouton petit" type="button">Chercher les nouvelles photos maintenant</button>
+      <p class="note">Vous avez ajouté ou supprimé des photos ? « Actualiser » refait tout de suite le tour de vos dossiers : les nouvelles photos sont ajoutées, celles qui ne sont plus sur le disque sont oubliées.</p>
+      <button id="r-actualiser" class="bouton petit actualiser" type="button" aria-describedby="r-actualisation"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg><span>Actualiser</span></button>
+      <p id="r-actualisation" class="note" role="status"></p>
     </section>
     <section aria-labelledby="r-t-moteur">
       <h3 id="r-t-moteur">Moteur de reconnaissance</h3>
@@ -829,9 +852,15 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
       <h3 id="r-t-materiel">Votre ordinateur</h3>
       <div id="r-materiel"><p class="attente"><span class="roue" aria-hidden="true"></span>Analyse de votre ordinateur…</p></div>
     </section>
+    <section id="r-s-raccourci" aria-labelledby="r-t-raccourci" hidden>
+      <h3 id="r-t-raccourci">Raccourci</h3>
+      <p class="note">Pour lancer MyPhotos facilement, mettez son icône sur le Bureau et dans le menu Démarrer.</p>
+      <button id="r-raccourci" class="bouton" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Créer un raccourci sur le Bureau et dans le menu Démarrer</button>
+    </section>
     <section class="r-fin">
       <button id="r-quitter" class="bouton danger" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Arrêter MyPhotos</button>
       <p id="r-version" class="note"></p>
+      <p id="r-fermeture" class="note r-fermeture" hidden>Fermer la fenêtre arrête MyPhotos.</p>
     </section>
   </div>
 </dialog>
@@ -846,6 +875,20 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     <p class="intro">Un moteur plus précis trouve mieux vos photos, mais il est plus long à télécharger et à faire travailler. Après un changement, MyPhotos analyse de nouveau toutes vos photos.</p>
     <div id="m-materiel"></div>
     <div id="m-liste" class="liste-moteurs"></div>
+  </div>
+</dialog>
+
+<!-- ============================================ sous-dossiers à regarder (avant d'ajouter un dossier) -->
+<dialog id="sous-dossiers" class="fenetre petite" aria-labelledby="sd-titre" aria-describedby="sd-intro">
+  <div class="fenetre-corps">
+    <h2 id="sd-titre"></h2>
+    <p id="sd-intro">Décochez les dossiers qui ne contiennent pas vos photos. Rien n’est supprimé : MyPhotos ne les regardera simplement pas. Vous pourrez changer d’avis dans les Réglages.</p>
+    <ul id="sd-liste" class="liste-cases" aria-label="Sous-dossiers"></ul>
+    <p id="sd-total" class="note"></p>
+    <div class="pied">
+      <button id="sd-annuler" class="bouton" type="button">Annuler</button>
+      <button id="sd-ok" class="bouton principal" type="button">Ajouter ce dossier</button>
+    </div>
   </div>
 </dialog>
 
@@ -1142,6 +1185,7 @@ function appliquerEtat(e) {
   if (E.ecran === 'assistant') majAssistant(e);
   if (E.ecran === 'appli') majAppli(e, avant);
   if ($('#reglages').open) majReglages(e);
+  majActualisation(e);
   if (e.base_ecartee && !E.baseEcarteeVue && !document.querySelector('dialog[open]')) prevenirBaseEcartee(e.base_ecartee);
 }
 
@@ -1161,14 +1205,21 @@ function fermerFenetres() {
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
 }
 
+/** Page affichée dans la fenêtre de MyPhotos (« fenetre » : WebView2 ; « edge » : Edge en mode application),
+ *  et non dans un onglet du navigateur : fermer la fenêtre arrête MyPhotos. */
+const enFenetre = () => !!E.serveur && (E.serveur.mode === 'fenetre' || E.serveur.mode === 'edge');
+
 function montrerArret() {
   if (E.ecran === 'arrete') return;
   fermerFenetres();
   E.ecran = 'arrete';
+  const fenetre = enFenetre();
   $('#arrete-titre').textContent = E.arretVolontaire ? 'MyPhotos est arrêté' : 'MyPhotos ne répond plus';
   $('#arrete-texte').textContent = E.arretVolontaire
-    ? 'Pour l’utiliser de nouveau, lancez MyPhotos depuis son icône. Vous pouvez fermer cet onglet.'
-    : 'MyPhotos s’est peut-être arrêté. Pour le relancer, utilisez son icône. Cette page se remettra à jour toute seule.';
+    ? (fenetre ? 'Pour l’utiliser de nouveau, lancez MyPhotos depuis son icône.'
+      : 'Pour l’utiliser de nouveau, lancez MyPhotos depuis son icône. Vous pouvez fermer cet onglet.')
+    : (fenetre ? 'MyPhotos s’est peut-être arrêté. Fermez cette fenêtre, puis relancez MyPhotos depuis son icône.'
+      : 'MyPhotos s’est peut-être arrêté. Pour le relancer, utilisez son icône. Cette page se remettra à jour toute seule.');
   $('#arrete').hidden = false;
   $('#ecran-demarrage').hidden = true;
   $('#appli').hidden = true;
@@ -1381,12 +1432,31 @@ function infosDossier(d) {
   return infos.join(' · ');
 }
 
-function ligneDossier(d, confirmerRetrait) {
+/** Chemin d'un sous-dossier, montré à partir de son dossier suivi (« Captures d'écran » plutôt que tout le chemin). */
+function cheminRelatif(chemin, racine) {
+  const r = racine.replace(/[\\/]+$/, '');
+  if (chemin.length > r.length + 1 && chemin.slice(0, r.length).toLowerCase() === r.toLowerCase()) {
+    return chemin.slice(r.length).replace(/^[\\/]+/, '');
+  }
+  return chemin;
+}
+
+/** Un dossier suivi ; dans les Réglages (reglages vrai), avec « Exclure un sous-dossier… ». */
+function ligneDossier(d, reglages) {
+  const ex = d.exclusions || [];
+  const exclusions = ex.length ? el('div', {classe: 'exclusions'},
+    el('span', {classe: 'dossier-infos', texte: ex.length > 1 ? 'Sous-dossiers exclus :' : 'Sous-dossier exclu :'}),
+    el('ul', {classe: 'liste-exclusions', 'aria-label': `Sous-dossiers exclus de ${d.chemin}`}, ex.map((x) => el('li', {},
+      el('span', {classe: 'exclu-chemin', title: x.chemin, texte: cheminRelatif(x.chemin, d.chemin)}),
+      el('button', {classe: 'bouton-lien', type: 'button', 'aria-label': `Ne plus exclure ${x.chemin}`,
+        onclick: (ev) => nePlusExclure(x, ev.currentTarget)}, 'Ne plus exclure'))))) : null;
   return el('li', {classe: 'dossier'}, icone('dossier'),
     el('div', {classe: 'dossier-texte'}, el('span', {classe: 'dossier-chemin', texte: d.chemin}),
-      el('span', {classe: 'dossier-infos', texte: infosDossier(d)})),
+      el('span', {classe: 'dossier-infos', texte: infosDossier(d)}), exclusions,
+      reglages ? el('button', {classe: 'bouton-lien', type: 'button', 'aria-label': `Exclure un sous-dossier de ${d.chemin}`,
+        onclick: (ev) => exclureSousDossier(d, ev.currentTarget)}, 'Exclure un sous-dossier…') : null),
     el('button', {classe: 'bouton petit', type: 'button', 'aria-label': `Retirer le dossier ${d.chemin}`,
-      onclick: () => retirerDossier(d, confirmerRetrait)}, 'Retirer'));
+      onclick: () => retirerDossier(d, reglages)}, 'Retirer'));
 }
 
 function rendreDossiers() {
@@ -1426,36 +1496,145 @@ function annoncerAjout(r) {
   annoncer(t);
 }
 
+/** Ajoute un dossier. Avant l'analyse, MyPhotos compte ses plus gros sous-dossiers : s'il y en a, une liste à cocher
+ *  permet d'en laisser de côté (captures et fonds d'écran décochés d'office) ; les décochés deviennent des exclusions. */
 async function ajouterDossier(chemin, bouton) {
   if (bouton) bouton.disabled = true;
+  let ajoute = false;
   try {
-    const r = await api('/api/dossiers/ajouter', {chemin});
+    annoncer('MyPhotos regarde ce que contient ce dossier…');
+    const ex = await api('/api/dossiers/examiner', {chemin});
+    let exclus = [];
+    if (ex.sous_dossiers && ex.sous_dossiers.length) {
+      exclus = await choisirSousDossiers(ex);
+      if (exclus === null) {
+        annoncer('Dossier non ajouté.');
+        return false;
+      }
+    }
+    const r = await api('/api/dossiers/ajouter', {chemin: ex.chemin, exclus});
     annoncerAjout(r);
+    ajoute = true;
     await chargerDossiers();
     apresChangementDossiers();
     return true;
   } catch (err) {
     annoncer(err.message, 'erreur');
-    if (bouton) bouton.disabled = false;
     return false;
+  } finally {
+    if (bouton && !ajoute) bouton.disabled = false;
   }
+}
+
+/** La liste à cocher des sous-dossiers : renvoie les chemins décochés, ou null si l'on renonce. */
+function choisirSousDossiers(ex) {
+  return new Promise((resoudre) => {
+    const d = $('#sous-dossiers');
+    $('#sd-titre').textContent = `Que faut-il regarder dans « ${ex.nom} » ?`;
+    const cases = ex.sous_dossiers.map((s, i) => {
+      const nb = s.photos ? `${ex.complet ? '' : 'au moins '}${pluriel(s.photos, 'photo')}` : '';
+      const entree = el('input', {type: 'checkbox', id: `sd-case-${i}`, 'aria-describedby': s.raison ? `sd-raison-${i}` : null});
+      entree.checked = !!s.coche;
+      return {s, entree, li: el('li', {},
+        el('label', {for: `sd-case-${i}`}, entree,
+          el('span', {}, el('span', {classe: 'nom-sd', title: s.chemin, texte: s.nom}), nb ? ` — ${nb}` : '')),
+        s.raison ? el('p', {classe: 'note', id: `sd-raison-${i}`, texte: s.raison}) : null)};
+    });
+    $('#sd-liste').replaceChildren(...cases.map((c) => c.li));
+    $('#sd-total').textContent = ex.total
+      ? `En tout, ${ex.complet ? '' : 'plus de '}${pluriel(ex.total, 'photo')} dans « ${ex.chemin} ».` : '';
+    let fini = false;
+    const finir = (v) => {
+      if (fini) return;
+      fini = true;
+      d.onclose = null;
+      if (d.open) d.close();
+      resoudre(v);
+    };
+    $('#sd-ok').onclick = () => finir(cases.filter((c) => !c.entree.checked).map((c) => c.s.chemin));
+    $('#sd-annuler').onclick = () => finir(null);
+    d.onclose = () => finir(null);
+    d.showModal();
+    const premiere = cases[0] && cases[0].entree;
+    (premiere || $('#sd-ok')).focus();
+  });
 }
 
 async function choisirDossier(bouton, zoneManuelle) {
   bouton.disabled = true;
   annoncer('Une fenêtre s’ouvre pour choisir le dossier de vos photos.');
   try {
-    const r = await api('/api/dossiers/choisir', {});
-    if (!r.annule) {
-      annoncerAjout(r);
-      await chargerDossiers();
-      apresChangementDossiers();
-    }
+    const r = await api('/api/dossiers/choisir', {examiner: true});
+    if (!r.annule) await ajouterDossier(r.chemin, null);
   } catch (err) {
     annoncer(err.message, 'erreur');
     if (err.statut !== 409) zoneManuelle.hidden = false;
   } finally {
     bouton.disabled = false;
+  }
+}
+
+/** « Exclure un sous-dossier… » : la fenêtre de Windows s'ouvre DANS le dossier suivi. Rien n'est supprimé du disque. */
+async function exclureSousDossier(d, bouton) {
+  bouton.disabled = true;
+  annoncer('Une fenêtre s’ouvre : choisissez le sous-dossier que MyPhotos ne doit plus regarder.');
+  try {
+    const r = await api('/api/exclusions/choisir', {dossier: d.id});
+    if (!r.annule) {
+      const nom = cheminRelatif(r.exclusion.chemin, d.chemin);
+      annoncer(r.photos
+        ? `« ${nom} » est exclu : ${pluriel(r.photos, 'photo')} ${r.photos > 1 ? 'ne sont' : 'n’est'} plus dans MyPhotos. Rien n’est supprimé de votre ordinateur.`
+        : `« ${nom} » est exclu. Rien n’est supprimé de votre ordinateur.`);
+      await chargerDossiers();
+      apresChangementDossiers();
+    }
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
+async function nePlusExclure(x, bouton) {
+  bouton.disabled = true;
+  try {
+    await api('/api/exclusions/retirer', {id: x.id});
+    annoncer(`« ${x.chemin} » n’est plus exclu : MyPhotos va chercher ses photos.`);
+    await chargerDossiers();
+    sonder();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    bouton.disabled = false;
+  }
+}
+
+// ---------------- actualiser
+const A = {attendu: null};         // numéro de l'actualisation demandée par cette page, jusqu'à son bilan
+
+async function actualiser() {
+  try {
+    const r = await api('/api/actualiser', {});
+    A.attendu = r.actualisation ? r.actualisation.numero : null;
+    annoncer(r.deja ? 'Une actualisation est déjà en cours.' : 'Actualisation : MyPhotos refait le tour de vos dossiers…');
+    sonder();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  }
+}
+
+function majActualisation(e) {
+  const a = e.actualisation, enCours = !!(a && a.en_cours);
+  for (const b of [$('#actualiser'), $('#r-actualiser')]) {
+    b.disabled = enCours || !e.moteur;
+    b.setAttribute('aria-busy', enCours ? 'true' : 'false');
+    b.lastElementChild.textContent = enCours ? 'Actualisation…' : 'Actualiser';
+  }
+  $('#actualiser').hidden = !e.moteur;
+  $('#r-actualisation').textContent = a && a.message ? a.message : '';
+  if (a && !a.en_cours && A.attendu !== null && a.numero >= A.attendu) {
+    A.attendu = null;
+    if (a.message) annoncer(a.message);
+    if (a.retirees && E.ecran === 'appli') rafraichir();
   }
 }
 
@@ -1599,6 +1778,10 @@ function chercher(q, historique = 'pousser') {
   R.erreur = false;
   R.generation = E.serveur ? E.serveur.generation : null;
   R.depuis = Date.now();
+  // Cases retirées : plus observées (sinon l'observateur les garde en mémoire, à chaque recherche, toute la séance).
+  for (const a of document.querySelectorAll('#resultats a.tuile, #grille-peut a.tuile, #grille-proches a.tuile')) {
+    observateurImages.unobserve(a);
+  }
   $('#resultats').replaceChildren();
   $('#grille-peut').replaceChildren();
   $('#grille-proches').replaceChildren();
@@ -1979,6 +2162,9 @@ function majBandeau(e) {
   } else if (e.preparation && !(a && a.active)) {
     texte = PREPARATION;                     // quelques secondes après le lancement : la recherche attend
     pourcent = null;
+  } else if (e.actualisation && e.actualisation.en_cours) {
+    texte = e.actualisation.message || 'Actualisation…';
+    pourcent = null;
   } else if (a && a.phase === 'inventaire') {
     texte = a.message || 'Recherche de vos photos…';
     pourcent = null;
@@ -2004,7 +2190,7 @@ function majBandeau(e) {
 }
 
 // ============================================================ visionneuse
-const V = {id: null, groupe: null, pousse: false, jeton: 0};
+const V = {id: null, groupe: null, pousse: false, jeton: 0, retiree: null};   // retiree : sa place dans la liste
 // Groupe « doublons:<id> » : la visionneuse passe d'une photo à l'autre du même groupe de doublons.
 const estDoublons = (groupe) => typeof groupe === 'string' && groupe.startsWith('doublons:');
 const listeGroupe = (groupe) => (groupe === 'principal' ? R.principal : groupe === 'peut' ? R.peut
@@ -2047,7 +2233,20 @@ function montrerPhoto(id) {
   $('#v-erreur').hidden = true;
   mini.src = `/miniature/${id}`;
   image.onload = () => { if (V.jeton === jeton) { image.classList.add('chargee'); mini.classList.add('cachee'); } };
-  image.onerror = () => {
+  V.retiree = null;
+  for (const b of BOUTONS_VISIONNEUSE) $(b).disabled = false;
+  image.onerror = async () => {
+    if (V.jeton !== jeton) return;
+    // Le fichier a-t-il disparu ? Si son dossier répond, MyPhotos l'oublie et le dit ; sinon (disque débranché),
+    // rien n'est oublié et la miniature reste montrée.
+    try {
+      const r = await api('/api/photo/verifier', {id});
+      if (V.jeton !== jeton) return;
+      if (r.etat === 'retiree' || r.etat === 'inconnue') {
+        photosRetirees([id], r.message);
+        return;
+      }
+    } catch (err) { /* message habituel */ }
     if (V.jeton !== jeton) return;
     const e = $('#v-erreur');
     e.textContent = 'La photo d’origine ne peut pas être affichée : le disque est peut-être débranché, ou le fichier a été déplacé. La miniature est montrée à la place.';
@@ -2087,6 +2286,13 @@ function majNavigation() {
   const i = liste ? liste.indexOf(V.id) : -1;
   const L = listeGroupe(V.groupe) || R.principal;
   const total = L ? L.total : 0;
+  if (i < 0 && V.retiree !== null && liste) {
+    // Photo retirée pendant qu'on la regardait : les flèches mènent à ses voisines d'avant.
+    $('#v-prec').disabled = !(V.retiree > 0);
+    $('#v-suiv').disabled = !(V.retiree < liste.length || (L && !L.fin));
+    $('#v-position').textContent = '';
+    return;
+  }
   $('#v-prec').disabled = !(i > 0);
   $('#v-suiv').disabled = !(i >= 0 && (i + 1 < liste.length || (L && !L.fin)));
   $('#v-position').textContent = i >= 0 ? `${nombre.format(i + 1)} sur ${nombre.format(Math.max(total, liste.length))}` : '';
@@ -2096,8 +2302,8 @@ async function photoVoisine(delta) {
   const liste = listeDe(V.groupe);
   if (!liste) return;
   const i = liste.indexOf(V.id);
-  if (i < 0) return;
-  let j = i + delta;
+  if (i < 0 && V.retiree === null) return;
+  let j = i >= 0 ? i + delta : (delta > 0 ? V.retiree : V.retiree - 1);
   if (j < 0) return;
   if (j >= liste.length) {
     await chargeurDe(V.groupe)();
@@ -2105,6 +2311,33 @@ async function photoVoisine(delta) {
   }
   montrerPhoto(liste[j]);
   history.replaceState({photo: liste[j]}, '', adresse(R.q, liste[j]));
+}
+
+const BOUTONS_VISIONNEUSE = ['#v-copier', '#v-copier-vers', '#v-supprimer', '#v-ouvrir', '#v-montrer'];
+
+/** Photos dont le fichier a disparu alors que leur dossier répond : MyPhotos vient de les oublier. Elles quittent la
+ *  page ; celle de la visionneuse y reste affichée avec le message, et les flèches mènent à ses voisines. */
+function photosRetirees(ids, message) {
+  ids = versIds(ids);
+  if (!ids.length) return;
+  const vue = $('#visionneuse').open && ids.includes(V.id);
+  if (vue) {
+    const liste = listeDe(V.groupe) || [];
+    const i = liste.indexOf(V.id);
+    V.retiree = i >= 0 ? i : null;
+    $('#v-image').classList.remove('chargee');
+    $('#v-mini').classList.add('cachee');
+    const e = $('#v-erreur');
+    e.textContent = message || 'Cette photo n’existe plus sur le disque : MyPhotos l’a retirée.';
+    e.hidden = false;
+    for (const b of BOUTONS_VISIONNEUSE) $(b).disabled = true;
+    $('#v-date').textContent = '';
+    $('#v-dossier').textContent = '';
+  }
+  retirerPhotos(ids);
+  retirerDesDoublons(ids);
+  if (vue) majNavigation();          // le message est dans la visionneuse (role="alert") : pas d'annonce en double
+  else annoncer(message || 'Cette photo n’existe plus sur le disque : MyPhotos l’a retirée.', 'erreur');
 }
 
 function fermerVisionneuse(historique = true) {
@@ -2283,13 +2516,14 @@ async function copierPhotos(ids) {
   occuper(true);
   try {
     const r = await api('/api/copier', {ids});
+    if (r.retirees && r.retirees.length) photosRetirees(r.retirees);
     const n = r.copiees, refus = r.nb_refusees || 0;
     let t = `${n > 1 ? `${nombre.format(n)} photos copiées` : 'Photo copiée'}. Collez-${n > 1 ? 'les' : 'la'} où vous voulez avec Ctrl+V : dans un dossier, un e-mail, un document…`;
     if (refus) t += ` ${refus > 1 ? `${nombre.format(refus)} photos n’ont pas pu être copiées` : 'Une photo n’a pas pu être copiée'} : ${raisonsGroupees(r.refusees, refus)[0]}`;
     annoncer(t, refus ? 'erreur' : 'info');
     return r;
   } catch (err) {
-    annoncer(err.message, 'erreur');
+    if (err.statut === 410) photosRetirees(ids, err.message); else annoncer(err.message, 'erreur');
     return null;
   } finally {
     occuper(false);
@@ -2304,10 +2538,11 @@ async function copierPhotosVers(ids) {
   annoncer('Une fenêtre s’ouvre pour choisir où copier les photos.');
   try {
     const r = await api('/api/copier-vers', {ids});
+    if (r.retirees && r.retirees.length) photosRetirees(r.retirees);
     if (!r.annule) suivreCopie(r.copie);
     return r;
   } catch (err) {
-    annoncer(err.message, 'erreur');
+    if (err.statut === 410) photosRetirees(ids, err.message); else annoncer(err.message, 'erreur');
     return null;
   } finally {
     occuper(false);
@@ -2994,8 +3229,24 @@ function majReglages(e) {
   if (p.erreurs) texte += ` ${pluriel(p.erreurs, 'fichier')} n’${p.erreurs > 1 ? 'ont' : 'a'} pas pu être lu${p.erreurs > 1 ? 's' : ''}.`;
   if (a && a.active && a.message) texte += ` ${a.message}`;
   $('#r-analyse').textContent = texte;
-  $('#r-relancer').disabled = !e.moteur;
+  majActualisation(e);
   $('#r-version').textContent = `MyPhotos ${e.version}`;
+  $('#r-fermeture').hidden = !(e.mode === 'fenetre' || e.mode === 'edge');
+  $('#r-s-raccourci').hidden = !e.raccourci;
+}
+
+async function creerRaccourci(bouton) {
+  bouton.disabled = true;
+  try {
+    const r = await api('/api/raccourci', {});
+    const ou = r.crees.length > 1 ? 'sur le Bureau et dans le menu Démarrer'
+      : (r.crees[0] === 'bureau' ? 'sur le Bureau' : 'dans le menu Démarrer');
+    annoncer(`Raccourci créé ${ou}.`);
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    bouton.disabled = false;
+  }
 }
 
 // ---------------- changer de moteur
@@ -3041,7 +3292,8 @@ async function confirmerChangement(x) {
 
 async function quitter() {
   const ok = await confirmer({titre: 'Arrêter MyPhotos ?', danger: true, oui: 'Arrêter MyPhotos',
-    texte: 'L’analyse en cours s’arrête proprement ; elle reprendra au prochain lancement.'});
+    texte: 'L’analyse en cours s’arrête proprement ; elle reprendra au prochain lancement.'
+      + (enFenetre() ? ' La fenêtre se fermera.' : '')});
   if (!ok) return;
   try {
     await api('/api/quitter', {});
@@ -3113,7 +3365,8 @@ function brancher() {
       if (plage) selectionnerPlage(id); else basculer(id);
       return;
     }
-    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;           // nouvel onglet, comme un lien ordinaire
+    // Nouvel onglet, comme un lien ordinaire ; la fenêtre de MyPhotos n'a pas d'onglets : la visionneuse s'ouvre.
+    if ((ev.ctrlKey || ev.metaKey || ev.altKey) && !enFenetre()) return;
     ev.preventDefault();
     ouvrirVisionneuse(id, c.dataset.groupe);
   });
@@ -3142,6 +3395,15 @@ function brancher() {
     if (S.ignorerClic && ev.target.closest && ev.target.closest('.case')) ev.preventDefault();
   });
   document.addEventListener('keydown', () => { S.ignorerClic = false; }, true);  // Entrée au clavier : jamais ignorée
+  // Fenêtre de MyPhotos : ce qui est glissé dedans (fichier, lien, miniature) ne la fait jamais changer de page ;
+  // le champ de recherche accepte toujours du texte glissé.
+  for (const type of ['dragover', 'drop']) {
+    document.addEventListener(type, (ev) => {
+      if (!enFenetre() || (ev.target.closest && ev.target.closest('input, textarea'))) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';
+    });
+  }
   // Clavier : / (chercher), Échap (annuler la sélection), Ctrl+A (tout ce qui est affiché), Ctrl+C (copier),
   // Suppr (mettre à la Corbeille, après confirmation), Espace sur une miniature (la cocher ; Maj : une plage).
   document.addEventListener('keydown', (ev) => {
@@ -3225,12 +3487,14 @@ function brancher() {
   $('#v-copier-vers').addEventListener('click', () => copierPhotosVers([V.id]));
   $('#v-supprimer').addEventListener('click', supprimerDepuisVisionneuse);
   $('#v-ouvrir').addEventListener('click', async () => {
-    try { await api('/api/ouvrir', {id: V.id}); annoncer('La photo s’ouvre dans la visionneuse de Windows…'); }
-    catch (err) { annoncer(err.message, 'erreur'); }
+    const id = V.id;
+    try { await api('/api/ouvrir', {id}); annoncer('La photo s’ouvre dans la visionneuse de Windows…'); }
+    catch (err) { if (err.statut === 410) photosRetirees([id], err.message); else annoncer(err.message, 'erreur'); }
   });
   $('#v-montrer').addEventListener('click', async () => {
-    try { await api('/api/montrer', {id: V.id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
-    catch (err) { annoncer(err.message, 'erreur'); }
+    const id = V.id;
+    try { await api('/api/montrer', {id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
+    catch (err) { if (err.statut === 410) photosRetirees([id], err.message); else annoncer(err.message, 'erreur'); }
   });
 
   // Réglages et fenêtres
@@ -3249,11 +3513,10 @@ function brancher() {
   $('#r-chemin-ok').addEventListener('click', async (ev) => {
     if (await ajouterDossier($('#r-chemin').value, ev.currentTarget)) $('#r-chemin').value = '';
   });
-  $('#r-relancer').addEventListener('click', async () => {
-    await commandeAnalyse('relancer');
-    annoncer('MyPhotos regarde s’il y a de nouvelles photos dans vos dossiers.');
-  });
+  $('#r-actualiser').addEventListener('click', actualiser);
+  $('#actualiser').addEventListener('click', actualiser);
   $('#r-changer').addEventListener('click', ouvrirChoixMoteur);
+  $('#r-raccourci').addEventListener('click', (ev) => creerRaccourci(ev.currentTarget));
   $('#r-quitter').addEventListener('click', quitter);
 }
 

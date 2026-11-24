@@ -526,24 +526,75 @@ def superposables(m):
 
 # ---------------------------------------------------------------- choix de la photo à garder
 
-def _cle_qualite(p):
-    """Ordre de préférence : la plus grande définition, pas une copie évidente, le plus gros fichier, la prise de vue
-    la plus ancienne (dates inconnues à la fin), puis la première trouvée."""
-    return (-(p['largeur'] or 0) * (p['hauteur'] or 0), 1 if p['copie'] else 0, -p['taille'],
-            p['date_prise'] or '~', p['date_fichier'] or '~', p['id'])
+TOLERANCE_DEFINITION = 0.97     # deux définitions à moins de 3 % l'une de l'autre comptent comme égales
+FORMATS = {'.jpg': 0, '.jpeg': 0, '.jfif': 0, '.heic': 0, '.heif': 0, '.tif': 1, '.tiff': 1, '.webp': 1,
+           '.png': 2, '.bmp': 2, '.gif': 2}
+NOMS_FORMATS = {'.png': 'PNG', '.bmp': 'BMP', '.gif': 'GIF', '.tif': 'TIFF', '.tiff': 'TIFF', '.webp': 'WebP'}
+
+
+def _pixels(p):
+    return (p['largeur'] or 0) * (p['hauteur'] or 0)
+
+
+def definition_utile(p):
+    """Pixels de la photo elle-même : sa définition, moins un cadre ou une bordure ajoutés autour (p['utile'], posé
+    par _marquer_cadres)."""
+    u = p.get('utile')
+    return _pixels(p) if u is None else min(u, _pixels(p))
+
+
+def rang_format(chemin):
+    """0 : format d'appareil photo (JPEG, HEIC) ; 1 : TIFF, WebP ; 2 : PNG, BMP, GIF (conversions, captures)."""
+    return FORMATS.get(os.path.splitext(str(chemin or ''))[1].lower(), 1)
+
+
+def _cle_qualite(p, plafond=None):
+    """Ordre de préférence : la plus grande définition utile (à 3 % près de `plafond`, la plus grande du groupe : à
+    égalité), pas une copie évidente, avec sa date de prise de vue (EXIF), au format d'origine (JPEG plutôt qu'une
+    conversion PNG), la plus grande image, le plus gros fichier, la prise de vue la plus ancienne (dates inconnues à
+    la fin), puis la première trouvée."""
+    d = definition_utile(p)
+    rang_def = -plafond if plafond and d >= TOLERANCE_DEFINITION * plafond else -d
+    return (rang_def, 1 if p['copie'] else 0, 0 if p['date_prise'] else 1, rang_format(p.get('chemin')),
+            -_pixels(p), -p['taille'], p['date_prise'] or '~', p['date_fichier'] or '~', p['id'])
 
 
 def _critere(meilleure, autre):
     """Premier critère qui fait préférer `meilleure` à `autre`."""
-    if (meilleure['largeur'] or 0) * (meilleure['hauteur'] or 0) > (autre['largeur'] or 0) * (autre['hauteur'] or 0):
-        return 'definition'
+    dm, da = definition_utile(meilleure), definition_utile(autre)
+    if da < TOLERANCE_DEFINITION * dm:
+        # Même nombre de pixels (ou plus) mais une partie n'est qu'un cadre ajouté autour de la photo.
+        return 'cadre' if _pixels(autre) >= TOLERANCE_DEFINITION * _pixels(meilleure) else 'definition'
     if autre['copie'] and not meilleure['copie']:
         return 'copie'
+    if meilleure['date_prise'] and not autre['date_prise']:
+        return 'exif'
+    if rang_format(meilleure.get('chemin')) < rang_format(autre.get('chemin')):
+        return 'format'
+    if _pixels(meilleure) > _pixels(autre):
+        return 'definition'
     if meilleure['taille'] > autre['taille']:
         return 'taille'
     if (meilleure['date_prise'] or '~') < (autre['date_prise'] or '~'):
         return 'date'
     return 'egal'
+
+
+def _marquer_cadres(photos, paires, mesures):
+    """Photo entourée d'un cadre ou d'une bordure (retouchée : l'autre photo tient dans une partie seulement) : sa
+    définition utile est celle de la partie couverte (largeur × hauteur × couverture). Seulement quand elle n'a pas de
+    date de prise de vue et que la photo contenue en a une : un recadrage (l'original contient le recadrage, et c'est
+    lui qui a sa date) ne fait jamais perdre sa définition à l'original."""
+    for (a, b, _, _), m in zip(paires, mesures):
+        if not isinstance(m, dict) or not est_retouchee(m) or m.get('couverture') is None:
+            continue
+        contenante, contenue = (a, b) if m.get('sens') == 0 else (b, a)
+        pc, pd = photos.get(contenante), photos.get(contenue)
+        if pc is None or pd is None or pc['date_prise'] or not pd['date_prise']:
+            continue
+        utile = _pixels(pc) * float(m['couverture'])
+        if utile < TOLERANCE_DEFINITION * _pixels(pc):
+            pc['utile'] = min(pc.get('utile') or utile, utile)
 
 
 def _definition(p):
@@ -558,6 +609,9 @@ def _raison_meilleure(type_, critere, p):
                 'date': 'La meilleure de la série : la première prise.'}.get(critere, 'La meilleure de la série.')
     return {'definition': f'À garder : la plus grande ({_definition(p)}).',
             'copie': "À garder : l'original, les autres semblent être des copies.",
+            'cadre': "À garder : l'originale, sans cadre ajouté autour.",
+            'exif': "À garder : l'originale, avec sa date de prise de vue.",
+            'format': "À garder : l'originale, dans le format de l'appareil photo.",
             'taille': 'À garder : le fichier le plus détaillé.',
             'date': 'À garder : la plus ancienne.'}.get(critere, 'À garder : trouvée en premier.')
 
@@ -571,6 +625,13 @@ def _raison_autre(type_, critere, p, meilleure):
         return f'Plus petite : {_definition(p)} au lieu de {_definition(meilleure)}.'
     if critere == 'copie':
         return f'Même photo, qui semble être une copie (« {p["copie"]} »).'
+    if critere == 'cadre':
+        return 'Même photo, entourée d’un cadre ou d’une bordure ajoutés après coup.'
+    if critere == 'exif':
+        return 'Même photo, sans date de prise de vue : sans doute une copie convertie ou retouchée.'
+    if critere == 'format':
+        nom = NOMS_FORMATS.get(os.path.splitext(str(p.get('chemin') or ''))[1].lower())
+        return f'Même photo, convertie en {nom}.' if nom else 'Même photo, convertie dans un autre format.'
     if critere == 'taille':
         return (f'Même photo, fichier plus léger ({octets_lisibles(p["taille"])} au lieu de '
                 f'{octets_lisibles(meilleure["taille"])}).')
@@ -582,7 +643,8 @@ def _raison_autre(type_, critere, p, meilleure):
 def former_groupe(type_, photos, similarite=None):
     """Groupe prêt à afficher : photos de la meilleure à la moins bonne, avec garder, meilleure, critere et raison.
     Pour « proches », toutes sont gardées (rien n'est coché d'office)."""
-    rangees = sorted(photos, key=_cle_qualite)
+    plafond = max((definition_utile(p) for p in photos), default=0)
+    rangees = sorted(photos, key=lambda p: _cle_qualite(p, plafond))
     best = rangees[0]
     critere0 = _critere(best, rangees[1]) if len(rangees) > 1 else 'egal'
     sortie = []
@@ -898,7 +960,8 @@ class Doublons:
           gain_possible_octets (proches seulement)}], photos de la meilleure à la moins bonne :
           {id, garder, meilleure, critere, raison, nom, dossier, taille, largeur, hauteur, date}.
           garder=False : proposée à la suppression (jamais dans « proches ») ; critere : ce qui la départage de la
-          meilleure ('definition', 'copie', 'taille', 'date', 'egal') ; raison : phrase à afficher ;
+          meilleure ('definition', 'cadre', 'copie', 'exif', 'format', 'taille', 'date', 'egal') ; raison : phrase à
+          afficher ;
         - total_gain_octets : place libérée en supprimant toutes les photos proposées ;
         - comptes : {photos (examinées), sans_miniature, sans_vecteur, unies, illisibles, groupes: {par type},
           photos_en_trop, paires_verifiees, paires_calculees}.
@@ -974,6 +1037,7 @@ class Doublons:
         self._phase('verification', 0, len(a_verifier))
         mesures, retouches = self._verifications(a_verifier, comptes)
         self._verifier_arret()
+        _marquer_cadres(photos, a_verifier, mesures)      # cadre ou bordure ajoutés : définition utile réduite
 
         # 4. Regroupement.
         self._phase('regroupement')

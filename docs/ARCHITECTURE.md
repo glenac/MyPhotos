@@ -1,10 +1,10 @@
 # Architecture de MyPhotos
 
-Ce document décrit le fonctionnement interne de MyPhotos 0.2.0 : les modules, le chemin d'une photo depuis l'analyse du PC jusqu'à la recherche et aux doublons, et les choix techniques avec les mesures qui les justifient. Les mesures datent des 23 et 24/11/2026 ; sauf mention contraire, elles ont été faites sur un Ryzen 5 5600X (6 cœurs) avec une Radeon RX 6600 XT (8 Go) et 32 Go de mémoire vive.
+Ce document décrit le fonctionnement interne de MyPhotos 0.3.0 : les modules, le chemin d'une photo depuis l'analyse du PC jusqu'à la recherche et aux doublons, et les choix techniques avec les mesures qui les justifient. Les mesures datent des 23 et 24/11/2026 ; sauf mention contraire, elles ont été faites sur un Ryzen 5 5600X (6 cœurs) avec une Radeon RX 6600 XT (8 Go) et 32 Go de mémoire vive.
 
 ## Vue d'ensemble
 
-MyPhotos est un seul processus Python. Il sert une page web sur `127.0.0.1` et ouvre le navigateur sur elle ; la page dialogue avec le processus par une petite API JSON. Tout le calcul (reconnaissance des photos, recherche) a lieu dans ce processus, avec ONNX Runtime, sur la carte graphique par DirectML ou sur le processeur.
+MyPhotos est un seul processus Python. Il sert une page web sur `127.0.0.1` et l'affiche dans sa propre fenêtre (pywebview et WebView2, depuis la 0.3.0 ; à défaut Edge en mode application, puis le navigateur) ; la page dialogue avec le processus par une petite API JSON. Tout le calcul (reconnaissance des photos, recherche) a lieu dans ce processus, avec ONNX Runtime, sur la carte graphique par DirectML ou sur le processeur.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,8 @@ flowchart LR
     R --> S["serveur.py<br/>API JSON sur 127.0.0.1"]
     B --> D["doublons.py<br/>copies, retouches, rafales"]
     D --> S
-    S <--> P["page/index.html<br/>dans le navigateur"]
+    S <--> P["page/index.html<br/>dans la fenêtre (WebView2)"]
+    F["fenetre.py<br/>fenêtre, replis, relance"] --> P
 ```
 
 | Module | Rôle |
@@ -28,6 +29,8 @@ flowchart LR
 | `myphotos/recherche.py` | recherche par mots, probabilité calibrée, seuils |
 | `myphotos/doublons.py` | doublons : copies identiques, copies retouchées, rafales ; empreintes et vérifications gardées dans `index.db` |
 | `myphotos/serveur.py` | serveur HTTP local, API, assistant de premier lancement, téléchargements, réglages, copie, Corbeille, recherche des doublons en arrière-plan, arrêt |
+| `myphotos/fenetre.py` | la fenêtre de MyPhotos (pywebview, WebView2 par pythonnet), ses réglages durcis, ses replis (Edge en mode application, navigateur), la relance, la fermeture, la place de la fenêtre, le mutex |
+| `myphotos/raccourci.py` | raccourcis `.lnk` du Bureau et du menu Démarrer (MyPhotos.exe seul), par COM `IShellLinkW` |
 | `myphotos/__main__.py`, `lancer.py` | points d'entrée (`python -m myphotos`, MyPhotos.exe) |
 | `page/index.html` | toute l'interface : assistant, recherche, sélection, visionneuse, écran « Doublons », réglages ; HTML, CSS et JavaScript dans un seul fichier, sans ressource externe |
 
@@ -69,7 +72,15 @@ Les quatre moteurs sont des modèles **SigLIP 2** de Google (Apache-2.0) dans le
 
 ### 3. Analyse (`indexation.py`)
 
-**Inventaire.** L'indexeur parcourt les dossiers suivis sans suivre les liens symboliques ni les jonctions, et en ignorant la corbeille et les dossiers système. Il repère les photos nouvelles, modifiées (taille ou date de modification à la nanoseconde) et disparues. Un dossier injoignable (disque débranché, partage réseau éteint) garde ses photos dans l'index. L'inventaire a lieu au démarrage, à la demande (« Chercher les nouvelles photos maintenant ») et toutes les heures tant que MyPhotos tourne.
+**Inventaire.** L'indexeur parcourt les dossiers suivis sans suivre les liens symboliques ni les jonctions, et en ignorant la corbeille et les dossiers système. Il repère les photos nouvelles, modifiées (taille ou date de modification à la nanoseconde) et disparues. Un dossier injoignable (disque débranché, partage réseau éteint) garde ses photos dans l'index. L'inventaire a lieu au démarrage, toutes les heures tant que MyPhotos tourne, et à la demande : bouton « Actualiser » (en haut des photos et dans les Réglages).
+
+**Actualiser.** Chaque demande d'inventaire porte un numéro (`Indexeur.relancer()` le renvoie). Quand un inventaire complet se termine, l'indexeur retient le numéro qu'il satisfait et son bilan : photos nouvelles, photos retirées, dossiers injoignables (une photo déplacée ou renommée n'est ni nouvelle ni retirée). `Application.actualiser()` lève une pause éventuelle, demande un inventaire de tous les dossiers et suit ce numéro ; `/api/etat` donne `actualisation` (`en_cours`, puis le bilan et une phrase : « Actualisation terminée : 3 nouvelles photos, 5 012 photos retirées. »). Un second clic pendant un tour ne relance rien. La recherche n'est jamais bloquée : l'inventaire tourne dans le fil de l'indexeur, et la base est en WAL.
+
+**Sous-dossiers exclus.** Un dossier suivi peut avoir des sous-dossiers exclus (table `exclusions`) : `Parcours` ne les parcourt pas, et `Base.ajouter_photos` refuse leurs photos (cas d'une exclusion posée pendant un inventaire). Exclure oublie aussitôt les photos connues dessous (fiches, miniatures, empreintes des doublons) sans toucher au disque ; « Ne plus exclure » demande un inventaire de ce dossier seulement (`relancer(dossiers=[id])`). Les chemins se comparent comme partout : `normaliser_chemin`, `casse_reelle`, puis `cle_chemin` (« Vacances. » n'est pas « Vacances »). Le choix doit être DANS le dossier suivi, et une exclusion qui en contient d'autres les remplace. Un dossier suivi ne peut jamais se trouver dans un sous-dossier exclu : l'ajouter est refusé, avec un message qui dit de choisir d'abord « Ne plus exclure ». Si l'on ajoute un dossier qui contient un dossier suivi, celui-ci est absorbé et garde ses exclusions ; retirer un dossier efface ses exclusions.
+
+**Assistant.** Avant d'ajouter un dossier (premier lancement ou « Ajouter un dossier… »), `indexation.examiner_dossier` compte ses photos sans en ouvrir aucune, en 4 secondes au plus (comme l'estimation du premier lancement). Il renvoie ses 12 plus gros sous-dossiers, ainsi que les dossiers de captures d'écran ou de fonds d'écran trouvés jusqu'à 3 niveaux sous lui. Ces derniers sont reconnus à leur nom par `nature_sous_dossier` : sans accents, sans majuscules, apostrophes droites ou typographiques confondues. Les noms retenus sont « Screenshots » (affiché « Captures d'écran » par Windows), « Captures d'écran », « Captures » (Xbox Game Bar), « Wallpapers », « Fonds d'écran », « Bing Wallpaper », « Windows Spotlight », « Arrière-plans »… La page les présente décochés d'office, avec la raison ; tout le reste est coché. Les sous-dossiers décochés deviennent des exclusions, posées avant le premier inventaire.
+
+**Photo introuvable.** Quand la page ouvre une photo (visionneuse, Ouvrir, Afficher dans le dossier, Copier) dont le fichier manque, `Application.photo_partie` vérifie deux choses : le fichier est introuvable (`FileNotFoundError`, et non un accès refusé ou une erreur réseau), et le dossier suivi répond et n'est pas vide (un partage réseau monté sans son disque paraît vide). Si c'est le cas, la photo est oubliée tout de suite (réponse 410 : « Cette photo n'existe plus sur le disque : MyPhotos l'a retirée. »). Sinon, rien n'est oublié, et le message reste celui du disque débranché (404).
 
 **Analyse.** Pour chaque photo : miniature de 360 px (JPEG qualité 80), date de prise de vue (EXIF, sinon date du fichier), position GPS éventuelle, dimensions et vecteur. Les photos les plus récentes passent en premier. Les images sont décodées à l'avance par plusieurs fils (48 d'avance) pendant que le moteur traite des lots de 16 ; les résultats sont écrits par paquets de 64 photos ou toutes les 2 secondes. Une analyse interrompue reprend où elle en était ; une pause enregistre d'abord ce qui est prêt. Les photos ne sont jamais modifiées, seulement lues ; une image de moins de 96 px de côté est notée « trop petite » et ignorée.
 
@@ -79,8 +90,10 @@ Au changement de moteur, l'ancien moteur est libéré entièrement avant le char
 
 SQLite en mode WAL, avec une connexion par fil. Deux fichiers :
 
-- `index.db` : réglages, dossiers suivis, photos (taille, date de modification, date de prise de vue, dimensions, latitude et longitude, vecteur, clé du moteur qui l'a calculé, erreur éventuelle) ;
+- `index.db` : réglages, dossiers suivis, sous-dossiers exclus (table `exclusions`, 0.3.0), photos (taille, date de modification, date de prise de vue, dimensions, latitude et longitude, vecteur, clé du moteur qui l'a calculé, erreur éventuelle) ;
 - `miniatures.db` : les miniatures JPEG, rattachées à chaque connexion sous le nom `mini`.
+
+La table `exclusions` (0.3.0) est une table à part, créée à l'ouverture si elle manque : une base 0.2.0 est reprise sans rien perdre, sans changer `user_version`, et une 0.2.0 rouverte sur une base 0.3.0 l'ignore simplement. Oublier des photos (inventaire, exclusion, photo introuvable, dossier retiré) efface aussi leurs miniatures et leurs empreintes de doublons, dans la même transaction.
 
 Le vecteur est enregistré en float16, normalisé. Les écritures passent une à une (verrou) dans des transactions groupées ; grâce au WAL, les lectures de la recherche et des miniatures ne sont jamais bloquées par l'analyse. Les chemins longs et inhabituels de Windows passent par le préfixe `\\?\`. Une photo occupe environ 35 Ko (miniature, fiche et vecteur) ; les estimations comptent 50 Ko, par prudence.
 
@@ -101,9 +114,9 @@ Les photos sûres sont triées par score, puis viennent les moins sûres. Quand 
 
 ### 6. Serveur et page (`serveur.py`, `page/index.html`)
 
-Le serveur HTTP de la bibliothèque standard, en fils parallèles, écoute uniquement sur `127.0.0.1:7796`. Il n'y a qu'une instance : si le port est déjà pris par MyPhotos, un nouveau lancement ouvre simplement la page et s'arrête. La page interroge `/api/etat` toutes les 2 secondes (toutes les 30 secondes quand elle est cachée) ; sans aucune requête pendant 3 minutes, le serveur s'arrête proprement : il termine le lot d'analyse en cours et ferme les bases. `POST /api/quitter` (bouton « Arrêter MyPhotos ») fait la même chose sur demande.
+Le serveur HTTP de la bibliothèque standard, en fils parallèles, écoute uniquement sur `127.0.0.1:7796`. Il n'y a qu'une instance : si le port est déjà pris par MyPhotos, un nouveau lancement ramène sa fenêtre au premier plan (ou ouvre sa page, pour une 0.1.0 ou une 0.2.0) et s'arrête. La page interroge `/api/etat` toutes les 2 secondes (toutes les 30 secondes quand elle est cachée). Dans la fenêtre, fermer la fenêtre arrête MyPhotos ; dans le navigateur, sans aucune requête pendant 3 minutes, le serveur s'arrête proprement : il termine le lot d'analyse en cours et ferme les bases. `POST /api/quitter` (bouton « Arrêter MyPhotos ») fait la même chose sur demande.
 
-La fenêtre « Choisissez un dossier de photos » est celle de Windows, ouverte par tkinter dans un fil qui lui est réservé et ramenée au premier plan. « Ouvrir avec la visionneuse Windows » confie la photo à l'application associée ; « Afficher dans le dossier » sélectionne le fichier dans l'Explorateur.
+La fenêtre « Choisissez un dossier de photos » est celle de Windows. Dans la fenêtre de MyPhotos, elle est ouverte par Windows Forms sur le fil de la fenêtre et lui appartient (elle la bloque tant qu'elle est ouverte) ; dans les replis (Edge, navigateur), par tkinter dans un fil qui lui est réservé, ramenée au premier plan. « Ouvrir avec la visionneuse Windows » confie la photo à l'application associée ; « Afficher dans le dossier » sélectionne le fichier dans l'Explorateur.
 
 **Sélection, copie, Corbeille.** La sélection de la page est un ensemble d'identifiants, indépendant de l'affichage (défilement infini, miniatures déchargées) ; une petite API JavaScript (`window.MyPhotosSelection`) la partage avec l'écran « Doublons ». Les actions portent sur 2 000 photos au plus par requête :
 
@@ -124,7 +137,11 @@ La fenêtre « Choisissez un dossier de photos » est celle de Windows, ouvert
 | GET | `/api/copie` | avancement de la copie vers un dossier |
 | GET | `/api/doublons?depuis=<n>` | avancement et dernier résultat ; les groupes sont omis si la page a déjà le résultat `n` |
 | POST | `/api/moteur/telecharger`, `/api/moteur/annuler`, `/api/moteur/choisir` | téléchargement et choix du moteur |
-| POST | `/api/dossiers/choisir`, `/api/dossiers/ajouter`, `/api/dossiers/retirer` | dossiers suivis |
+| POST | `/api/dossiers/choisir`, `/api/dossiers/ajouter`, `/api/dossiers/retirer` | dossiers suivis (`choisir {examiner: true}` : le dossier choisi est renvoyé sans être ajouté ; `ajouter {chemin, exclus}` : sous-dossiers décochés dans l'assistant) |
+| POST | `/api/dossiers/examiner` | assistant : plus gros sous-dossiers et leur nombre de photos, captures et fonds d'écran décochés (`{chemin}`) |
+| POST | `/api/exclusions/choisir`, `/api/exclusions/ajouter`, `/api/exclusions/retirer` | exclure un sous-dossier (fenêtre « Choisir un dossier » ouverte dans le dossier suivi, `{dossier}` ; ou `{dossier, chemin}`), ne plus l'exclure (`{id}`) |
+| POST | `/api/actualiser` | refaire tout de suite le tour de tous les dossiers (`{deja: true}` si un tour est en cours) ; suivi dans `/api/etat`, champ `actualisation` |
+| POST | `/api/photo/verifier` | la photo d'origine ne s'affiche pas : `presente`, `retiree` (oubliée à l'instant), `injoignable` ou `inconnue` (`{id}`) |
 | POST | `/api/analyse/pause`, `/api/analyse/reprendre`, `/api/analyse/relancer` | analyse |
 | POST | `/api/ouvrir`, `/api/montrer` | ouvrir une photo, la montrer dans l'Explorateur (`{id}`) |
 | POST | `/api/copier`, `/api/copier-vers` | presse-papiers, copie vers un dossier (`{ids}`) |
@@ -142,6 +159,21 @@ La fenêtre « Choisissez un dossier de photos » est celle de Windows, ouvert
 - politique de sécurité du contenu stricte (nonce, aucune ressource externe), `nosniff`, `no-referrer`, `no-store` sur l'API ;
 - photos servies, ouvertes, montrées, copiées ou mises à la Corbeille uniquement par un identifiant présent dans l'index, et seulement si leur extension est celle d'une image : aucun chemin de fichier n'est lu dans l'URL ni dans le corps d'une requête (la destination d'une copie vient de la fenêtre « Choisir un dossier », ouverte par le serveur) ;
 - chemins confiés à Windows (Explorateur, presse-papiers, Corbeille, « Ouvrir ») : jamais un chemin qu'il comprendrait autrement ; dossiers tenus ouverts pendant une mise à la Corbeille ou l'ouverture d'une photo à copier (voir « Supprimer » ci-dessus).
+
+### La fenêtre (`fenetre.py`, 0.3.0)
+
+`serveur.main()` crée d'abord le mutex de l'installateur, puis le serveur ; en mode fenêtre, le serveur tourne dans un fil et pywebview 6.2.1 occupe le fil principal. pywebview crée une fenêtre Windows Forms qui contient WebView2 (le moteur d'Edge fourni par Windows), piloté par pythonnet et le .NET Framework. La page est la même, servie par le même serveur, avec les mêmes contrôles HTTP.
+
+- **Avant de créer la fenêtre**, MyPhotos vérifie le .NET Framework (4.7.2 au moins), la clé d'installation de WebView2 et sa version (`GetAvailableCoreWebView2BrowserVersionString` du chargeur embarqué) ; un fichier `MyPhotos.exe.config` posé à côté de l'exécutable, qui pourrait faire charger du code dans le runtime .NET, fait passer directement au repli. Les variables d'environnement du runtime .NET (`COMPLUS_*`, `COR_*`, `DOTNET_*`, `PYTHONNET_*`…) sont retirées, ainsi que `WEBVIEW2_*` hors débogage.
+- **Réglages durcis** de WebView2 : outils de développement, raccourcis du navigateur, zoom, barre d'état, saisie automatique, objets hôtes et messages web coupés ; aucun pont JavaScript (`window.pywebview` n'existe pas) ; le filtre de requêtes de pywebview est retiré (il faisait passer chaque miniature par Python) ; menu contextuel réduit à Couper, Copier, Coller, Annuler, Rétablir et Tout sélectionner ; téléchargements, dépôts de fichiers et autorisations refusés.
+- **Navigation** : la fenêtre ne quitte jamais la page de MyPhotos (`http://127.0.0.1:<port>/`). Un lien `https` ouvert par l'utilisateur part dans le navigateur par défaut ; `file:`, `data:`, `javascript:`, les autres ports et tout le reste sont bloqués.
+- **Données** : le profil WebView2 est en mode privé dans `webview2\` (sous-dossier dédié des données), effacé à la fermeture et au lancement suivant s'il en reste. La place et la taille de la fenêtre vont dans `fenetre.json` (écran disparu : écran principal ; autre DPI : taille mise à l'échelle). DPI « par écran » ; fenêtre agrandie rétablie après son affichage.
+- **Relance** : une deuxième instance trouve le port pris, lit `/api/etat` (version, mode, empreinte du compte Windows), puis signale l'événement nommé `Local\MyPhotos-premier-plan-<port>` : la première ramène sa fenêtre au premier plan. Elle relit l'état une seconde plus tard ; si la première était en train de s'arrêter, elle attend le port et démarre à sa place (mesuré : 10 relances sur 10 juste après une fermeture). Une MyPhotos d'un autre compte Windows n'est pas ouverte.
+- **Fermeture** : si un travail est en cours (analyse, copie, doublons, téléchargement), une question demande confirmation. Ensuite : arrêt de l'application, du serveur et des bases, puis code de sortie 0. Filet de sécurité : les processus WebView2 enfants directs encore vivants sont arrêtés, après vérification par leur handle (parent, date de création, nom de l'image).
+- **Replis** : si WebView2 manque, échoue ou ne répond pas en 30 s, MyPhotos ouvre Microsoft Edge en mode application (`--app`, profil `edge\` à part, `--disable-sync`) ; la fin d'Edge arrête MyPhotos. Sans Edge, la page s'ouvre dans le navigateur par défaut, avec l'arrêt après 3 minutes sans page. `MYPHOTOS_NAVIGATEUR=1` (ou `--navigateur`) force ce dernier mode.
+- **Essais** : `MYPHOTOS_DEBUG=1` ouvre les outils de développement depuis les sources ; MyPhotos.exe exige en plus l'option `--essai-debogage`, et le port de débogage (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`) n'est jamais ouvert autrement.
+
+Mesures (MyPhotos.exe, base existante) : page affichée 2,2 à 2,7 s après le lancement, fermeture en 1,5 à 2,2 s sans processus restant. WebView2 occupe environ 170 Mo de mémoire privée (6 processus), contre près de 500 Mo pour Edge en mode application.
 
 ### 7. Doublons (`doublons.py`)
 
@@ -205,30 +237,55 @@ En pratique, la lecture des fichiers limite souvent l'analyse : un disque dur o
 
 ## L'exécutable
 
-MyPhotos.exe est construit par `construction/construire.py` avec PyInstaller : un seul fichier, sans console, de 47,8 Mo (116 Mo une fois extrait). À chaque lancement, il se décompresse dans `%TEMP%\_MEI…` en 0,9 seconde environ ; ce dossier est effacé à l'arrêt. `lancer.py` remplace les sorties standard absentes d'un exécutable sans console avant de démarrer le serveur. Le moteur de reconnaissance n'est jamais embarqué. Le script retire `onnxruntime.dll` (20 Mo : l'interface C d'ONNX Runtime, que le module Python ne charge pas), exclut les modules inutiles à l'exécution (outils d'ONNX Runtime, sympy, protobuf, huggingface_hub, formats AVIF et polices de Pillow…) et vérifie la présence des fichiers indispensables (DirectML, tokenizers, Tcl/Tk, OpenSSL, SQLite, la page). Détails : [construction/LISEZMOI.md](../construction/LISEZMOI.md) ; licences des composants embarqués : [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+MyPhotos.exe est construit par `construction/construire.py` avec PyInstaller : un seul fichier, sans console, de 49,3 Mo (119 Mo une fois extrait) en 0.3.0. À chaque lancement, il se décompresse dans `%TEMP%\_MEI…` en 0,9 seconde environ ; ce dossier est effacé à l'arrêt. `lancer.py` remplace les sorties standard absentes d'un exécutable sans console avant de démarrer le serveur. Le moteur de reconnaissance n'est jamais embarqué. Le script retire `onnxruntime.dll` (20 Mo : l'interface C d'ONNX Runtime, que le module Python ne charge pas), exclut les modules inutiles à l'exécution (outils d'ONNX Runtime, sympy, protobuf, huggingface_hub, formats AVIF et polices de Pillow…) et vérifie la présence des fichiers indispensables (DirectML, tokenizers, Tcl/Tk, OpenSSL, SQLite, la page, et depuis la 0.3.0 les DLL WebView2, `Python.Runtime.dll`, `ClrLoader.dll` et `_cffi_backend`). Les moteurs de pywebview des autres systèmes et la partie « compilation » de cffi sont exclus ; les trois `WebView2Loader.dll` (x64, arm64, x86) restent, car pywebview ajoute leurs dossiers au `PATH`. Détails : [construction/LISEZMOI.md](../construction/LISEZMOI.md) ; licences des composants embarqués : [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+### Version dossier et installateur (0.3.0)
+
+`construire.py --dossier` construit la version « dossier » de PyInstaller (onedir) : la même analyse et le même tri des fichiers, mais `MyPhotos.exe` (6,4 Mo) ne contient que le chargeur et le code Python ; les DLL, les modules compilés et la page sont posés à côté, dans `_internal\` (`sys._MEIPASS`, donc `config.CODE`). En tout, 119,7 Mo en 101 fichiers. Le contrôle de la construction vérifie en plus qu'il n'y a rien d'autre que `MyPhotos.exe` et `_internal\` à la racine.
+
+C'est cette version que pose l'installateur, `MyPhotos-<version>-installation.exe` (39,4 Mo, Inno Setup 6.7.4, `construction/MyPhotos.iss`, compilé par `construire.py --installateur`) : pour l'utilisateur seul, sans droits d'administrateur, dans `%LOCALAPPDATA%\Programs\MyPhotos`, avec un raccourci dans le menu Démarrer, une icône sur le Bureau (cochée d'office) et une entrée dans « Applications installées ». MyPhotos.exe seul et l'archive `.zip` restent publiés.
+
+Démarrage jusqu'à la première réponse de la page, même machine, 6 + 6 lancements alternés : **0,51 s** pour la version dossier (un seul processus, rien à extraire), contre **1,57 s** pour l'exécutable en un seul fichier (deux processus, extraction dans `%TEMP%\_MEI…`). L'arrêt passe de 0,82 à 0,54 s. Installée, MyPhotos montre sa fenêtre WebView2 2,2 s après le lancement, sur une base existante.
+
+**Mutex.** Au tout début de `serveur.main()`, dans tous les modes, MyPhotos crée le mutex nommé `config.MUTEX` (`MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED`, sur le modèle de l'`AppId` de l'installateur) et le garde jusqu'à sa sortie. L'installateur et le désinstallateur le cherchent (`AppMutex`) : tant qu'il existe, ils demandent de fermer MyPhotos ; en silence, ils sortent avec le code 1 sans rien toucher (mesuré : refus en 0,3 s, fichiers inchangés, MyPhotos toujours ouvert). Sans lui, un désinstallateur effaçait les fichiers sous un MyPhotos en marche (constaté avec la 0.2.0). Fermer la fenêtre arrête MyPhotos et libère le mutex (1,2 s après WM_CLOSE, avec WebView2). `AppId` et nom du mutex ne changent jamais ; un essai vérifie qu'`AppMutex` vaut `config.MUTEX`.
+
+**Mise à jour.** Relancé, l'installateur reprend le dossier précédent, retire `_internal\` et `licences\` de l'ancienne version, puis copie la nouvelle ; les données ne bougent pas. Il ne retire ces deux dossiers que dans le dossier d'une installation de MyPhotos (le dossier précédent, ou un dossier qui contient déjà `MyPhotos.exe` et `_internal\`) ; un dossier existant choisi par `/DIR` garde ses propres `licences\` (essai adverse : ils étaient vidés). Il refuse un dossier qui contient le `_internal\` d'un autre programme, et un dossier au chemin trop long (le plus long chemin installé fait 89 caractères, 99 avec le nom provisoire `is-XXXXXXXXXX.tmp` sous lequel Inno Setup copie chaque fichier : au-delà de 259 en tout, la copie échouerait au milieu).
+
+**Désinstallation et garde-fous.** Le désinstallateur retire le programme, les raccourcis créés par l'installateur, et ceux créés depuis les Réglages (`raccourci.py`) s'ils désignent le `MyPhotos.exe` désinstallé. Il propose ensuite de supprimer les données, **Non** par défaut ; en silence, il les garde, sauf avec `/SUPPRIMERDONNEES`. Le dossier proposé est `MYPHOTOS_DOSSIER` ou `%LOCALAPPDATA%\MyPhotos`, et seulement s'il passe tous les garde-fous : chemin complet sans `..`, ni racine de disque, ni dossier de l'utilisateur ou du système (ni l'un de leurs parents), présence d'`index.db` ou du marqueur `myphotos-donnees.txt`, et pas un lien. Seuls les éléments que MyPhotos crée à la racine sont supprimés, par leur nom exact (`NomDeMyPhotos` : `modele\`, `index.db` et `miniatures.db` avec leurs fichiers SQLite et leurs copies `.abimee-…`, `journal.log` et ses copies `.1` et `.2`, `fenetre.json` et `.part`, `webview2\`, `edge\`) ; tout autre fichier est gardé (`Journal.log.txt`, `index.db.sauvegarde`…), et le dossier avec. Les dossiers `modele\`, `webview2\` et `edge\` ne partent que si leur contenu est celui de MyPhotos (`ContenuDeMyPhotos` : fichiers du moteur seulement, `EBWebView\` seulement, profil d'Edge avec son `Local State`) ; des photos rangées là par l'utilisateur restent (essai adverse de la 0.3.0 : elles partaient). Limite connue : les dossiers protégés sont comparés par leur chemin écrit, et un autre chemin vers le même dossier (nom court 8.3, partage `\\localhost\C$`) n'est pas reconnu ; seuls les noms ci-dessus y seraient supprimés. Un lien n'est jamais suivi : une jonction `modele` vers un autre dossier est retirée, sa cible reste intacte (essayé).
 
 ## Données
 
 | Fichier | Contenu |
 |---|---|
-| `index.db` | dossiers suivis, fiches des photos, vecteurs, réglages ; empreintes et vérifications des doublons (tables `doublons_*`) |
+| `index.db` | dossiers suivis et sous-dossiers exclus, fiches des photos, vecteurs, réglages ; empreintes et vérifications des doublons (tables `doublons_*`) |
 | `miniatures.db` | miniatures de 360 px |
 | `modele/<clé>/` | fichiers des moteurs téléchargés |
 | `journal.log` | journal de fonctionnement (rotation automatique) |
+| `fenetre.json` | taille et place de la fenêtre de MyPhotos |
+| `webview2/` | profil WebView2 de la fenêtre (mode privé : effacé à la fermeture) |
+| `edge/` | profil d'Edge en mode application, quand WebView2 manque |
+
+Le désinstallateur ne supprime que ces noms-là (voir plus haut) : tout nouvel élément rangé à la racine des données doit être ajouté à `NomDeMyPhotos` dans `construction/MyPhotos.iss`, ce que `tests/test_construction.py` vérifie sur un vrai serveur d'essai.
 
 Emplacement : `%LOCALAPPDATA%\MyPhotos` pour MyPhotos.exe, `donnees\` depuis les sources, ou le dossier indiqué par `MYPHOTOS_DOSSIER`. Rien n'est jamais écrit à côté des photos, sauf les copies demandées (« Copier dans un dossier… »).
 
 ## Essais
 
-191 essais, lancés par `.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons` :
+292 essais, lancés par `.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre` :
 
-- `tests/test_coeur.py` (48) : index, analyse et recherche, avec un moteur factice déterministe et des images générées par Pillow ;
+- `tests/test_coeur.py` (60) : index, analyse et recherche, avec un moteur factice déterministe et des images générées par Pillow ;
 - `tests/test_materiel.py` (30) : description de machines types, règles de conseil, robustesse quand une information manque ;
-- `tests/test_serveur.py` (69) : vrai serveur dans un sous-processus, sur un port d'essai, interrogé par de vraies requêtes HTTP : sécurité (dont un autre site qui ne doit ni lire, ni charger la page en douce, ni garder MyPhotos éveillé ; requêtes malformées sans trace dans le journal ; dossier « Vacances. » ; jonction posée pendant une copie ou juste avant une mise à la Corbeille), réponses de l'API, instance unique, actions Windows simulées, choix d'un dossier, sélection (presse-papiers, copie, Corbeille simulés), doublons (routes, protections, calcul en arrière-plan sans moteur ni verrou, relance, suppression depuis un groupe), et un essai de bout en bout sur des images publiques ;
+- `tests/test_serveur.py` (75) : vrai serveur dans un sous-processus, sur un port d'essai, interrogé par de vraies requêtes HTTP : sécurité (dont un autre site qui ne doit ni lire, ni charger la page en douce, ni garder MyPhotos éveillé ; requêtes malformées sans trace dans le journal ; dossier « Vacances. » ; jonction posée pendant une copie ou juste avant une mise à la Corbeille), réponses de l'API, instance unique, actions Windows simulées, choix d'un dossier, sélection (presse-papiers, copie, Corbeille simulés), doublons (routes, protections, calcul en arrière-plan sans moteur ni verrou, relance, suppression depuis un groupe), et un essai de bout en bout sur des images publiques ;
 - `tests/test_verifier_publication.py` (30) : le garde-fou de publication ;
-- `tests/test_doublons.py` (14) : les trois niveaux de doublons, le choix de la photo à garder, la reprise sans recalcul, l'annulation, sur des images générées.
+- `tests/test_doublons.py` (15) : les trois niveaux de doublons, le choix de la photo à garder, la reprise sans recalcul, l'annulation, sur des images générées ;
+- `tests/test_construction.py` (27) : préparation de la publication sans réseau (licences, empreintes, cache, DLL WebView2 comparées au paquet NuGet officiel), version dossier et installateur (voir plus bas) ;
+- `tests/test_fenetre.py` (55) : modes et replis, filtre des navigations, menu contextuel, relance (ancienne version, autre compte, instance qui s'arrête), fermeture et question, placement de la fenêtre, filet de sécurité des processus WebView2, mutex, raccourcis ; ses essais réels, à la demande (`MYPHOTOS_ESSAI_FENETRE=1`), ouvrent la vraie fenêtre sur un bureau Windows invisible, tous les processus dans un Job Object, et la pilotent par le protocole DevTools : recherche, Ctrl+A et Échap, liens envoyés au navigateur (simulé), `file:` bloqué, « Choisir un dossier » qui appartient à la fenêtre, relance, question à la fermeture, relance juste après une fermeture.
+
+Actualiser, sous-dossiers exclus, assistant et photo introuvable (0.3.0) sont essayés dans `test_coeur` (classes `TestExclusions`, `TestActualisation` et `TestExamen` : migration d'une base 0.2.0, dossier « Album. ») et dans `test_serveur` (`TestDossiersEtActualiser`). Ils le sont aussi dans un essai réel de la fenêtre (`TestFenetreReelle.test_sous_dossiers_actualiser_et_photo_introuvable`, avec `MYPHOTOS_ESSAI_FENETRE=1`). Cet essai tourne sur un bureau invisible et pilote la page par CDP, sur un dossier d'essai à part : liste à cocher avec « Captures d'écran » décochée, « Actualiser » après la suppression de fichiers d'essai, exclusion puis « Ne plus exclure », refus d'un dossier hors du dossier suivi, puis photo supprimée ouverte dans la visionneuse.
 
 Les vrais appels à Windows (presse-papiers, Corbeille) ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`).
+
+La version dossier et l'installateur sont essayés dans `tests/test_construction.py` : `.spec` de la version dossier, contrôle de sa racine et de son contenu, options de `construire.py`, règles du `.iss` (AppId, `AppMutex` égal à `config.MUTEX`, `PrivilegesRequired=lowest`, nom du fichier produit, aucune ligne de `[Code]` qui commence par `[`, UTF-8 sans BOM), et `NomDeMyPhotos` relu dans le `.iss` et comparé aux noms que crée un vrai serveur d'essai. L'essai réel, à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`, Inno Setup installé, version dossier construite), compile l'installateur et, dans un dossier d'essai, sur un bureau invisible, tous les processus dans un Job Object : dossier trop long refusé, installation silencieuse sans raccourci, refus pendant que le mutex existe, mise à jour par-dessus, désinstallations sans puis avec `/SUPPRIMERDONNEES`, dossier protégé ; l'entrée de « Applications installées » disparaît à la fin.
 
 Outils :
 

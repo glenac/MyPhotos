@@ -4,7 +4,7 @@ Le code source de MyPhotos (ce dépôt) est publié sous licence MIT, © 2026 gl
 
 **MyPhotos.exe** est construit avec PyInstaller. En plus du code de MyPhotos, il embarque l'interpréteur Python et les bibliothèques listées ci-dessous, chacune sous sa propre licence. Ce document indique, pour chaque composant, sa licence, ce qu'elle impose à qui redistribue l'exécutable, et où trouver le texte complet. Il ne remplace pas ces textes, qui font foi.
 
-Inventaire du 23/11/2026, établi à partir des fichiers de licence des paquets installés (versions figées de `requirements.txt`, Python 3.14.10), du script de construction `construction/construire.py` (listes `EXCLUS`, `RETIRES` et `OBLIGATOIRES`) et du contenu d'une construction d'essai. **À refaire à chaque changement de version d'un paquet, de Python ou de PyInstaller, et à chaque modification de ces listes.**
+Inventaire du 23/11/2026, complété le 24/11/2026 pour la 0.3.0 (fenêtre de MyPhotos et installateur), établi à partir des fichiers de licence des paquets installés (versions figées de `requirements.txt`, Python 3.14.10), du script de construction `construction/construire.py` (listes `EXCLUS`, `RETIRES` et `OBLIGATOIRES`) et du contenu d'une construction d'essai. **À refaire à chaque changement de version d'un paquet, de Python ou de PyInstaller, et à chaque modification de ces listes.**
 
 ## En résumé
 
@@ -19,13 +19,24 @@ Inventaire du 23/11/2026, établi à partir des fichiers de licence des paquets 
 | [tokenizers](#tokenizers) (Hugging Face) | 0.23.3 | Apache-2.0, plus des bibliothèques Rust MIT ou Apache-2.0 | oui |
 | [Python](#python) | 3.14.10 | PSF License 2.0 | oui |
 | [Bibliothèques livrées avec Python](#bibliothèques-livrées-avec-python) | voir plus bas | Apache-2.0, MIT, BSD, domaine public, Zlib… | oui |
-| [Tcl/Tk](#tcltk) (fenêtre « Choisir un dossier ») | 9.0.4 | licence Tcl/Tk (type BSD) | oui |
+| [pywebview](#pywebview) (la fenêtre de MyPhotos) | 6.2.1 | BSD-3-Clause | oui |
+| [DLL WebView2](#dll-webview2) (`Microsoft.Web.WebView2.Core.dll`, `.WinForms.dll`, `WebView2Loader.dll`) | 1.0.3856.49 | licence Microsoft de type BSD, plus les notices de son paquet | oui |
+| [pythonnet](#pythonnet-et-clr_loader) (`Python.Runtime.dll`) | 3.2.1 | MIT | oui |
+| [clr_loader](#pythonnet-et-clr_loader) (`ClrLoader.dll`) | 0.3.1 | MIT | oui |
+| [cffi](#cffi-et-pycparser) | 2.1.1 | MIT-0 (MIT No Attribution) | oui |
+| [pycparser](#cffi-et-pycparser) | 3.12 | BSD-3-Clause | oui |
+| [proxy_tools](#proxy_tools-bottle-et-typing_extensions) | 0.1.0 | MIT selon PyPI, BSD selon son dépôt | oui |
+| [bottle](#proxy_tools-bottle-et-typing_extensions) | 0.13.4 | MIT | oui |
+| [typing_extensions](#proxy_tools-bottle-et-typing_extensions) | 4.16.0 | PSF-2.0 | oui |
+| [Tcl/Tk](#tcltk) (fenêtre « Choisir un dossier » des replis) | 9.0.4 | licence Tcl/Tk (type BSD) | oui |
 | [Runtime Microsoft Visual C++](#runtime-microsoft-visual-c) | 14.x | « Microsoft Distributable Code » | oui |
 | [PyInstaller](#pyinstaller) (chargeur) | 6.22.3 | GPL-2.0-or-later avec exception pour le chargeur | oui, le chargeur seulement |
+| [Inno Setup](#inno-setup-installateur) (installateur) | 6.7.4 | licence Inno Setup (type Zlib) | **non** : seulement dans `MyPhotos-<version>-installation.exe` |
+| [LZMA SDK](#inno-setup-installateur) (décompresseur de l'installateur) | fourni avec Inno Setup 6.7.4 | domaine public | **non** : seulement dans l'installateur |
 | [SigLIP 2](#le-moteur-de-reconnaissance-siglip-2) (Google) | 2025 | Apache-2.0 | **non** : téléchargé par l'utilisateur |
 | [Exports ONNX d'onnx-community](#le-moteur-de-reconnaissance-siglip-2) | révisions figées | aucune licence propre déclarée ; dérivés de SigLIP 2 | **non** : téléchargés |
 
-**Ne sont pas embarqués** (exclus par `construction/construire.py`) : `sympy`, `mpmath`, `flatbuffers`, `protobuf` et `packaging`, dépendances déclarées d'`onnxruntime-directml` mais inutiles à l'exécution ; `huggingface_hub` et ses dépendances, tirées par `tokenizers` (MyPhotos télécharge le moteur lui-même) ; les outils d'ONNX Runtime (quantification, conversion) ; les modules `_avif`, `_imagingft` et `_imagingtk` de Pillow. La bibliothèque `onnxruntime.dll` (interface C d'ONNX Runtime) est aussi retirée : le module Python contient déjà tout le moteur.
+**Ne sont pas embarqués** (exclus par `construction/construire.py`) : `sympy`, `mpmath`, `flatbuffers`, `protobuf` et `packaging`, dépendances déclarées d'`onnxruntime-directml` mais inutiles à l'exécution ; `huggingface_hub` et ses dépendances, tirées par `tokenizers` (MyPhotos télécharge le moteur lui-même) ; les outils d'ONNX Runtime (quantification, conversion) ; les modules `_avif`, `_imagingft` et `_imagingtk` de Pillow ; les moteurs de pywebview pour les autres systèmes (macOS, Linux, Qt, CEF, Android), `WebBrowserInterop.x86.dll` et `pywebview-android.jar` ; la partie « compilation » de cffi et la version 32 bits de `ClrLoader.dll`. **Le runtime WebView2 lui-même n'est pas livré** : MyPhotos utilise celui que Windows fournit (à défaut, Microsoft Edge déjà installé, puis le navigateur par défaut). La bibliothèque `onnxruntime.dll` (interface C d'ONNX Runtime) est aussi retirée : le module Python contient déjà tout le moteur.
 
 ## Points d'attention pour une redistribution publique
 
@@ -44,7 +55,7 @@ Aucune licence n'interdit de publier MyPhotos.exe gratuitement sur GitHub. Il fa
 
 ## Ce que chaque publication doit contenir
 
-À joindre à chaque Release. `construction\construire.ps1 --paquet` les rassemble, après avoir vérifié leurs versions et leurs empreintes, dans le dossier `licences\` de l'archive `MyPhotos-<version>-windows.zip`, publiée avec MyPhotos.exe (voir [construction/LISEZMOI.md](construction/LISEZMOI.md)) :
+À joindre à chaque Release. `construction\construire.ps1 --paquet` les rassemble, après avoir vérifié leurs versions et leurs empreintes, dans le dossier `licences\` de l'archive `MyPhotos-<version>-windows.zip`, publiée avec MyPhotos.exe (voir [construction/LISEZMOI.md](construction/LISEZMOI.md)). L'installateur `MyPhotos-<version>-installation.exe` (`construire.ps1 --installateur`) pose les mêmes textes dans son dossier d'installation : `LICENSE`, `THIRD_PARTY_NOTICES.md` et `licences\`, à côté de `MyPhotos.exe` :
 
 | Fichier | Où le prendre |
 |---|---|
@@ -57,6 +68,10 @@ Aucune licence n'interdit de publier MyPhotos.exe gratuitement sur GitHub. Il fa
 | licence Apache-2.0 de tokenizers et notices de ses bibliothèques Rust | `LICENSE` du [dépôt huggingface/tokenizers](https://github.com/huggingface/tokenizers/blob/v0.23.3/LICENSE) (étiquette v0.23.3) ; liste dans `tokenizers-0.23.3.dist-info/sboms/` ; fichiers de licence des bibliothèques qui demandent leurs propres mentions, pris dans leur paquet [crates.io](https://crates.io) |
 | `LICENSE.txt` de Python (comprend OpenSSL, bzip2, libffi, Zstandard, Tcl, Tk et les conditions Microsoft) | dossier d'installation de Python 3.14 |
 | `COPYING.txt` de PyInstaller | `pyinstaller-6.22.3.dist-info/licenses/` |
+| `LICENSE` de pywebview, pythonnet (avec `AUTHORS.md`), clr_loader, cffi, pycparser, bottle et typing_extensions | `<paquet>-<version>.dist-info/licenses/` dans `site-packages` |
+| `LICENSE.txt` de proxy_tools | [dépôt jtushman/proxy_tools](https://github.com/jtushman/proxy_tools/blob/db43f1e35d4f90a65c5a4d56d9e9af88212ec6e6/LICENSE.txt), dernier commit (le paquet n'en contient pas) |
+| `LICENSE.txt` et `NOTICE.txt` des DLL WebView2 | paquet NuGet [Microsoft.Web.WebView2 1.0.3856.49](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3856.49), après vérification que les DLL livrées par pywebview sont identiques, octet pour octet, à celles du paquet |
+| `license.txt` d'Inno Setup (installateur seulement, dans `licences\InnoSetup\`) | dossier d'installation d'Inno Setup 6.7.4, identique à [jrsoftware.org/files/is/license.txt](https://jrsoftware.org/files/is/license.txt) |
 
 ### Mentions exigées dans la documentation
 
@@ -181,9 +196,53 @@ Celles que MyPhotos.exe embarque, d'après une construction d'essai (versions li
 
 Le fichier `LICENSE.txt` livré avec Python reproduit les licences d'OpenSSL, bzip2, libffi, Zstandard, Tcl et Tk ; la page [docs.python.org/3.14/license.html](https://docs.python.org/3.14/license.html) donne celles des autres.
 
+## pywebview
+
+Depuis la 0.3.0, MyPhotos s'ouvre dans sa propre fenêtre : pywebview crée une fenêtre Windows Forms qui affiche la page de MyPhotos avec WebView2, le moteur web d'Edge fourni par Windows. Fichiers embarqués : le code Python du paquet `webview` (moteurs Windows Forms et Edge Chromium seulement), ses petits scripts `webview/js/` et `WebBrowserInterop.x64.dll`.
+
+- **Licence** : BSD-3-Clause, « Copyright (c) 2014-2017, Roman Sirokov ».
+- **Obligations** : reproduire la mention de droits d'auteur, les conditions et l'avertissement dans la documentation fournie avec le binaire ; ne pas utiliser le nom des auteurs pour promouvoir MyPhotos.
+- **Liens** : [pywebview.flowrl.com](https://pywebview.flowrl.com), [github.com/r0x0r/pywebview](https://github.com/r0x0r/pywebview).
+
+## DLL WebView2
+
+Livrées dans le paquet pywebview (`webview/lib/`) : `Microsoft.Web.WebView2.Core.dll` et `Microsoft.Web.WebView2.WinForms.dll` (assemblies .NET Framework 4.6.2), et `WebView2Loader.dll` pour x64, arm64 et x86 (les trois restent : pywebview ajoute leurs dossiers au `PATH`). Version 1.0.3856.49 : `construction/construire.py` vérifie qu'elles sont identiques, octet pour octet, à celles du paquet NuGet [Microsoft.Web.WebView2 1.0.3856.49](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3856.49), lui-même contrôlé par l'empreinte SHA-512 publiée par nuget.org.
+
+- **Licence** : le `LICENSE.txt` du paquet, une licence de type BSD de Microsoft : « Copyright (C) Microsoft Corporation. All rights reserved. Redistribution and use in source and binary forms, with or without modification, are permitted provided that […] Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation […] The name of Microsoft Corporation, or the names of its contributors may not be used to endorse or promote products derived from this software without specific prior written permission. »
+- **Notices** : `NOTICE.txt` du paquet (composants tiers du paquet, par exemple Antlr3.Runtime en BSD-3-Clause ; sources sur [3rdpartysource.microsoft.com](https://3rdpartysource.microsoft.com)).
+- **Obligations** : joindre la mention de droits d'auteur, les conditions et l'avertissement ; ne pas utiliser le nom de Microsoft pour promouvoir MyPhotos.
+- **Le runtime WebView2** (« Evergreen », `msedgewebview2.exe`) **n'est pas redistribué** : il fait partie de Windows 11 et de la plupart des Windows 10 ([distribution de WebView2](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution)).
+
+## pythonnet et clr_loader
+
+pywebview pilote Windows Forms et WebView2, des composants .NET Framework, par pythonnet. Fichiers embarqués : `Python.Runtime.dll` (pythonnet) et `ClrLoader.dll` 64 bits (clr_loader), avec leur code Python. Le .NET Framework (4.7.2 ou plus récent), livré avec Windows, n'est pas redistribué.
+
+- **pythonnet 3.2.1** : MIT, « Copyright (c) 2006-2021 the contributors of the Python.NET project » ; la liste des auteurs est dans `AUTHORS.md`.
+- **clr_loader 0.3.1** : MIT, « Copyright (c) 2019-2026 Benedikt Reinartz » (fichier `LICENSE` ; la fiche PyPI ne déclare pas de licence).
+- **Obligations** : joindre les mentions de droits d'auteur et le texte de la licence MIT.
+- **Liens** : [github.com/pythonnet/pythonnet](https://github.com/pythonnet/pythonnet), [github.com/pythonnet/clr-loader](https://github.com/pythonnet/clr-loader).
+
+## cffi et pycparser
+
+Utilisés par clr_loader pour charger `ClrLoader.dll` (mode « ABI », sans compilation). Fichiers embarqués : `_cffi_backend.cp314-win_amd64.pyd` et le code Python de cffi (sans sa partie compilation) ; le code Python de pycparser.
+
+- **cffi 2.1.1** : MIT-0 (« MIT No Attribution »), sauf mention contraire dans un fichier : aucune mention obligatoire ; son texte est joint par courtoisie.
+- **pycparser 3.12** : BSD-3-Clause, « Copyright (c) 2008-2027, Eli Bendersky » : joindre la mention, les conditions et l'avertissement.
+- **Liens** : [github.com/python-cffi/cffi](https://github.com/python-cffi/cffi), [github.com/eliben/pycparser](https://github.com/eliben/pycparser).
+
+## proxy_tools, bottle et typing_extensions
+
+Petites dépendances de pywebview, embarquées sous forme de code Python.
+
+- **proxy_tools 0.1.0** : la fiche PyPI indique MIT ; le `LICENSE.txt` de son dépôt dit « The BSD License (BSD) », « Copyright (c) 2013 Armin Ronacher, Copyright (c) 2014 Jonathan Tushman ». Le paquet (sources seulement, 2014) ne contient aucun fichier de licence : MyPhotos joint ce `LICENSE.txt`, pris au dernier commit du dépôt et contrôlé par son empreinte, et respecte la plus exigeante des deux (reproduire la mention avec le binaire).
+- **bottle 0.13.4** : MIT, « Copyright (c) 2009-2024, Marcel Hellkamp ». pywebview l'importe ; MyPhotos ne s'en sert pas (sa page est servie par son propre serveur).
+- **typing_extensions 4.16.0** : PSF License 2.0, comme Python.
+- **Obligations** : joindre les mentions de droits d'auteur et les textes de licence.
+- **Liens** : [github.com/jtushman/proxy_tools](https://github.com/jtushman/proxy_tools), [bottlepy.org](https://bottlepy.org), [github.com/python/typing_extensions](https://github.com/python/typing_extensions).
+
 ## Tcl/Tk
 
-Sert uniquement à ouvrir la fenêtre Windows « Choisissez un dossier de photos ». Fichiers embarqués : `tcl90.dll`, `tcl9tk90.dll`, `libtommath.dll` et les bibliothèques de scripts de Tcl/Tk.
+Sert uniquement à ouvrir la fenêtre Windows « Choisissez un dossier de photos » quand MyPhotos s'ouvre dans Edge ou dans le navigateur (replis, si WebView2 manque) ; dans sa propre fenêtre, MyPhotos utilise celle de Windows Forms. Fichiers embarqués : `tcl90.dll`, `tcl9tk90.dll`, `libtommath.dll` et les bibliothèques de scripts de Tcl/Tk.
 
 - **Licence** : licence Tcl/Tk, de type BSD : « This software is copyrighted by the Regents of the University of California, Sun Microsystems, Inc., Scriptics Corporation, ActiveState Corporation and other parties. » (Tk ajoute Apple Inc.)
 - **Obligations** : « provided that existing copyright notices are retained in all copies and that this notice is included verbatim in any distributions » : joindre le texte de la licence tel quel (il figure dans le `LICENSE.txt` de Python).
@@ -209,6 +268,16 @@ Outil de construction : il réunit Python, les bibliothèques et MyPhotos en un
   Les « run-time hooks » et modules d'exécution embarqués (`PyInstaller/hooks/rthooks`, `PyInstaller/fake-modules`) sont sous Apache-2.0, comme les « run-time hooks » de `pyinstaller-hooks-contrib`.
 - **Obligations** : aucune contrainte de la GPL sur MyPhotos.exe ; joindre `COPYING.txt` par courtoisie et pour les parties Apache-2.0. Le chargeur contient zlib (licence Zlib).
 - **Liens** : [pyinstaller.org](https://pyinstaller.org), [COPYING.txt](https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt).
+
+## Inno Setup (installateur)
+
+Outil de construction : depuis la 0.3.0, `MyPhotos-<version>-installation.exe` est compilé avec **Inno Setup 6.7.4**, de Jordan Russell et Martijn Laan ([jrsoftware.org](https://jrsoftware.org/)), à partir de `construction/MyPhotos.iss`. Le programme d'installation et le désinstallateur (`unins000.exe`) contiennent le code d'Inno Setup ; **MyPhotos.exe n'en contient rien**.
+
+- **Licence** : licence Inno Setup ([license.txt](https://jrsoftware.org/files/is/license.txt)), de type Zlib : utilisation libre, y compris commerciale, modification et redistribution permises.
+- **Obligations** : une redistribution sous forme binaire doit garder toutes les mentions de droits d'auteur et les adresses web en place, par exemple dans la boîte « À propos » de l'installateur, que MyPhotos ne retire pas ; ne pas présenter le logiciel comme écrit par soi ; une version modifiée doit être signalée comme telle. Une mention dans la documentation est « appréciée mais pas exigée » : la voici.
+- **Licence commerciale** : jrsoftware demande aux « utilisateurs commerciaux » (organisation ou indépendant à but lucratif dont le revenu annuel dépasse 5 000 USD, dons reçus compris) d'acheter une licence commerciale ([isorder.php](https://jrsoftware.org/isorder.php)). Ce n'est pas le cas de MyPhotos aujourd'hui ; à revoir si cela change.
+- **Texte joint** : l'installateur pose le `license.txt` d'Inno Setup dans `licences\InnoSetup\`, à côté du désinstallateur.
+- **LZMA SDK** : le décompresseur de l'installateur vient du LZMA SDK d'Igor Pavlov, placé dans le **domaine public** ([7-zip.org/sdk.html](https://www.7-zip.org/sdk.html)) : aucune obligation.
 
 ## Le moteur de reconnaissance (SigLIP 2)
 

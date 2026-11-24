@@ -11,6 +11,16 @@ onnxruntime-directml==1.24.4    # moteur de reconnaissance (carte graphique via 
 numpy==2.5.5                    # calcul des vecteurs
 pillow==13.0.0                  # lecture des photos, miniatures
 tokenizers==0.23.3              # découpage du texte tapé dans la recherche
+pywebview==6.2.1                # fenêtre « MyPhotos » : la page affichée par WebView2 de Windows
+pythonnet==3.2.1                # pont entre Python et .NET Framework (WinForms et WebView2, pour pywebview)
+
+# --- Tirés par pywebview et pythonnet (embarqués dans MyPhotos.exe)
+clr_loader==0.3.1               # chargement de .NET Framework par pythonnet
+cffi==2.1.1                     # utilisé par clr_loader
+pycparser==3.12                 # utilisé par cffi
+proxy_tools==0.1.0              # publié en sources seulement (2014) : pip en fait une roue à l'installation
+bottle==0.13.4                  # serveur de pywebview, jamais démarré : MyPhotos a le sien
+typing_extensions==4.16.0       # utilisé par pywebview (et par huggingface_hub, plus bas)
 
 # --- Tirés par onnxruntime-directml
 flatbuffers==25.12.19
@@ -37,4 +47,3 @@ idna==3.20
 PyYAML==6.0.4
 tqdm==4.70.1
 truststore==0.10.5
-typing_extensions==4.16.0

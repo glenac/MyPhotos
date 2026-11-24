@@ -32,6 +32,9 @@ from unittest import mock
 
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
+sys.path.insert(0, str(RACINE / 'tests'))
+
+import processus_essai  # noqa: E402
 
 PORT = int(os.environ.get('MYPHOTOS_ESSAI_PORT') or 7896)
 HOTE = f'127.0.0.1:{PORT}'
@@ -74,15 +77,15 @@ def port_libre(port):
         return s.connect_ex(('127.0.0.1', port)) != 0
 
 
-def arreter_par_pid(proc):
-    """Arrête un serveur d'essai par SON identifiant de processus (jamais par le nom du programme)."""
-    if proc.poll() is not None:
-        return
+def arreter_essai(proc):
+    """Filet d'arrêt d'un serveur d'essai : par SON Job Object (tests/processus_essai.py), qui ne contient que les
+    processus lancés par l'essai ; job fermé ensuite. Jamais par identifiant retrouvé, ni par nom de programme."""
     if os.name == 'nt':
-        subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'], capture_output=True)
-    else:
-        os.kill(proc.pid, 15)
-    proc.wait(timeout=30)
+        processus_essai.arreter(proc)
+        return
+    if proc.poll() is None:
+        proc.terminate()
+        proc.wait(timeout=30)
 
 
 def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
@@ -95,9 +98,14 @@ def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
     sortie = open(Path(donnees) / 'essai-serveur.err', 'ab')
     lancement = ['-c', 'import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
                        's.dossier_images = lambda: None; sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
-    proc = subprocess.Popen([sys.executable, '-X', 'faulthandler', *lancement], cwd=str(RACINE), env=env,
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=sortie,
-                            creationflags=SANS_FENETRE)
+    arguments = [sys.executable, '-X', 'faulthandler', *lancement]
+    options = dict(cwd=str(RACINE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=sortie,
+                   creationflags=SANS_FENETRE)
+    # Dans un Job Object à l'essai : le vrai Python (enfant du lanceur d'un environnement virtuel) y entre aussi.
+    if os.name == 'nt':
+        proc = processus_essai.popen(processus_essai.Job(), arguments, **options)
+    else:
+        proc = subprocess.Popen(arguments, **options)
     proc.sortie = sortie
     return proc
 
@@ -147,7 +155,7 @@ class EssaiServeur(unittest.TestCase):
         try:
             attendre_serveur(cls.proc)
         except Exception:
-            arreter_par_pid(cls.proc)
+            arreter_essai(cls.proc)
             raise
 
     @classmethod
@@ -162,7 +170,7 @@ class EssaiServeur(unittest.TestCase):
         except Exception:
             pass
         finally:
-            arreter_par_pid(cls.proc)
+            arreter_essai(cls.proc)
             cls.proc.sortie.close()
 
     def vivant(self):
@@ -772,13 +780,13 @@ class TestInstances(unittest.TestCase):
             try:
                 self.assertEqual(second.wait(timeout=60), 0)
             finally:
-                arreter_par_pid(second)
+                arreter_essai(second)
                 second.sortie.close()
             self.assertIsNone(proc.poll())
             # Plus aucune requête : arrêt propre tout seul (délai réduit à 4 s pour l'essai).
             self.assertEqual(proc.wait(timeout=60), 0)
         finally:
-            arreter_par_pid(proc)
+            arreter_essai(proc)
             proc.sortie.close()
         self.assertTrue(port_libre(self.PORT2))
 
@@ -806,7 +814,7 @@ class TestInstances(unittest.TestCase):
             self.assertIsNotNone(proc.poll(), 'MyPhotos reste lancé tant qu\'un autre site l\'interroge')
             self.assertEqual(proc.wait(timeout=60), 0)
         finally:
-            arreter_par_pid(proc)
+            arreter_essai(proc)
             proc.sortie.close()
         self.assertTrue(port_libre(self.PORT2))
 
@@ -858,10 +866,11 @@ class TestActionsWindows(unittest.TestCase):
                 with self.assertRaises(self.serveur.Refus) as e:
                     action(INCONNU)
                 self.assertEqual(e.exception.statut, 404)
-            self.image.unlink()                                    # fichier disparu
+            self.image.unlink()                                    # fichier disparu, dossier là : photo oubliée
             with self.assertRaises(self.serveur.Refus) as e:
                 self.app.ouvrir(self.id_image)
-            self.assertEqual(e.exception.statut, 404)
+            self.assertEqual((e.exception.statut, str(e.exception)), (410, self.serveur.PHOTO_RETIREE))
+            self.assertIsNone(self.base.photo(self.id_image))
         ouvrir.assert_not_called()
         montrer.assert_not_called()
 
@@ -947,12 +956,17 @@ class TestSelection(unittest.TestCase):
         self.assertEqual(recus, [[str(self.fichiers['vert.jpg']), str(self.fichiers['rouge.jpg'])]])
         self.assertEqual((r['copiees'], r['refusees'], r['nb_refusees']),
                          (2, [{'id': INCONNU, 'raison': self.serveur.INTROUVABLE}], 1))
-        self.fichiers['bleu.png'].unlink()                                    # disque débranché, fichier déplacé…
+        self.fichiers['bleu.png'].unlink()                                    # fichier supprimé hors de MyPhotos
         with mock.patch.object(self.serveur, 'mettre_au_presse_papiers') as presse:
             with self.assertRaises(self.serveur.Refus) as e:
                 self.app.copier([self.ids['bleu.png'], INCONNU])
-        self.assertEqual(e.exception.statut, 409)
+        self.assertEqual(e.exception.statut, 409)                             # INCONNU : pas seulement des retirées
         presse.assert_not_called()
+        self.assertIsNone(self.app.base.photo(self.ids['bleu.png']))          # son dossier répond : oubliée
+        self.fichiers['sous/rouge.jpg'].unlink()
+        with mock.patch.object(self.serveur, 'mettre_au_presse_papiers'):
+            r = self.app.copier([self.ids['sous/rouge.jpg'], self.ids['rouge.jpg']])
+        self.assertEqual((r['copiees'], r['retirees']), (1, [self.ids['sous/rouge.jpg']]))
         occupe = self.serveur.PressePapiersOccupe('presse-papiers gardé ouvert par exemple.exe')
         with mock.patch.object(self.serveur, 'mettre_au_presse_papiers', side_effect=occupe), \
                 self.assertLogs('myphotos.serveur', 'WARNING') as journal:
@@ -1341,6 +1355,216 @@ class TestSelection(unittest.TestCase):
         for mauvais in (None, [], [0], ['x'], [True], [2.0], list(range(1, 2002))):
             with self.assertRaises(self.serveur.Refus):
                 lire(mauvais)
+
+
+class FauxIndexeur:
+    """Ce qu'Application demande à l'indexeur pour « Actualiser » et « Ne plus exclure »."""
+
+    def __init__(self):
+        self.demandes = []
+        self.reprises = 0
+        self.fait = 0
+        self.phase = 'inventaire'
+        self.bilan = None
+        self.actif = True
+        self.en_traitement = 0
+
+    def reprendre(self):
+        self.reprises += 1
+
+    def relancer(self, erreurs=False, dossiers=None):
+        self.demandes.append(dossiers)
+        return len(self.demandes)
+
+    def etat(self):
+        return {'phase': self.phase, 'inventaire_fait': self.fait, 'bilan': self.bilan, 'message': None,
+                'inventaire_en_cours': self.en_traitement,
+                'dossier_courant': 'D:\\Photos', 'trouvees': 1234}
+
+
+class TestDossiersEtActualiser(unittest.TestCase):
+    """Actualiser, exclure un sous-dossier, assistant, photo introuvable : Application dans ce processus, base et
+    photos générées dans un dossier temporaire ; la fenêtre « Choisir un dossier » est simulée."""
+
+    def setUp(self):
+        from PIL import Image
+        from myphotos import serveur
+        self.serveur = serveur
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-dossiers-'))
+        self.photos = self.tmp / 'Images'
+        self.fichiers = {}
+        for nom in ('a.jpg', 'Vacances/b.jpg', 'Captures d\u2019écran/c1.png', 'Captures d\u2019écran/c2.png',
+                    'Captures d\u2019écran/c3.png', 'Fonds d’écran/f.jpg'):
+            p = self.photos / nom
+            p.parent.mkdir(parents=True, exist_ok=True)
+            Image.new('RGB', (160, 120), (200, 30, 30)).save(p)
+            self.fichiers[nom] = p
+        self.correctifs = [mock.patch.object(serveur.config, 'BASE', self.tmp / 'index.db'),
+                           mock.patch.object(serveur.config, 'MINIATURES', self.tmp / 'miniatures.db'),
+                           mock.patch.object(serveur, 'dossiers_proposes', lambda: []),
+                           mock.patch.object(serveur, 'dossier_images', lambda: None)]
+        for c in self.correctifs:
+            c.start()
+        self.app = serveur.Application(serveur=None)
+
+    def tearDown(self):
+        try:
+            self.app.base.fermer()
+        finally:
+            for c in reversed(self.correctifs):
+                c.stop()
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def connaitre(self, dossier_id):
+        lignes = [(str(p), p.stat().st_size, p.stat().st_mtime_ns, None) for p in self.fichiers.values()]
+        self.app.base.ajouter_photos(dossier_id, lignes)
+        return {Path(ch).relative_to(self.photos).as_posix(): v[0]
+                for ch, v in self.app.base.connus(dossier_id).items()}
+
+    def test_assistant_examine_puis_ajoute_sans_les_captures(self):
+        ex = self.app.examiner_dossier(str(self.photos) + '\\')
+        self.assertEqual((ex['chemin'], ex['nom'], ex['total'], ex['complet']), (str(self.photos), 'Images', 6, True))
+        par_nom = {s['nom']: s for s in ex['sous_dossiers']}
+        self.assertEqual(set(par_nom), {'Captures d\u2019écran', 'Vacances', 'Fonds d’écran'})
+        self.assertEqual((par_nom['Captures d\u2019écran']['photos'], par_nom['Captures d\u2019écran']['coche']), (3, False))
+        self.assertIn('captures d\'écran', par_nom['Captures d\u2019écran']['raison'])
+        self.assertIn('fonds d\'écran', par_nom['Fonds d’écran']['raison'])
+        self.assertEqual((par_nom['Vacances']['coche'], par_nom['Vacances']['raison']), (True, None))
+        ix = FauxIndexeur()
+        self.app.indexeur = ix
+        exclus = [s['chemin'] for s in ex['sous_dossiers'] if not s['coche']] + [str(self.tmp)]   # hors dossier : ignoré
+        r = self.app.ajouter_dossier(ex['chemin'], exclus)
+        self.assertEqual(sorted(r['exclus']), sorted(exclus[:2]))
+        self.assertEqual(ix.demandes, [None])                                 # un tour, après les exclusions
+        liste = self.app.liste_dossiers()['dossiers'][0]
+        self.assertEqual(sorted(x['chemin'] for x in liste['exclusions']), sorted(exclus[:2]))
+        for mauvais in (None, 'texte', [1, 2]):
+            with self.assertRaises(self.serveur.Refus):
+                self.app.ajouter_dossier(str(self.tmp / 'autre'), mauvais if mauvais != 'texte' else 'x')
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.examiner_dossier(str(self.photos / 'Vacances'))             # déjà dans MyPhotos
+        self.assertEqual(e.exception.statut, 409)
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.examiner_dossier(str(self.photos / 'Captures d\u2019écran'))
+        self.assertIn('Ne plus exclure', str(e.exception))
+
+    def test_choisir_pour_l_assistant(self):
+        self.app.choix_dossier = mock.Mock(demander=mock.Mock(return_value=str(self.photos).replace('\\', '/')))
+        self.assertEqual(self.app.choisir_dossier(examiner=True), {'annule': False, 'chemin': str(self.photos)})
+        self.assertEqual(self.app.base.dossiers(), [])                       # rien d'ajouté avant l'examen
+        self.app.choix_dossier.demander.return_value = None
+        self.assertEqual(self.app.choisir_dossier(examiner=True), {'annule': True})
+
+    def test_exclure_par_la_fenetre(self):
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ids = self.connaitre(d['id'])
+        ix = FauxIndexeur()
+        self.app.indexeur = ix
+        captures = self.photos / 'Captures d\u2019écran'
+        self.app.choix_dossier = mock.Mock(demander=mock.Mock(return_value=str(captures)))
+        r = self.app.choisir_exclusion(d['id'])
+        options = self.app.choix_dossier.demander.call_args.kwargs
+        self.assertEqual((options['initial'], options['titre']), (d['chemin'], 'Choisissez le sous-dossier à exclure'))
+        self.assertEqual((r['annule'], r['photos'], r['exclusion']['chemin']), (False, 3, str(captures)))
+        for nom in ('Captures d\u2019écran/c1.png', 'Captures d\u2019écran/c2.png', 'Captures d\u2019écran/c3.png'):
+            self.assertIsNone(self.app.base.photo(ids[nom]))
+            self.assertTrue(self.fichiers[nom].exists())                       # jamais supprimée du disque
+        self.assertIsNotNone(self.app.base.photo(ids['a.jpg']))
+        # Hors du dossier suivi : refus clair.
+        self.app.choix_dossier.demander.return_value = str(self.tmp)
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.choisir_exclusion(d['id'])
+        self.assertEqual(e.exception.statut, 409)
+        self.assertIn('n\'est pas dans', str(e.exception))
+        self.app.choix_dossier.demander.return_value = None
+        self.assertEqual(self.app.choisir_exclusion(d['id']), {'annule': True})
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.choisir_exclusion(d['id'] + 50)
+        self.assertEqual(e.exception.statut, 404)
+        # « Ne plus exclure » : un tour de ce dossier seulement, pause levée.
+        self.assertEqual(self.app.ne_plus_exclure(r['exclusion']['id'])['dossier_id'], d['id'])
+        self.assertEqual((ix.demandes, ix.reprises), ([[d['id']]], 1))
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.ne_plus_exclure(r['exclusion']['id'])
+        self.assertEqual(e.exception.statut, 404)
+
+    def test_actualiser(self):
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.actualiser()                                             # pas encore de moteur
+        self.assertEqual(e.exception.statut, 409)
+        ix = FauxIndexeur()
+        self.app.indexeur = ix
+        r = self.app.actualiser()
+        self.assertFalse(r['deja'])
+        a = r['actualisation']
+        self.assertEqual((a['numero'], a['en_cours']), (1, True))
+        self.assertIn('Actualisation…', a['message'])
+        self.assertIn('1 234 trouvées', a['message'])
+        self.assertTrue(self.app.actualiser()['deja'])                       # un seul tour à la fois
+        self.assertEqual((len(ix.demandes), ix.reprises), (1, 1))
+        ix.fait = 1
+        ix.phase = 'analyse'
+        ix.bilan = {'numero': 1, 'nouvelles': 3, 'retirees': 5012, 'injoignables': ['E:\\Photos'], 'dossiers': 2}
+        a = self.app.etat()['actualisation']
+        self.assertEqual((a['en_cours'], a['nouvelles'], a['retirees']), (False, 3, 5012))
+        self.assertTrue(a['message'].startswith('Actualisation terminée : 3 nouvelles photos, 5 012 photos retirées.'),
+                        a['message'])
+        self.assertIn('« E:\\Photos » est inaccessible', a['message'])
+        self.assertFalse(self.app.actualiser()['deja'])                      # fini : un nouveau tour est possible
+        self.assertEqual(len(ix.demandes), 2)
+        ix.phase = 'erreur'                                                   # erreur d'un passage plus ancien
+        self.assertTrue(self.app.etat()['actualisation']['en_cours'])
+        ix.en_traitement = 2                                                  # erreur du passage demandé
+        a = self.app.etat()['actualisation']
+        self.assertFalse(a['en_cours'])
+
+    def test_messages_actualisation(self):
+        m = self.serveur.message_actualisation
+        self.assertEqual(m({'nouvelles': 0, 'retirees': 0, 'injoignables': []}),
+                         'Actualisation terminée : rien n\'a changé.')
+        self.assertEqual(m({'nouvelles': 1, 'retirees': 1, 'injoignables': []}),
+                         'Actualisation terminée : 1 nouvelle photo, 1 photo retirée. Elle va être analysée.')
+        self.assertIn('2 dossiers sont inaccessibles', m({'nouvelles': 0, 'retirees': 0, 'injoignables': ['A', 'B']}))
+
+    def test_photo_introuvable(self):
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ids = self.connaitre(d['id'])
+        v = self.app.verifier_photo
+        self.assertEqual(v(ids['a.jpg'])['etat'], 'presente')
+        self.assertEqual(v(INCONNU), {'etat': 'inconnue', 'message': self.serveur.INTROUVABLE})
+        # Fichier supprimé, dossier joignable : oubliée tout de suite, avec le message simple.
+        self.fichiers['a.jpg'].unlink()
+        self.assertEqual(v(ids['a.jpg']), {'etat': 'retiree', 'message': self.serveur.PHOTO_RETIREE})
+        self.assertIsNone(self.app.base.photo(ids['a.jpg']))
+        # Sous-dossier entier supprimé (comme les captures du testeur) : oubliée aussi.
+        shutil.rmtree(self.photos / 'Vacances')
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.montrer(ids['Vacances/b.jpg'])
+        self.assertEqual(e.exception.statut, 410)
+        self.assertIsNone(self.app.base.photo(ids['Vacances/b.jpg']))
+        self.fichiers['Captures d\u2019écran/c1.png'].unlink()
+        with mock.patch.object(self.serveur, 'mettre_au_presse_papiers') as presse:
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.copier([ids['Captures d\u2019écran/c1.png']])
+        self.assertEqual((e.exception.statut, str(e.exception)), (410, self.serveur.PHOTO_RETIREE))
+        presse.assert_not_called()
+        # Dossier injoignable (disque débranché) : rien n'est oublié, message d'aujourd'hui.
+        os.replace(self.photos, self.tmp / 'debranche')
+        try:
+            p = ids['Fonds d’écran/f.jpg']
+            self.assertEqual(v(p), {'etat': 'injoignable', 'message': self.serveur.PHOTO_ABSENTE})
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.ouvrir(p)
+            self.assertEqual((e.exception.statut, str(e.exception)), (404, self.serveur.PHOTO_ABSENTE))
+            self.assertIsNotNone(self.app.base.photo(p))
+            # Dossier présent mais vide (partage réseau monté sans son disque) : rien n'est oublié non plus.
+            self.photos.mkdir()
+            self.assertEqual(v(p)['etat'], 'injoignable')
+            self.assertIsNotNone(self.app.base.photo(p))
+        finally:
+            if self.photos.exists():
+                self.photos.rmdir()
+            os.replace(self.tmp / 'debranche', self.photos)
 
 
 class TestDoublons(unittest.TestCase):
@@ -1862,7 +2086,7 @@ class TestDemarrage(unittest.TestCase):
             except Exception:
                 pass
             finally:
-                arreter_par_pid(proc)
+                arreter_essai(proc)
                 proc.sortie.close()
         self.assertEqual(proc.returncode, 0)
 

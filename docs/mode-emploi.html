@@ -55,7 +55,7 @@
   </svg>
   <div>
     <h1>MyPhotos</h1>
-    <p class="sous">Mode d'emploi · version 0.2.0 · novembre 2026</p>
+    <p class="sous">Mode d'emploi · version 0.3.0 · novembre 2026</p>
   </div>
 </header>
 
@@ -70,16 +70,16 @@
 <section>
 <h2><span class="num">1</span>Installer</h2>
 <ol>
-  <li>Téléchargez <b>MyPhotos.exe</b> depuis <b>github.com/glenac/MyPhotos</b>, rubrique <b>Releases</b>.</li>
-  <li>Rangez-le où vous voulez (rien à installer), puis double-cliquez dessus.</li>
+  <li>Téléchargez <b>MyPhotos-…-installation.exe</b> depuis <b>github.com/glenac/MyPhotos</b>, rubrique <b>Releases</b>.</li>
+  <li>Double-cliquez dessus, puis <span class="bouton">Installer</span> : MyPhotos s'ajoute au menu Démarrer.</li>
 </ol>
 <div class="alerte">Si Windows affiche « Windows a protégé votre ordinateur » : cliquez sur <b>Informations complémentaires</b>, puis sur <b>Exécuter quand même</b>.</div>
 
 <h2><span class="num">2</span>Premier lancement</h2>
-<p style="margin:0">MyPhotos s'ouvre dans votre navigateur et vous guide en trois étapes :</p>
+<p style="margin:0">MyPhotos s'ouvre dans sa propre fenêtre et vous guide en trois étapes :</p>
 <ol>
   <li><b>Votre ordinateur</b> : MyPhotos conseille un moteur de reconnaissance. Cliquez sur <span class="bouton">Télécharger</span>, puis sur <span class="bouton">Continuer</span> sans attendre la fin.</li>
-  <li><b>Vos photos</b> : <span class="bouton">Ajouter</span> à côté du dossier <b>Images</b>, ou <span class="bouton">Ajouter un dossier…</span> pour un autre. <span style="white-space:nowrap">Puis <span class="bouton">Continuer</span>.</span></li>
+  <li><b>Vos photos</b> : <span class="bouton">Ajouter</span> à côté du dossier <b>Images</b>, ou <span class="bouton">Ajouter un dossier…</span> pour un autre. Décochez ses sous-dossiers sans vraies photos (captures d'écran…). <span style="white-space:nowrap">Puis <span class="bouton">Continuer</span>.</span></li>
   <li><b>Analyse</b> : MyPhotos regarde chaque photo une fois. Cliquez sur <span class="bouton">Commencer à chercher</span> sans attendre la fin.</li>
 </ol>
 <div class="note">Internet ne sert qu'une fois, pour télécharger le moteur (de 750 Mo à 2,1 Go).</div>
@@ -114,13 +114,13 @@
 
 <h2><span class="num">7</span>Réglages</h2>
 <ul>
-  <li><span class="bouton">Ajouter un dossier…</span>, ou <span class="bouton">Retirer</span> un dossier (aucune photo n'est supprimée).</li>
-  <li>Les nouvelles photos sont repérées toutes seules ; <span class="bouton">Chercher les nouvelles photos maintenant</span> le fait tout de suite.</li>
+  <li><span class="bouton">Ajouter un dossier…</span>, <span class="bouton">Retirer</span> un dossier ou en <span class="bouton">Exclure un sous-dossier…</span> : rien n'est supprimé de l'ordinateur.</li>
+  <li>Photos ajoutées ou supprimées ? <span class="bouton">Actualiser</span> refait tout de suite le tour de vos dossiers.</li>
 </ul>
 
 <h2>En cas de souci</h2>
 <ul>
-  <li><b>La page ne répond plus</b> : double-cliquez de nouveau sur MyPhotos.exe (il s'arrête seul après la fermeture de sa page).</li>
+  <li><b>MyPhotos ne répond plus</b> : fermez sa fenêtre (cela arrête MyPhotos), puis relancez-le.</li>
   <li><b>Le téléchargement échoue</b> : vérifiez Internet, puis <span class="bouton">Réessayer</span>.</li>
   <li><b>Une photo reste introuvable</b> : essayez un autre mot, regardez <b>Moins sûres</b>, attendez la fin de l'analyse.</li>
   <li><b>L'ordinateur est lent</b> : <span class="bouton">Pause</span> dans le bandeau, puis <span class="bouton">Reprendre</span>.</li>
@@ -128,6 +128,6 @@
 </section>
 </div>
 
-<p class="pied">Ce que MyPhotos retient (index, miniatures, moteur) reste dans le dossier <code>%LOCALAPPDATA%\MyPhotos</code>. Pour le désinstaller : <span class="bouton">Réglages</span>, <span class="bouton">Arrêter MyPhotos</span>, puis supprimez MyPhotos.exe et ce dossier. Vos photos ne sont jamais modifiées ; elles ne sont supprimées que si vous le demandez, vers la Corbeille de Windows.</p>
+<p class="pied">Ce que MyPhotos retient (index, miniatures, moteur) reste dans le dossier <code>%LOCALAPPDATA%\MyPhotos</code>. Pour le désinstaller : Paramètres, <b>Applications installées</b>, MyPhotos, <b>Désinstaller</b> (répondre <b>Non</b> à la question garde l'analyse pour une réinstallation ; MyPhotos.exe seul : supprimez-le avec ce dossier). Vos photos ne sont jamais modifiées ; elles ne sont supprimées que si vous le demandez, vers la Corbeille de Windows.</p>
 </body>
 </html>

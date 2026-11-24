@@ -1,10 +1,19 @@
 """Serveur local de MyPhotos : la page (page/index.html) et son API JSON, sur 127.0.0.1 uniquement.
 
     python -m myphotos          (ou MyPhotos.exe, ou python lancer.py)
+    python -m myphotos --navigateur    (ou MYPHOTOS_NAVIGATEUR=1) : la page dans le navigateur par défaut
 
-Une seule instance : si le port est déjà pris par MyPhotos, on ouvre la page et on s'arrête. La page interroge
-/api/etat toutes les 2 s (toutes les 30 s quand elle est cachée) ; sans aucune requête pendant 3 minutes, le
-serveur s'arrête proprement (fin du lot d'analyse en cours, fermeture des bases).
+Depuis la 0.3.0, MyPhotos s'ouvre dans SA fenêtre « MyPhotos » (WebView2 de Windows, par pywebview) : main() démarre
+le serveur, puis fenetre.Hote le fait tourner dans un fil et garde la fenêtre dans le fil principal. Repli sur Edge
+en mode application, puis sur le navigateur par défaut ; tout est décrit en tête de fenetre.py. /api/etat dit le
+mode : « fenetre », « edge » ou « navigateur ». Fermer la fenêtre arrête MyPhotos proprement (fin du lot d'analyse
+en cours, fermeture des bases).
+
+Une seule instance : si le port est déjà pris par MyPhotos, sa fenêtre revient au premier plan (événement Windows
+nommé, hors HTTP), sinon sa page s'ouvre ; une ancienne version sans fenêtre (0.1.0, 0.2.0) est signalée par un
+message. En mode navigateur, la page interroge /api/etat toutes les 2 s (toutes les 30 s quand elle est cachée) ;
+sans aucune requête pendant 3 minutes, le serveur s'arrête proprement. Pas d'arrêt pour inactivité tant que la
+fenêtre est ouverte.
 
 Au lancement, le moteur de reconnaissance se charge en arrière-plan, après la première réponse à la page : la page
 s'affiche tout de suite, /api/etat dit « preparation » pendant ce temps et la recherche répond « préparation »
@@ -31,10 +40,15 @@ Doublons (écran « Doublons » de la page) : la recherche tourne dans son propr
 (doublons.py n'utilise ni le moteur ni la carte graphique) ; la recherche de photos et l'analyse continuent pendant ce
 temps. Elle ne fait que proposer : les photos partent par /api/supprimer, après un clic et une confirmation.
 
+Raccourci (exécutable seulement) : POST /api/raccourci crée MyPhotos.lnk sur le Bureau et dans le menu Démarrer
+(raccourci.py : interface IShellLink de Windows, sans installation, sans PowerShell ni cmd).
+
 Variables d'environnement : MYPHOTOS_PORT, MYPHOTOS_DOSSIER, MYPHOTOS_MODELES (voir config.py) ;
-MYPHOTOS_SANS_PAGE=1 n'ouvre pas la page ; MYPHOTOS_TELECHARGEMENT_FACTICE=1 simule le téléchargement du
-moteur (essais de l'interface ; les fichiers réels de MYPHOTOS_MODELES servent ensuite) ;
-MYPHOTOS_INACTIVITE_S change le délai d'arrêt automatique (180 s).
+MYPHOTOS_SANS_PAGE=1 n'ouvre ni fenêtre ni page ; MYPHOTOS_NAVIGATEUR=1 ouvre la page dans le navigateur ;
+MYPHOTOS_DEBUG=1 rend les outils de développement de la fenêtre et garde les variables WEBVIEW2_* (essais ; pour
+MyPhotos.exe, seulement avec en plus l'argument --essai-debogage, voir fenetre.debogage) ;
+MYPHOTOS_TELECHARGEMENT_FACTICE=1 simule le téléchargement du moteur (essais de l'interface ; les fichiers réels
+de MYPHOTOS_MODELES servent ensuite) ; MYPHOTOS_INACTIVITE_S change le délai d'arrêt automatique (180 s).
 """
 import concurrent.futures
 import ctypes
@@ -67,12 +81,12 @@ from collections import deque
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import config, materiel, modele
+from . import config, fenetre, materiel, modele, raccourci
 from . import doublons as _doublons
 from . import recherche as _recherche
 from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, maintenant,
                    normaliser_chemin)
-from .indexation import _BALISES_LIENS, Indexeur, Parcours
+from .indexation import _BALISES_LIENS, Indexeur, Parcours, examiner_dossier
 from .recherche import Recherche
 
 NOM = 'MyPhotos'
@@ -95,6 +109,8 @@ MATERIEL_VALIDITE_S = 600
 COTE_CONVERSION = 2560             # TIFF : converti en JPEG de 2560 px au plus pour la visionneuse
 MARGE_DISQUE = 200 * 1024 * 1024
 CHOIX_DOSSIER_S = 900              # la fenêtre « Choisir un dossier » attend au plus 15 minutes
+ATTENTE_ARRET_S = 60               # relance pendant qu'une MyPhotos s'arrête : on attend qu'elle libère le port
+PORT_LIBERE_S = 10                 # port tenu sans réponse (MyPhotos qui finit de s'arrêter) : on réessaie 10 s
 ORDRE_MOTEURS = ('rapide', 'base', 'precis', 'tres_precis')
 # Préparation du moteur. Pendant qu'ONNX Runtime crée ses sessions (3 à 6 s), il garde le GIL jusqu'à 1,2 s
 # d'affilée : chargé au lancement, le moteur retardait la page de 6 s (mesuré le 24/11/2026). Il attend donc que
@@ -114,6 +130,12 @@ TYPES_IMAGES = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.jfif': 'image/jpe
 
 PHOTO_ABSENTE = ("La photo d'origine est introuvable : le disque est peut-être débranché, ou le fichier a été "
                  "déplacé.")
+# Photo ouverte (visionneuse, Ouvrir, Afficher dans le dossier, Copier) dont le fichier a disparu alors que son dossier
+# suivi répond : MyPhotos l'oublie aussitôt (réponse 410). Dossier injoignable : rien n'est oublié (PHOTO_ABSENTE).
+PHOTO_RETIREE = "Cette photo n'existe plus sur le disque : MyPhotos l'a retirée."
+# Assistant : sous-dossiers décochés d'office, et pourquoi (une phrase simple).
+RAISONS_SOUS_DOSSIER = {'captures': "Décoché : ce dossier semble contenir des captures d'écran, pas des photos.",
+                        'fonds': "Décoché : ce dossier semble contenir des fonds d'écran, pas des photos."}
 _IDENTIFIANT = re.compile(r'[1-9][0-9]{0,17}')
 _FOLDERID_PICTURES = '{33E28130-4E1E-4676-835A-98395C3BC3BB}'
 
@@ -380,6 +402,38 @@ def dossiers_proposes():
             for sous in ('Images', 'Pictures'):
                 ajouter(os.path.join(racine, sous), 'Images de OneDrive')
     return res
+
+
+def message_actualisation(b):
+    """Réponse claire à la fin d'une actualisation : « 3 nouvelles photos, 5 012 photos retirées. »"""
+    nouvelles, retirees, injoignables = b.get('nouvelles') or 0, b.get('retirees') or 0, b.get('injoignables') or []
+    morceaux = []
+    if nouvelles:
+        morceaux.append(f'{_nombre_fr(nouvelles)} nouvelle photo' if nouvelles == 1
+                        else f'{_nombre_fr(nouvelles)} nouvelles photos')
+    if retirees:
+        morceaux.append(f'{_nombre_fr(retirees)} photo retirée' if retirees == 1
+                        else f'{_nombre_fr(retirees)} photos retirées')
+    texte = ('Actualisation terminée : ' + ', '.join(morceaux) + '.') if morceaux \
+        else 'Actualisation terminée : rien n\'a changé.'
+    if nouvelles:
+        texte += ' Les nouvelles photos vont être analysées.' if nouvelles > 1 else ' Elle va être analysée.'
+    if len(injoignables) == 1:
+        texte += (f' Le dossier « {injoignables[0]} » est inaccessible pour le moment (disque débranché ?) : ses photos '
+                  'sont gardées.')
+    elif injoignables:
+        texte += (f' {len(injoignables)} dossiers sont inaccessibles pour le moment (disque débranché ?) : leurs '
+                  'photos sont gardées.')
+    return texte
+
+
+def _retirees(refusees):
+    return [r['id'] for r in refusees if r['raison'] == PHOTO_RETIREE]
+
+
+def _statut_refus(refusees):
+    """410 quand toutes les photos refusées ont été retirées (leur fichier a disparu), 409 sinon."""
+    return 410 if refusees and all(r['raison'] == PHOTO_RETIREE for r in refusees) else 409
 
 
 def compter_images(racine, limite_s=ESTIMATION_S):
@@ -860,6 +914,20 @@ def alerter(message):
         pass
 
 
+def informer(message):
+    """Message d'information au lancement (une ancienne MyPhotos est ouverte…) : boîte de dialogue depuis
+    l'exécutable, console depuis les sources."""
+    journal.info('%s', message)
+    if SANS_PAGE or os.name != 'nt' or not config.GELE:
+        if sys.stderr is not None:
+            print(message, file=sys.stderr)
+        return
+    try:
+        _dll('user32').MessageBoxW(None, message, NOM, 0x40 | 0x10000 | 0x40000)  # information, premier plan, dessus
+    except Exception:
+        pass
+
+
 def ouvrir_page(adresse):
     try:
         os.startfile(adresse)
@@ -872,7 +940,10 @@ def ouvrir_page(adresse):
 
 class ChoixDossier:
     """Fenêtre « Choisir un dossier » de Windows, ouverte par tkinter dans un fil qui lui est réservé
-    (Tk n'accepte qu'un seul fil). Une seule fenêtre à la fois ; annuler renvoie None."""
+    (Tk n'accepte qu'un seul fil). Une seule fenêtre à la fois ; annuler renvoie None.
+
+    Modes « edge » et « navigateur » seulement : dans la fenêtre de MyPhotos, fenetre.ChoixDossierFenetre la
+    remplace (fenêtre de Windows qui appartient à la fenêtre MyPhotos)."""
 
     def __init__(self):
         self._demandes = queue.Queue()
@@ -1332,6 +1403,11 @@ class Application:
         self.factices = set()                    # (cle, vision) « téléchargés » en mode d'essai
         self.choix_dossier = ChoixDossier()
         self.derniere_activite = time.monotonic()
+        # Mode d'affichage (fenetre.py) : « fenetre », « edge » ou « navigateur » ; l'arrêt pour inactivité ne vaut
+        # que sans fenêtre à suivre ; quand_arret (fenêtre) est prévenu dès qu'un arrêt est lancé.
+        self.mode = fenetre.NAVIGATEUR
+        self.inactivite = True
+        self.quand_arret = None
         self.arret_lance = False
         self._ferme = False
         self._fin = threading.Event()
@@ -1368,6 +1444,8 @@ class Application:
         self._doublons_erreur = None             # message (français) du dernier échec
         self._doublons_deja = None               # déjà lancée une fois par l'utilisateur (meta 'doublons')
         self._doublons_annulee = False           # arrêtée par l'utilisateur : la page ne la relance plus seule
+        # Bouton « Actualiser » : {numero (demande d'inventaire), indexeur, debut}, une à la fois.
+        self._actualisation = None
         if self.base.ecartes:
             self._noter_base_ecartee(self.base.ecartes)
 
@@ -1453,10 +1531,27 @@ class Application:
 
     def _veiller(self):
         while not self._fin.wait(2.0):
-            if time.monotonic() - self.derniere_activite > INACTIVITE_S:
+            if self.inactivite and time.monotonic() - self.derniere_activite > INACTIVITE_S:
                 journal.info('aucune activité depuis %d s : arrêt', INACTIVITE_S)
                 self.arreter()
                 return
+
+    def travaux_en_cours(self):
+        """Ce que fermer MyPhotos interromprait (question avant de fermer la fenêtre) : 'analyse', 'copie',
+        'doublons', 'telechargement'."""
+        travaux = []
+        # L'inventaire seul (au début de chaque lancement) ne compte pas : il est refait de toute façon.
+        if self._analyse_en_cours():
+            travaux.append('analyse')
+        c = self._copie
+        if c is not None and c.etat == 'en_cours':
+            travaux.append('copie')
+        if self._calcul_doublons_en_cours():
+            travaux.append('doublons')
+        t = self.telechargement
+        if t is not None and t.etat == 'en_cours':
+            travaux.append('telechargement')
+        return travaux
 
     def arreter(self):
         """Arrêt propre en arrière-plan : fin du lot d'analyse en cours, puis arrêt du serveur."""
@@ -1464,6 +1559,12 @@ class Application:
             if self.arret_lance:
                 return
             self.arret_lance = True
+        rappel = self.quand_arret
+        if rappel is not None:
+            try:
+                rappel()                         # la fenêtre de MyPhotos se ferme tout de suite
+            except Exception:
+                journal.exception('fermeture de la fenêtre')
 
         def travail():
             try:
@@ -1882,6 +1983,9 @@ class Application:
     def liste_dossiers(self):
         suivis = self.base.dossiers()
         self._nb_dossiers = len(suivis)
+        exclusions = {}
+        for x in self.base.exclusions():
+            exclusions.setdefault(x['dossier_id'], []).append({'id': x['id'], 'chemin': x['chemin']})
         cles = [cle_chemin(d['chemin']) for d in suivis]
         proposes = []
         for p in self.proposes():
@@ -1890,14 +1994,24 @@ class Application:
             proposes.append({'chemin': p['chemin'], 'nom': p['nom'],
                              'deja': any(k == c or dedans(k, c) for c in cles),
                              'photos_estimees': n, 'estimation_complete': complet})
-        return {'dossiers': [self._dossier_public(d) for d in suivis], 'proposes': proposes,
-                'estimation_en_cours': not self._estimation_finie.is_set()}
+        return {'dossiers': [dict(self._dossier_public(d), exclusions=exclusions.get(d['id'], [])) for d in suivis],
+                'proposes': proposes, 'estimation_en_cours': not self._estimation_finie.is_set()}
 
-    def ajouter_dossier(self, chemin):
+    @staticmethod
+    def _chemin_recu(chemin):
         if not isinstance(chemin, str) or not chemin.strip():
             raise Refus('Aucun dossier indiqué.')
         if len(chemin) > 4096 or '\0' in chemin:
             raise Refus('Ce chemin de dossier est invalide.')
+        return chemin
+
+    def ajouter_dossier(self, chemin, exclus=None):
+        """Suit un dossier. exclus : sous-dossiers décochés dans l'assistant, exclus avant le premier inventaire
+        (ceux qui ne sont pas dans le dossier, ou déjà couverts par un autre, sont ignorés)."""
+        self._chemin_recu(chemin)
+        if exclus is not None and (not isinstance(exclus, list) or len(exclus) > 200
+                                   or not all(isinstance(x, str) for x in exclus)):
+            raise Refus('Liste de sous-dossiers invalide.')
         try:
             d = self.base.ajouter_dossier(chemin)
         except DossierRefuse as e:
@@ -1905,17 +2019,150 @@ class Application:
         except OSError:
             raise Refus('Ce dossier est inaccessible.', 409)
         journal.info('dossier ajouté : %s', d['chemin'])
+        exclues = []
+        for x in sorted(set(exclus or []), key=len):          # les plus courts (les parents) d'abord
+            try:
+                self._chemin_recu(x)
+                exclues.append(self.base.ajouter_exclusion(d['id'], x)['chemin'])
+            except (Refus, DossierRefuse, OSError) as e:
+                journal.info('sous-dossier non exclu à l\'ajout : %s', e)
+        if exclues:
+            journal.info('%d sous-dossier(s) exclu(s) dès l\'ajout', len(exclues))
         self._nb_dossiers = len(self.base.dossiers())
         ix = self.indexeur
         if ix is not None:
             ix.relancer()
-        return {'dossier': self._dossier_public(d), 'remplaces': d.get('remplaces') or []}
+        return {'dossier': self._dossier_public(self.base.dossier(d['id']) or d),
+                'remplaces': d.get('remplaces') or [], 'exclus': exclues}
 
-    def choisir_dossier(self):
+    def examiner_dossier(self, chemin):
+        """Avant d'ajouter un dossier (assistant) : ses plus gros sous-dossiers et leur nombre de photos, comptés en
+        ESTIMATION_S secondes au plus ; captures et fonds d'écran décochés d'office, avec la raison."""
+        self._chemin_recu(chemin)
+        try:
+            p = self.base.verifier_dossier(chemin)
+        except DossierRefuse as e:
+            raise Refus(sans_jargon(str(e)), 409)
+        except OSError:
+            raise Refus('Ce dossier est inaccessible.', 409)
+        try:
+            ex = examiner_dossier(p, limite_s=ESTIMATION_S)
+        except OSError:
+            raise Refus('Ce dossier est inaccessible.', 409)
+        sous = [{'chemin': s['chemin'], 'nom': s['nom'], 'photos': s['photos'], 'coche': not s['nature'],
+                 'raison': RAISONS_SOUS_DOSSIER.get(s['nature'])} for s in ex['sous_dossiers']]
+        return {'chemin': p, 'nom': os.path.basename(p.rstrip('\\/')) or p, 'total': ex['total'],
+                'complet': ex['complet'], 'sous_dossiers': sous}
+
+    def choisir_dossier(self, examiner=False):
+        """Fenêtre « Choisir un dossier ». examiner=True (assistant) : renvoie seulement le dossier choisi, que la
+        page examine puis ajoute ; sinon il est ajouté tout de suite (comme en 0.2.0)."""
         chemin = self.choix_dossier.demander(initial=dossier_images())
         if not chemin:
             return {'annule': True}
+        if examiner:
+            try:
+                return {'annule': False, 'chemin': self.base.verifier_dossier(self._chemin_recu(chemin))}
+            except DossierRefuse as e:
+                raise Refus(sans_jargon(str(e)), 409)
+            except OSError:
+                raise Refus('Ce dossier est inaccessible.', 409)
         return self.ajouter_dossier(chemin)
+
+    # ------------------------------------------------ sous-dossiers exclus
+
+    def _dossier_suivi(self, dossier_id):
+        d = self.base.dossier(dossier_id)
+        if d is None:
+            raise Refus('Ce dossier ne fait pas partie de MyPhotos.', 404)
+        return d
+
+    def exclure(self, dossier_id, chemin):
+        """Exclut un sous-dossier : ses photos sont oubliées tout de suite, jamais supprimées du disque."""
+        self._dossier_suivi(dossier_id)
+        self._chemin_recu(chemin)
+        try:
+            r = self.base.ajouter_exclusion(dossier_id, chemin)
+        except DossierRefuse as e:
+            raise Refus(sans_jargon(str(e)), 409)
+        except OSError:
+            raise Refus('Ce dossier est inaccessible.', 409)
+        journal.info('sous-dossier exclu : %s (%d photos oubliées)', r['chemin'], r['photos'])
+        return {'annule': False, 'exclusion': {'id': r['id'], 'chemin': r['chemin'], 'dossier_id': dossier_id},
+                'photos': r['photos'], 'remplacees': r['remplacees']}
+
+    def choisir_exclusion(self, dossier_id):
+        """« Exclure un sous-dossier… » : fenêtre « Choisir un dossier » ouverte DANS le dossier suivi."""
+        d = self._dossier_suivi(dossier_id)
+        try:
+            present = os.path.isdir(chemin_systeme(d['chemin']))
+        except (OSError, ValueError):
+            present = False
+        if not present:
+            raise Refus('Ce dossier est inaccessible pour le moment (disque débranché ?) : réessayez quand il sera '
+                        'de nouveau là.', 409)
+        chemin = self.choix_dossier.demander(initial=d['chemin'], titre='Choisissez le sous-dossier à exclure')
+        if not chemin:
+            return {'annule': True}
+        return self.exclure(dossier_id, chemin)
+
+    def ne_plus_exclure(self, exclusion_id):
+        """« Ne plus exclure » : un tour de ce dossier retrouve les photos du sous-dossier."""
+        r = self.base.retirer_exclusion(exclusion_id)
+        if r is None:
+            raise Refus('Ce sous-dossier n\'est plus exclu.', 404)
+        journal.info('sous-dossier de nouveau suivi : %s', r['chemin'])
+        ix = self.indexeur
+        if ix is not None:
+            ix.reprendre()
+            ix.relancer(dossiers=[r['dossier_id']])
+        return r
+
+    # ------------------------------------------------ actualiser
+
+    def actualiser(self):
+        """Bouton « Actualiser » : refait tout de suite le tour de tous les dossiers (nouvelles photos ajoutées puis
+        analysées, photos supprimées oubliées, dossiers injoignables gardés). Un seul tour à la fois : un second clic
+        pendant le premier ne relance rien. La recherche n'est jamais bloquée (l'inventaire tourne dans le fil de
+        l'indexeur). Suivi : /api/etat, champ « actualisation »."""
+        ix = self.indexeur
+        if ix is None:
+            raise Refus('L\'actualisation sera possible dès que le moteur de reconnaissance sera installé.', 409)
+        with self.verrou:
+            a = self._actualisation
+            if a is not None and a['indexeur'] is ix:
+                e = self.etat_actualisation()
+                if e and e['en_cours']:
+                    return {'deja': True, 'actualisation': e}
+            ix.reprendre()                       # demandé par l'utilisateur : une pause est levée
+            n = ix.relancer()
+            self._actualisation = {'numero': n, 'indexeur': ix, 'debut': maintenant()}
+        journal.info('actualisation demandée')
+        return {'deja': False, 'actualisation': self.etat_actualisation()}
+
+    def etat_actualisation(self, etat_indexeur=None):
+        """{numero, en_cours, nouvelles, retirees, injoignables, message} de la dernière actualisation, ou None."""
+        a = self._actualisation
+        ix = self.indexeur
+        if a is None or ix is None or a['indexeur'] is not ix:
+            return None
+        e = etat_indexeur if etat_indexeur is not None else ix.etat()
+        r = {'numero': a['numero'], 'en_cours': False, 'nouvelles': None, 'retirees': None, 'injoignables': [],
+             'message': None}
+        b = e.get('bilan')
+        if e.get('inventaire_fait', 0) >= a['numero'] and b:
+            r.update(nouvelles=b['nouvelles'], retirees=b['retirees'], injoignables=list(b['injoignables']),
+                     message=message_actualisation(b))
+        elif not ix.actif or (e.get('phase') == 'erreur'
+                              and e.get('inventaire_en_cours', a['numero']) >= a['numero']):
+            # Erreur du passage qui répondait à CETTE demande (pas d'un passage plus ancien), ou indexeur arrêté.
+            r['message'] = sans_jargon(e.get('message')) or 'L\'actualisation n\'a pas pu se faire.'
+        else:
+            r['en_cours'] = True
+            m = e.get('dossier_courant')
+            r['message'] = 'Actualisation…' + (f' Recherche des photos dans « {m} »' if m else '') + (
+                f' ({_nombre_fr(e["trouvees"])} trouvées)' if e.get('trouvees') else '')
+        return r
 
     def retirer_dossier(self, dossier_id):
         r = self.base.retirer_dossier(dossier_id)
@@ -1932,7 +2179,7 @@ class Application:
 
     def etat(self):
         ix = self.indexeur
-        analyse = None
+        analyse = actualisation = None
         if ix is not None:
             try:
                 e = ix.etat()
@@ -1941,6 +2188,7 @@ class Application:
                 analyse['message'] = sans_jargon(e.get('message'))
                 analyse['eta_texte'] = materiel.formater_duree(e.get('eta_s')) if e.get('eta_s') else None
                 analyse['active'] = e.get('phase') in ('inventaire', 'analyse', 'pause')
+                actualisation = self.etat_actualisation(e)
             except Exception:
                 journal.exception('état de l\'analyse')
         photos = self.base.compter()
@@ -1953,6 +2201,12 @@ class Application:
         generation = self.base.generation()
         return {
             'nom': NOM, 'version': config.VERSION,
+            # Fenêtre de MyPhotos (« fenetre », « edge ») ou page du navigateur (« navigateur ») : voir fenetre.py.
+            'mode': self.mode,
+            # Raccourci sur le Bureau et dans le menu Démarrer : pour l'exécutable seulement.
+            'raccourci': raccourci.possible(),
+            # Empreinte du compte Windows (pas le SID) : une relance depuis un autre compte n'ouvre pas cette MyPhotos.
+            'compte': fenetre.identite_compte(),
             'assistant': self.base.meta_get('assistant'),
             'moteur': None if m is None else {
                 'cle': m['cle'], 'nom': modele.info(m['cle']).get('nom') or m['cle'],
@@ -1963,6 +2217,8 @@ class Application:
             # Le moteur se charge (quelques secondes après le lancement) : la recherche attend, sans erreur.
             'preparation': self.en_preparation(),
             'analyse': analyse,
+            # Bouton « Actualiser » : tour en cours, puis son bilan (« 3 nouvelles photos, 5 012 photos retirées »).
+            'actualisation': actualisation,
             'photos': photos,
             'nb_dossiers': self._nb_dossiers,
             'recherche_prete': self.recherche is not None and pret,
@@ -2044,8 +2300,9 @@ class Application:
                 'taille': p['taille'], 'disponible': p['disponible'], 'miniature': p['miniature'],
                 'analysee': p['analysee']}
 
-    def fichier_photo(self, pid):
-        """(fiche, chemin habituel, chemin système, extension) d'une photo connue, qui est bien une image."""
+    def fichier_photo(self, pid, oublier=False):
+        """(fiche, chemin habituel, chemin système, extension) d'une photo connue, qui est bien une image.
+        oublier=True : si le fichier a disparu alors que son dossier répond, la photo est oubliée (Refus 410)."""
         p = self.base.photo(pid)
         if p is None:
             raise Refus('Cette photo est introuvable.', 404)
@@ -2055,11 +2312,57 @@ class Application:
             raise Refus('Ce fichier n\'est pas une photo.', 403)
         systeme = chemin_systeme(chemin)
         if not os.path.isfile(systeme):
+            if oublier and self._oublier_si_partie(p):
+                raise Refus(PHOTO_RETIREE, 410)
             raise Refus(PHOTO_ABSENTE, 404)
         return p, chemin_affiche(chemin), systeme, ext
 
+    @staticmethod
+    def photo_partie(p):
+        """Vrai si le fichier de cette photo n'existe plus ALORS QUE son dossier suivi répond : elle a vraiment été
+        supprimée ou déplacée hors de MyPhotos. Faux si elle est là, ou si on ne peut pas savoir (disque débranché,
+        réseau coupé, dossier vide comme un partage monté sans son disque, accès refusé) : rien n'est alors oublié."""
+        dossier = p.get('dossier')
+        if not dossier:
+            return False
+        try:
+            os.stat(chemin_systeme(p['chemin']))
+            return False                         # le fichier est là
+        except FileNotFoundError:
+            pass                                 # fichier ou dossier introuvable (ERROR_FILE/PATH_NOT_FOUND)
+        except (OSError, ValueError):
+            return False                         # accès refusé, réseau, disque pas prêt… : on ne sait pas
+        try:
+            with os.scandir(chemin_systeme(dossier)) as it:
+                return next(it, None) is not None
+        except OSError:
+            return False
+
+    def _oublier_si_partie(self, p):
+        if not self.photo_partie(p):
+            return False
+        self.base.oublier_photos([p['id']])
+        journal.info('photo n° %d disparue du disque : oubliée', p['id'])
+        return True
+
+    def verifier_photo(self, pid):
+        """Visionneuse : la photo d'origine n'a pas pu s'afficher. {etat, message} : 'presente' (le fichier est là,
+        mais ne s'affiche pas), 'retiree' (disparue alors que son dossier répond : oubliée à l'instant), 'injoignable'
+        (disque débranché… : rien n'est oublié) ou 'inconnue' (plus dans MyPhotos)."""
+        p = self.base.photo(pid)
+        if p is None:
+            return {'etat': 'inconnue', 'message': INTROUVABLE}
+        try:
+            if os.path.isfile(chemin_systeme(p['chemin'])):
+                return {'etat': 'presente', 'message': None}
+        except (OSError, ValueError):
+            pass
+        if self._oublier_si_partie(p):
+            return {'etat': 'retiree', 'message': PHOTO_RETIREE}
+        return {'etat': 'injoignable', 'message': PHOTO_ABSENTE}
+
     def ouvrir(self, pid):
-        _, chemin, systeme, _ = self.fichier_photo(pid)
+        _, chemin, systeme, _ = self.fichier_photo(pid, oublier=True)
         try:
             # Jamais un chemin que Windows lirait autrement (dossier « Vacances. ») : il ouvrirait une autre photo.
             os.startfile(chemin_pour_windows(chemin) or systeme)
@@ -2071,7 +2374,7 @@ class Application:
         return {'ok': True}
 
     def montrer(self, pid):
-        _, chemin, _, _ = self.fichier_photo(pid)
+        _, chemin, _, _ = self.fichier_photo(pid, oublier=True)
         cible = chemin_pour_windows(chemin) or (chemin if compris_tel_quel(chemin) else None)
         if cible is None:
             raise Refus(CHEMIN_AMBIGU, 409)
@@ -2129,6 +2432,8 @@ class Application:
                 refusees.append({'id': pid, 'raison': INTROUVABLE})
                 continue
             raison, systeme, st = self._fichier_present(p)
+            if raison == PHOTO_ABSENTE and self._oublier_si_partie(p):
+                raison = PHOTO_RETIREE
             if raison:
                 refusees.append({'id': pid, 'raison': raison})
                 continue
@@ -2147,7 +2452,7 @@ class Application:
             else:
                 chemins.append(w)
         if not chemins:
-            raise Refus(refusees[0]['raison'] if refusees else 'Aucune photo à copier.', 409)
+            raise Refus(refusees[0]['raison'] if refusees else 'Aucune photo à copier.', _statut_refus(refusees))
         try:
             self.presse_papiers.copier(chemins)
         except PressePapiersOccupe as e:
@@ -2158,7 +2463,8 @@ class Application:
             journal.warning('presse-papiers : %r', e)
             raise Refus('Windows n\'a pas pu copier ces photos. Réessayez dans un instant.', 409)
         journal.info('%d photo(s) copiée(s) dans le presse-papiers', len(chemins))
-        return {'copiees': len(chemins), 'refusees': refusees[:REFUS_MAX], 'nb_refusees': len(refusees)}
+        return {'copiees': len(chemins), 'refusees': refusees[:REFUS_MAX], 'nb_refusees': len(refusees),
+                'retirees': _retirees(refusees)}
 
     def copier_vers(self, ids):
         """Demande un dossier (fenêtre de Windows, ouverte ici et non par la page), puis y copie les photos en
@@ -2168,7 +2474,7 @@ class Application:
                 raise Refus('Une copie est déjà en cours : attendez qu\'elle se termine, ou annulez-la.', 409)
         fichiers, refusees = self._a_copier(ids)
         if not fichiers:
-            raise Refus(refusees[0]['raison'] if refusees else 'Aucune photo à copier.', 409)
+            raise Refus(refusees[0]['raison'] if refusees else 'Aucune photo à copier.', _statut_refus(refusees))
         initial = self.base.meta_get('copie_dossier')
         try:
             if not (isinstance(initial, str) and os.path.isdir(chemin_systeme(initial))):
@@ -2184,7 +2490,7 @@ class Application:
             brut = chemin_affiche(chemin)
             if len(brut) == 2 and brut[1] == ':':
                 brut += '\\'
-            if cle_chemin(os.path.normpath(brut)) != cle_chemin(dossier):
+            if cle_chemin(os.path.normpath(brut)) != cle_chemin(dossier) or not compris_tel_quel(dossier):
                 raise Refus(DESTINATION_AMBIGUE, 409)
             if not os.path.isdir(chemin_systeme(dossier)):
                 raise Refus('Ce dossier est introuvable.', 409)
@@ -2206,7 +2512,19 @@ class Application:
             self._copie = c
             c.fil.start()
         journal.info('copie n° %d : %d photo(s) vers un dossier choisi', c.numero, len(fichiers))
-        return {'annule': False, 'copie': c.resume()}
+        return {'annule': False, 'copie': c.resume(), 'retirees': _retirees(refusees)}
+
+    def creer_raccourcis(self):
+        """MyPhotos.lnk sur le Bureau et dans le menu Démarrer, vers l'exécutable en cours (raccourci.py)."""
+        try:
+            crees = raccourci.creer_raccourcis()
+        except raccourci.RaccourciRefuse as e:
+            raise Refus(str(e), 409)
+        except OSError as e:
+            journal.warning('raccourcis impossibles : %r', e)
+            raise Refus('Windows n\'a pas pu créer le raccourci. Réessayez dans un instant.', 409)
+        journal.info('raccourcis créés : %s', ', '.join(crees))
+        return {'crees': crees}
 
     def copie(self):
         return self._copie.resume() if self._copie is not None else None
@@ -2353,6 +2671,16 @@ class Application:
             return False
         try:
             return ix.etat().get('phase') in ('inventaire', 'analyse')
+        except Exception:
+            return False
+
+    def _analyse_en_cours(self):
+        """Des photos sont en cours d'analyse (phase « analyse » : pas l'inventaire, pas la pause)."""
+        ix = self.indexeur
+        if ix is None:
+            return False
+        try:
+            return ix.etat().get('phase') == 'analyse'
         except Exception:
             return False
 
@@ -2786,6 +3114,12 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 ids.append(i)
         return ids
 
+    def _identifiant_dossier(self, valeur):
+        try:
+            return self._identifiant(valeur)
+        except Refus:
+            raise Refus('Ce dossier ne fait pas partie de MyPhotos.', 404)
+
     @staticmethod
     def _entier(params, nom, defaut, mini, maxi):
         v = (params.get(nom) or [''])[-1]
@@ -2834,9 +3168,24 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         elif chemin == '/api/moteur/choisir':
             r = app.choisir_moteur(corps.get('cle'), corps.get('vision'), corps.get('materiel'))
         elif chemin == '/api/dossiers/choisir':
-            r = app.choisir_dossier()
+            r = app.choisir_dossier(examiner=corps.get('examiner') is True)
+        elif chemin == '/api/dossiers/examiner':
+            r = app.examiner_dossier(corps.get('chemin'))
         elif chemin == '/api/dossiers/ajouter':
-            r = app.ajouter_dossier(corps.get('chemin'))
+            r = app.ajouter_dossier(corps.get('chemin'), corps.get('exclus'))
+        elif chemin == '/api/exclusions/choisir':
+            r = app.choisir_exclusion(self._identifiant_dossier(corps.get('dossier')))
+        elif chemin == '/api/exclusions/ajouter':
+            r = app.exclure(self._identifiant_dossier(corps.get('dossier')), corps.get('chemin'))
+        elif chemin == '/api/exclusions/retirer':
+            try:
+                r = app.ne_plus_exclure(self._identifiant(corps.get('id')))
+            except Refus:
+                raise Refus('Ce sous-dossier n\'est plus exclu.', 404)
+        elif chemin == '/api/actualiser':
+            r = app.actualiser()
+        elif chemin == '/api/photo/verifier':
+            r = app.verifier_photo(self._identifiant(corps.get('id')))
         elif chemin == '/api/dossiers/retirer':
             try:
                 r = app.retirer_dossier(self._identifiant(corps.get('id')))
@@ -2870,6 +3219,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 raise Refus('Étape inconnue.', 400)
             app.base.meta_set('assistant', str(etape))
             r = {'ok': True}
+        elif chemin == '/api/raccourci':
+            r = app.creer_raccourcis()
         elif chemin == '/api/quitter':
             journal.info('arrêt demandé par la page')
             app.arreter()
@@ -2945,8 +3296,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- lancement
 
-def deja_lance(port):
-    """Vrai si MyPhotos répond déjà sur ce port."""
+def etat_instance(port):
+    """/api/etat de la MyPhotos qui répond déjà sur ce port (version, mode, arret…), ou None."""
     try:
         c = http.client.HTTPConnection(config.HOTE, port, timeout=3)
         try:
@@ -2955,25 +3306,51 @@ def deja_lance(port):
             d = json.loads(r.read() or b'{}')
         finally:
             c.close()
-        return r.status == 200 and isinstance(d, dict) and d.get('nom') == NOM
+        return d if r.status == 200 and isinstance(d, dict) and d.get('nom') == NOM else None
     except Exception:
-        return False
+        return None
+
+
+def deja_lance(port):
+    """Vrai si MyPhotos répond déjà sur ce port."""
+    return etat_instance(port) is not None
 
 
 def main(argv=None):
+    fenetre.tenir_mutex()                        # le plus tôt possible : l'installateur sait que MyPhotos tourne
+    argv = sys.argv[1:] if argv is None else list(argv)
     configurer_journal()
+    debug = fenetre.debogage(argv=argv)
+    retirees = fenetre.nettoyer_environnement(debug=debug)
+    if retirees:
+        journal.info('variables retirées de l\'environnement : %s', ', '.join(sorted(retirees)))
+    demande = fenetre.mode_demande(argv, os.environ, SANS_PAGE)
     adresse = f'http://{config.HOTE}:{config.PORT}/'
-    try:
-        serveur = Serveur((config.HOTE, config.PORT), Gestionnaire)
-    except OSError as e:
-        if deja_lance(config.PORT):
-            journal.info('MyPhotos est déjà lancé : ouverture de la page')
-            if not SANS_PAGE:
-                ouvrir_page(adresse)
-            return 0
-        alerter(f'MyPhotos ne peut pas démarrer : le port {config.PORT} est déjà utilisé par un autre programme '
-                f'({e.__class__.__name__}).')
-        return 1
+    serveur = None
+    debut = time.monotonic()
+    patience = debut + ATTENTE_ARRET_S
+    patience_port = debut + PORT_LIBERE_S
+    while serveur is None:
+        try:
+            serveur = Serveur((config.HOTE, config.PORT), Gestionnaire)
+        except OSError as e:
+            etat = etat_instance(config.PORT)
+            if etat is None:
+                if time.monotonic() < patience_port:
+                    time.sleep(0.5)              # une MyPhotos qui s'arrête garde le port un instant sans répondre
+                    continue
+                alerter(f'MyPhotos ne peut pas démarrer : le port {config.PORT} est déjà utilisé par un autre '
+                        f'programme ({e.__class__.__name__}).')
+                return 1
+            if etat.get('arret') and time.monotonic() < patience:
+                time.sleep(0.5)                  # elle s'arrête (fenêtre fermée à l'instant) : on prend sa place
+                continue
+            code = fenetre.relancer(etat, adresse, config.PORT, demande, ouvrir_page, informer,
+                                    etat_actuel=lambda: etat_instance(config.PORT))
+            if code is None and time.monotonic() < patience:
+                time.sleep(0.5)                  # elle s'arrêtait en fait : on attend qu'elle libère le port
+                continue
+            return code or 0
     journal.info('%s %s : démarrage sur %s (données : %s)', NOM, config.VERSION, adresse, config.DONNEES)
     try:
         app = Application(serveur)
@@ -2986,6 +3363,9 @@ def main(argv=None):
     serveur.app = app
     if sys.stdout is not None and not config.GELE:
         print(f'{NOM} : {adresse}  (Ctrl+C pour arrêter)', flush=True)
+    if demande == fenetre.FENETRE:
+        # Sa propre fenêtre (replis : Edge, puis le navigateur) ; le serveur tourne dans un fil.
+        return fenetre.Hote(app, serveur, adresse, debug).executer()
     if not SANS_PAGE:
         ouvrir_page(adresse)
     app.serveur_pret()                           # le moteur se chargera après la première réponse à la page
@@ -2994,7 +3374,7 @@ def main(argv=None):
     except KeyboardInterrupt:
         journal.info('arrêt demandé (Ctrl+C)')
     finally:
+        serveur.server_close()                   # port libéré d'abord : une relance n'attend pas la fin du moteur
         app.fermer()
-        serveur.server_close()
         journal.info('%s arrêté', NOM)
     return 0

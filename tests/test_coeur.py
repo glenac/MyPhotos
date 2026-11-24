@@ -145,13 +145,49 @@ def attendre_que(condition, delai=30.0):
 class TestChemins(unittest.TestCase):
 
     def test_normaliser(self):
-        self.assertEqual(normaliser_chemin('e:/Photos/Vacances/'), 'E:\\Photos\\Vacances')
-        self.assertEqual(normaliser_chemin('  "E:\\Photos"  '), 'E:\\Photos')
-        self.assertEqual(normaliser_chemin('e:'), 'E:\\')
-        self.assertEqual(normaliser_chemin('E:\\Photos\\..\\Albums'), 'E:\\Albums')
-        self.assertEqual(normaliser_chemin('\\\\?\\E:\\Photos'), 'E:\\Photos')
-        with self.assertRaises(DossierRefuse):
-            normaliser_chemin('   ')
+        # Textuel seulement : aucun disque consulté (jamais le vrai E: de cet ordinateur).
+        with mock.patch('myphotos.base.os.path.isdir', return_value=False):
+            self.assertEqual(normaliser_chemin('e:/Photos/Vacances/'), 'E:\\Photos\\Vacances')
+            self.assertEqual(normaliser_chemin('  "E:\\Photos"  '), 'E:\\Photos')
+            self.assertEqual(normaliser_chemin('e:'), 'E:\\')
+            self.assertEqual(normaliser_chemin('E:\\Photos\\..\\Albums'), 'E:\\Albums')
+            self.assertEqual(normaliser_chemin('\\\\?\\E:\\Photos'), 'E:\\Photos')
+            self.assertEqual(normaliser_chemin('E:\\Photos.'), 'E:\\Photos')      # saisi, inexistant : nettoyé
+            with self.assertRaises(DossierRefuse):
+                normaliser_chemin('   ')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_point_ou_espace_final(self):
+        """« Vacances. » (point final) et « Espace  » (espace final) choisis dans la fenêtre : gardés tels quels, et
+        jamais confondus avec « Vacances » ; une base qui suit déjà « Vacances » ne perd ni ne double rien."""
+        tmp = Path(tempfile.mkdtemp(prefix='myphotos-points-'))
+        try:
+            for nom in ('Vacances', 'Vacances.', 'Seul.', 'Espace ', 'Album.'):
+                os.mkdir(chemin_systeme(str(tmp / nom)))
+            os.mkdir(chemin_systeme(str(tmp / 'Album.') + '\\Sous'))
+            for nom in ('Vacances.', 'Seul.', 'Espace '):
+                self.assertEqual(normaliser_chemin(str(tmp) + '\\' + nom), str(tmp) + '\\' + nom)
+            self.assertEqual(normaliser_chemin(str(tmp) + '\\Album.\\Sous\\'), str(tmp) + '\\Album.\\Sous')
+            self.assertEqual(normaliser_chemin(str(tmp).replace('\\', '/') + '/Vacances./'), str(tmp) + '\\Vacances.')
+            b = Base(tmp / 'donnees' / 'index.db', tmp / 'donnees' / 'miniatures.db')
+            try:
+                d1 = b.ajouter_dossier(str(tmp / 'Vacances'))
+                with self.assertRaises(DossierRefuse):
+                    b.ajouter_dossier(str(tmp / 'Vacances') + '\\')            # déjà suivi : pas de doublon
+                d2 = b.ajouter_dossier(str(tmp) + '\\Vacances.')
+                self.assertEqual(d2['chemin'], str(tmp) + '\\Vacances.')
+                d3 = b.ajouter_dossier(str(tmp) + '\\Seul.')                   # avant : « introuvable »
+                self.assertEqual({d['chemin'] for d in b.dossiers()},
+                                 {d1['chemin'], d2['chemin'], d3['chemin']})
+            finally:
+                b.fermer()
+        finally:
+            for nom in ('Album.\\Sous', 'Album.', 'Vacances.', 'Seul.', 'Espace '):
+                try:
+                    os.rmdir(chemin_systeme(str(tmp) + '\\' + nom))
+                except OSError:
+                    pass
+            ie.nettoyer(tmp)
 
     def test_prefixe_chemins_longs(self):
         self.assertEqual(chemin_systeme('C:\\a\\b.jpg'), '\\\\?\\C:\\a\\b.jpg')
@@ -863,9 +899,9 @@ class TestRobustesse(EssaiAvecImages):
         inventaires = []
         vrai = ix._inventaire
 
-        def compte():
+        def compte(*args):
             inventaires.append(1)
-            vrai()
+            vrai(*args)
 
         ix._inventaire = compte
         ix.demarrer()
@@ -1087,3 +1123,255 @@ class TestMoteurReel(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+# ---------------------------------------------------------------- 0.3.0 : actualiser, exclure, assistant
+
+class TestExclusions(EssaiAvecImages):
+    """Sous-dossiers exclus : photos oubliées tout de suite (base, miniatures, doublons), jamais supprimées du disque,
+    plus jamais parcourues ; « Ne plus exclure » les retrouve."""
+
+    def captures(self, n=3, nom='Captures d\u2019écran'):
+        dossier = self.photos / nom
+        for i in range(n):
+            ie.jpeg(dossier / f'capture{i}.jpg', (200, 150), ie.BLEU)
+        return dossier
+
+    def sous(self, dossier):
+        k = cle_chemin(str(dossier))
+        return [pid for pid, ch in self.base._cnx().execute('SELECT id, chemin FROM photos')
+                if cle_chemin(ch).startswith(k + os.sep)]
+
+    def test_exclure_puis_ne_plus_exclure(self):
+        from myphotos import doublons
+        captures = self.captures()
+        ix, _ = self.indexer()
+        total = self.base.compter()['total']
+        oubliees = self.sous(captures)
+        self.assertEqual(len(oubliees), 3)
+        d = self.base.dossiers()[0]
+        # Empreintes de doublons déjà calculées pour ces photos : effacées avec elles.
+        doublons.Doublons(self.base, 'base').fermer()
+        with self.base._transaction() as c:
+            c.executemany('INSERT INTO doublons_empreintes(photo_id, taille, modifie) VALUES (?, 1, 1)',
+                          [(i,) for i in oubliees])
+            c.execute('INSERT INTO doublons_paires(a, b, mesure) VALUES (?, ?, ?)', (oubliees[0], oubliees[1], 'null'))
+        generation = self.base.generation()
+
+        r = self.base.ajouter_exclusion(d['id'], str(captures))
+        self.assertEqual((r['photos'], r['chemin'], r['dossier']), (3, str(captures), d['chemin']))
+        self.assertEqual(self.sous(captures), [])
+        self.assertEqual(self.base.compter()['total'], total - 3)
+        self.assertGreater(self.base.generation(), generation)
+        c = self.base._cnx()
+        for pid in oubliees:
+            self.assertIsNone(self.base.miniature(pid))
+        self.assertEqual(c.execute('SELECT COUNT(*) FROM doublons_empreintes').fetchone()[0], 0)
+        self.assertEqual(c.execute('SELECT COUNT(*) FROM doublons_paires').fetchone()[0], 0)
+        self.assertEqual(len(list(captures.iterdir())), 3)                # rien n'est supprimé du disque
+        self.assertEqual([x['chemin'] for x in self.base.exclusions(d['id'])], [str(captures)])
+
+        # L'inventaire ne le parcourt plus, et ne compte pas ses photos comme retirées une seconde fois.
+        n = ix.relancer()
+        self.assertTrue(ix.attendre(60))
+        e = ix.etat()
+        self.assertGreaterEqual(e['inventaire_fait'], n)
+        self.assertEqual((e['bilan']['nouvelles'], e['bilan']['retirees']), (0, 0))
+        self.assertEqual(self.sous(captures), [])
+        self.assertNotIn(cle_chemin(str(captures)),
+                         {cle_chemin(os.path.dirname(ch)) for ch, *_ in Parcours(str(self.photos),
+                                                                                  exclus={cle_chemin(str(captures))})})
+
+        # « Ne plus exclure » : un tour de CE dossier retrouve les photos (de nouveau à analyser).
+        retiree = self.base.retirer_exclusion(r['id'])
+        self.assertEqual((retiree['dossier_id'], retiree['chemin']), (d['id'], str(captures)))
+        self.assertIsNone(self.base.retirer_exclusion(r['id']))
+        self.assertEqual(self.base.exclusions(), [])
+        n = ix.relancer(dossiers=[d['id']])
+        self.assertTrue(ix.attendre(60))
+        e = ix.etat()
+        self.assertGreaterEqual(e['inventaire_fait'], n)
+        self.assertEqual((e['bilan']['nouvelles'], e['bilan']['dossiers'], e['bilan']['tous']), (3, 1, False))
+        self.assertEqual(len(self.sous(captures)), 3)
+        self.assertEqual(self.base.compter()['total'], total)
+
+    def test_refus_et_regroupements(self):
+        captures = self.captures(1)
+        (captures / 'Anciennes').mkdir()
+        d = self.base.ajouter_dossier(self.photos)
+        autre = self.tmp / 'ailleurs'
+        autre.mkdir()
+        for chemin, attendu in ((autre, 'n\'est pas dans'), (self.photos, 'lui-même'),
+                                (self.tmp / 'absent', 'introuvable')):
+            with self.assertRaises(DossierRefuse) as e:
+                self.base.ajouter_exclusion(d['id'], str(chemin))
+            self.assertIn(attendu, str(e.exception))
+        with self.assertRaises(DossierRefuse):
+            self.base.ajouter_exclusion(d['id'] + 99, str(captures))
+        # Un sous-dossier, puis celui qui le contient : il le remplace.
+        a = self.base.ajouter_exclusion(d['id'], str(captures / 'Anciennes'))
+        b = self.base.ajouter_exclusion(d['id'], str(captures).upper())       # même dossier, autre casse
+        self.assertEqual((cle_chemin(b['chemin']), b['remplacees']), (cle_chemin(str(captures)), [a['chemin']]))
+        for chemin in (captures, captures / 'Anciennes'):
+            with self.assertRaises(DossierRefuse) as e:
+                self.base.ajouter_exclusion(d['id'], str(chemin))
+            self.assertIn('déjà exclu', str(e.exception))
+        # Un dossier suivi ne peut pas se trouver dans un sous-dossier exclu : refus expliqué.
+        with self.assertRaises(DossierRefuse) as e:
+            self.base.ajouter_dossier(str(captures / 'Anciennes'))
+        self.assertIn('Ne plus exclure', str(e.exception))
+        # Le dossier parent est ajouté : il absorbe le dossier suivi ET garde ses exclusions.
+        p = self.base.ajouter_dossier(self.tmp)
+        self.assertEqual(p['remplaces'], [d['chemin']])
+        self.assertEqual([(x['dossier_id'], x['chemin']) for x in self.base.exclusions()], [(p['id'], str(captures))])
+        # Retirer le dossier oublie aussi ses exclusions.
+        self.base.retirer_dossier(p['id'])
+        self.assertEqual(self.base.exclusions(), [])
+
+    def test_inventaire_en_route(self):
+        """Une exclusion posée pendant un inventaire : les photos qu'il trouve ensuite dans ce sous-dossier ne sont
+        pas ajoutées (ajouter_photos filtre)."""
+        captures = self.captures(2)
+        d = self.base.ajouter_dossier(self.photos)
+        self.base.ajouter_exclusion(d['id'], str(captures))
+        lignes = [(str(p), 1, 1, None) for p in captures.iterdir()] + [(str(self.photos / 'neuve.jpg'), 1, 1, None)]
+        self.assertEqual(self.base.ajouter_photos(d['id'], lignes), 1)
+
+    @unittest.skipUnless(os.name == 'nt', 'noms finissant par un point : Windows')
+    def test_point_final(self):
+        """« Album. » exclu : « Album » (un autre dossier) garde ses photos."""
+        avec = str(self.photos) + '\\Album.'
+        os.mkdir(chemin_systeme(avec))
+        ie.jpeg(avec + '\\a.jpg', (200, 150))
+        ie.jpeg(self.photos / 'Album' / 'b.jpg', (200, 150))
+        try:
+            self.indexer()
+            d = self.base.dossiers()[0]
+            r = self.base.ajouter_exclusion(d['id'], avec.replace('\\', '/'))      # comme la fenêtre de tkinter
+            self.assertEqual((r['chemin'], r['photos']), (avec, 1))
+            noms = {chemin_affiche(ch) for (ch,) in self.base._cnx().execute('SELECT chemin FROM photos')}
+            self.assertIn(str(self.photos / 'Album' / 'b.jpg'), noms)
+            self.assertNotIn(avec + '\\a.jpg', noms)
+        finally:
+            for p in (avec + '\\a.jpg',):
+                try:
+                    os.remove(chemin_systeme(p))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(chemin_systeme(avec))
+            except OSError:
+                pass
+
+    def test_migration_base_0_2_0(self):
+        """Une base 0.2.0 (sans table exclusions) s'ouvre sans rien perdre ; la table est ajoutée."""
+        self.indexer()
+        avant = self.base.compter()
+        self.base.fermer()
+        c = sqlite3.connect(self.tmp / 'donnees' / 'index.db')
+        c.execute('DROP TABLE exclusions')
+        c.commit()
+        self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 1)
+        c.close()
+        self.base = Base(self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db')
+        self.indexeurs = []
+        self.assertEqual(self.base.compter(), avant)
+        self.assertEqual(self.base.exclusions(), [])
+        self.assertEqual(self.base._cnx().execute('PRAGMA user_version').fetchone()[0], 1)
+        d = self.base.dossiers()[0]
+        self.assertEqual(self.base.ajouter_exclusion(d['id'], str(self.photos / 'vacances'))['photos'], 4)
+
+
+class TestActualisation(EssaiAvecImages):
+    """Bouton « Actualiser » : un inventaire numéroté, avec son bilan (nouvelles, retirées, dossiers injoignables)."""
+
+    def test_nouvelles_et_disparues(self):
+        ix, _ = self.indexer()
+        total = self.base.compter()['total']
+        ie.jpeg(self.photos / 'neuves' / 'n1.jpg', (200, 150), ie.VERT)
+        ie.jpeg(self.photos / 'neuves' / 'n2.jpg', (200, 150), ie.BLEU)
+        os.replace(self.jeu['exif'], self.photos / 'deplacee.jpg')     # déplacée : ni nouvelle ni retirée
+        for p in (self.jeu['datetime'], self.jeu['gps'], self.jeu['absurde']):
+            p.unlink()
+        n = ix.relancer()
+        self.assertTrue(ix.attendre(60))
+        e = ix.etat()
+        self.assertEqual(e['inventaire_fait'], n)
+        b = e['bilan']
+        self.assertEqual((b['nouvelles'], b['retirees'], b['injoignables'], b['numero'], b['tous']),
+                         (2, 3, [], n, True))
+        self.assertEqual(self.base.compter()['total'], total - 1)
+        self.assertEqual(self.base.compter()['a_faire'], 0)                   # les nouvelles sont déjà analysées
+
+    def test_dossier_injoignable_garde(self):
+        ix, _ = self.indexer()
+        loin = self.tmp / 'cle-usb'
+        ie.jpeg(loin / 'u.jpg', (200, 150))
+        d2 = self.base.ajouter_dossier(loin)
+        self.relancer(ix)
+        self.assertEqual(self.base.dossier(d2['id'])['photos'], 1)
+        os.replace(loin, self.tmp / 'cle-usb-debranchee')                     # « disque débranché »
+        n = ix.relancer()
+        self.assertTrue(ix.attendre(60))
+        b = ix.etat()['bilan']
+        self.assertEqual((b['numero'], b['retirees'], b['injoignables']), (n, 0, [str(loin)]))
+        self.assertEqual(self.base.dossier(d2['id'])['photos'], 1)            # gardée
+        self.assertFalse(self.base.dossier(d2['id'])['disponible'])
+
+    def test_numeros(self):
+        ix, _ = self.indexeur()
+        self.assertEqual((ix.etat()['inventaire_fait'], ix.etat()['bilan']), (0, None))
+        self.assertEqual(ix.relancer(), 1)
+        self.assertEqual(ix.relancer(), 2)
+        self.assertTrue(ix.attendre(60))
+        self.assertEqual(ix.etat()['inventaire_fait'], 2)
+
+
+class TestExamen(unittest.TestCase):
+    """Assistant : plus gros sous-dossiers comptés, captures et fonds d'écran reconnus."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-examen-'))
+
+    def tearDown(self):
+        ie.nettoyer(self.tmp)
+
+    def fichiers(self, dossier, n):
+        dossier.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            (dossier / f'f{i:04d}.jpg').write_bytes(b'x')          # jamais ouverts : le nom suffit
+
+    def test_noms_reconnus(self):
+        for nom in ('Captures d\u2019écran', "Captures d'écran", 'Screenshots', 'screenshot', 'Captures', 'CAPTURE D ECRAN',
+                    'Screenshots 2023'):
+            self.assertEqual(indexation.nature_sous_dossier(nom), 'captures', nom)
+        for nom in ('Wallpapers', 'Fonds d’écran', "Fond d'écran", 'Fonds d’écran Windows', 'Bing Wallpaper',
+                    'Windows Spotlight', 'Arrière-plans', 'Wallpaper HD'):
+            self.assertEqual(indexation.nature_sous_dossier(nom), 'fonds', nom)
+        for nom in ('Vacances', 'Pellicule', 'Camera Roll', 'Images enregistrées', 'Capturer la lumière', 'Fondue', ''):
+            self.assertIsNone(indexation.nature_sous_dossier(nom), nom)
+
+    def test_comptage(self):
+        self.fichiers(self.tmp / 'Captures d\u2019écran', 5)
+        self.fichiers(self.tmp / 'Vacances', 3)
+        self.fichiers(self.tmp / 'Divers' / 'Wallpapers', 2)
+        self.fichiers(self.tmp / 'Divers', 1)
+        self.fichiers(self.tmp / 'Vide', 0)
+        self.fichiers(self.tmp, 1)
+        ex = indexation.examiner_dossier(str(self.tmp))
+        self.assertTrue(ex['complet'])
+        self.assertEqual(ex['total'], 12)
+        self.assertEqual([(s['nom'], s['photos'], s['nature']) for s in ex['sous_dossiers']],
+                         [('Captures d\u2019écran', 5, 'captures'), ('Divers', 3, None), ('Vacances', 3, None),
+                          (os.path.join('Divers', 'Wallpapers'), 2, 'fonds')])
+        self.assertEqual(ex['sous_dossiers'][3]['chemin'], str(self.tmp / 'Divers' / 'Wallpapers'))
+        ex = indexation.examiner_dossier(str(self.tmp), exclus={cle_chemin(str(self.tmp / 'Vacances'))})
+        self.assertNotIn('Vacances', [s['nom'] for s in ex['sous_dossiers']])
+
+    def test_comptage_borne(self):
+        self.fichiers(self.tmp / 'Gros', 600)
+        ex = indexation.examiner_dossier(str(self.tmp), limite_s=0)
+        self.assertFalse(ex['complet'])
+        self.assertEqual(ex['total'], 256)
+        with self.assertRaises(OSError):
+            indexation.examiner_dossier(str(self.tmp / 'absent'))

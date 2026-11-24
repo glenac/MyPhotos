@@ -16,6 +16,11 @@ Colonnes de photos :
 - erreur : pourquoi la photo n'est pas analysée ('trop petite', 'illisible : …') ;
 - vu : date à laquelle la photo a été trouvée pour la première fois ;
 - miniature : 1 si sa vignette est dans miniatures.db.
+
+Table exclusions (0.3.0) : sous-dossiers d'un dossier suivi que MyPhotos ne regarde pas (captures d'écran, fonds
+d'écran…). Rien n'est supprimé du disque : leurs photos sont seulement oubliées, et l'inventaire ne les parcourt plus.
+Table à part, créée à l'ouverture si elle manque : une base 0.2.0 est reprise sans perte (user_version reste 1 ; une
+0.2.0 rouverte sur une base 0.3.0 ignore simplement cette table).
 """
 import os
 import sqlite3
@@ -66,6 +71,16 @@ _SCHEMA_INDEX = (
     "WHERE modele IS NULL AND erreur IS NULL",
     "INSERT OR IGNORE INTO meta(cle, valeur) VALUES ('generation', 0)",
 )
+_SCHEMA_EXCLUSIONS = (
+    """CREATE TABLE IF NOT EXISTS exclusions (
+        id         INTEGER PRIMARY KEY,
+        dossier_id INTEGER NOT NULL,
+        chemin     TEXT NOT NULL UNIQUE,
+        ajoute     TEXT NOT NULL)""",
+    "CREATE INDEX IF NOT EXISTS exclusions_dossier ON exclusions(dossier_id)",
+)
+# Tables de doublons.py (créées par lui, dans index.db) : une photo oubliée y est effacée aussi.
+_TABLES_DOUBLONS = ('doublons_empreintes', 'doublons_paires')
 _SCHEMA_MINIATURES = (
     "CREATE TABLE IF NOT EXISTS mini.miniatures (id INTEGER PRIMARY KEY, jpeg BLOB NOT NULL)",
 )
@@ -158,18 +173,41 @@ def dedans(enfant, parent):
     return enfant != parent and enfant.startswith(prefixe)
 
 
+def _absolu(p):
+    """Vrai pour « E:\\… » ou « \\\\serveur\\partage… » (pas « E:dossier », relatif au dossier courant de E:)."""
+    lecteur, reste = os.path.splitdrive(p)
+    if not WINDOWS:
+        return os.path.isabs(p)
+    return bool(lecteur) and reste[:1] in ('\\', '/')
+
+
+def _lecteur_majuscule(p):
+    lecteur, reste = os.path.splitdrive(p)
+    return lecteur.upper() + reste if len(lecteur) == 2 and lecteur[1] == ':' else p
+
+
 def normaliser_chemin(chemin):
-    """Chemin absolu et propre : « e:\\Photos\\ », « "E:\\Photos" » et « E:/Photos » donnent « E:\\Photos »."""
-    p = chemin_affiche(os.fspath(chemin)).strip().strip('"').strip()
+    """Chemin absolu et propre : « e:\\Photos\\ », « "E:\\Photos" » et « E:/Photos » donnent « E:\\Photos ».
+
+    Un chemin absolu qui désigne TEL QUEL un dossier existant (celui de la fenêtre « Choisir un dossier ») est gardé
+    exactement, même s'il finit par un point ou une espace (« Vacances. » : un AUTRE dossier que « Vacances ») :
+    seulement os.path.normpath, purement textuel. Sinon (texte saisi), le chemin est nettoyé comme avant (espaces,
+    guillemets, puis os.path.abspath, qui retire aussi les points et espaces finaux)."""
+    brut = chemin_affiche(os.fspath(chemin))
+    if brut and _absolu(brut):
+        exact = os.path.normpath(brut)
+        try:
+            if os.path.isdir(chemin_systeme(exact)):
+                return _lecteur_majuscule(exact)
+        except (OSError, ValueError):
+            pass
+    p = brut.strip().strip('"').strip()
     if not p:
         raise DossierRefuse('Aucun dossier indiqué.')
     if WINDOWS and len(p) == 2 and p[1] == ':':
         p += '\\'                                     # « E: » = la racine du disque, pas son dossier courant
     p = os.path.normpath(os.path.abspath(os.path.expanduser(p)))
-    lecteur, reste = os.path.splitdrive(p)
-    if len(lecteur) == 2 and lecteur[1] == ':':
-        p = lecteur.upper() + reste
-    return p
+    return _lecteur_majuscule(p)
 
 
 def casse_reelle(chemin):
@@ -357,6 +395,17 @@ class Base:
                     raise
                 c.execute('COMMIT')
             # Migrations futures : « if version < 2: … » ici, dans une transaction.
+        # 0.3.0 : table des sous-dossiers exclus. Créée seulement si elle manque : sur une base à jour, aucune écriture
+        # (pas de verrou d'écriture demandé à chaque ouverture).
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'exclusions'").fetchone():
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                for sql in _SCHEMA_EXCLUSIONS:
+                    c.execute(sql)
+            except BaseException:
+                c.execute('ROLLBACK')
+                raise
+            c.execute('COMMIT')
 
     @staticmethod
     def _nouvelle_generation(c):
@@ -425,6 +474,24 @@ class Base:
         Renvoie le dossier (comme dossiers()) avec en plus 'remplaces' : chemins des dossiers absorbés.
         L'inventaire n'est pas lancé ici : appeler ensuite Indexeur.relancer().
         """
+        p = self.verifier_dossier(chemin)
+        k = cle_chemin(p)
+        with self._transaction() as c:
+            remplaces = self._place_du_dossier(c, k)
+            nid = c.execute('INSERT INTO dossiers(chemin, ajoute, disponible) VALUES (?, ?, 1)',
+                            (p, maintenant())).lastrowid
+            for did, _ in remplaces:
+                c.execute('UPDATE photos SET dossier_id = ? WHERE dossier_id = ?', (nid, did))
+                # Les sous-dossiers exclus d'un dossier absorbé restent exclus du nouveau.
+                c.execute('UPDATE exclusions SET dossier_id = ? WHERE dossier_id = ?', (nid, did))
+                c.execute('DELETE FROM dossiers WHERE id = ?', (did,))
+        d = self.dossier(nid)
+        d['remplaces'] = [ch for _, ch in remplaces]
+        return d
+
+    def verifier_dossier(self, chemin):
+        """Chemin propre d'un dossier qu'on peut ajouter (mêmes contrôles qu'ajouter_dossier, sans rien enregistrer).
+        Lève DossierRefuse avec un message clair sinon."""
         p = normaliser_chemin(chemin)
         if not enregistrable(p):
             raise DossierRefuse('Le nom de ce dossier contient un caractère que MyPhotos ne sait pas enregistrer : '
@@ -432,25 +499,31 @@ class Base:
         if not os.path.isdir(chemin_systeme(p)):
             raise DossierRefuse(f'Ce dossier est introuvable : « {p} ».')
         p = casse_reelle(p)
-        k = cle_chemin(p)
-        with self._transaction() as c:
-            remplaces = []
-            for did, ch in c.execute('SELECT id, chemin FROM dossiers').fetchall():
-                ke = cle_chemin(ch)
-                if ke == k:
-                    raise DossierRefuse(f'Ce dossier est déjà dans MyPhotos : « {ch} ».')
-                if dedans(k, ke):
-                    raise DossierRefuse(f'Ce dossier fait déjà partie de « {ch} », qui est dans MyPhotos.')
-                if dedans(ke, k):
-                    remplaces.append((did, ch))
-            nid = c.execute('INSERT INTO dossiers(chemin, ajoute, disponible) VALUES (?, ?, 1)',
-                            (p, maintenant())).lastrowid
-            for did, _ in remplaces:
-                c.execute('UPDATE photos SET dossier_id = ? WHERE dossier_id = ?', (nid, did))
-                c.execute('DELETE FROM dossiers WHERE id = ?', (did,))
-        d = self.dossier(nid)
-        d['remplaces'] = [ch for _, ch in remplaces]
-        return d
+        with self._lecture() as c:
+            self._place_du_dossier(c, cle_chemin(p))
+        return p
+
+    @staticmethod
+    def _place_du_dossier(c, k):
+        """Dossiers suivis que le nouveau dossier (clé k) contient [(id, chemin)]. DossierRefuse s'il est déjà suivi,
+        dans un dossier suivi, ou dans un sous-dossier exclu : un dossier suivi ne peut donc jamais se trouver dans un
+        sous-dossier exclu (le message dit quoi faire)."""
+        remplaces = []
+        for did, ch in c.execute('SELECT id, chemin FROM dossiers').fetchall():
+            ke = cle_chemin(ch)
+            if ke == k:
+                raise DossierRefuse(f'Ce dossier est déjà dans MyPhotos : « {ch} ».')
+            if dedans(k, ke):
+                for (ex,) in c.execute('SELECT chemin FROM exclusions WHERE dossier_id = ?', (did,)).fetchall():
+                    kx = cle_chemin(ex)
+                    if k == kx or dedans(k, kx):
+                        raise DossierRefuse(
+                            f'Ce dossier se trouve dans « {ex} », que vous avez exclu de MyPhotos. Pour voir ses '
+                            'photos, choisissez « Ne plus exclure » pour ce sous-dossier, dans les Réglages.')
+                raise DossierRefuse(f'Ce dossier fait déjà partie de « {ch} », qui est dans MyPhotos.')
+            if dedans(ke, k):
+                remplaces.append((did, ch))
+        return remplaces
 
     def retirer_dossier(self, dossier_id):
         """Oublie un dossier, ses photos et leurs miniatures. Les fichiers ne sont JAMAIS touchés.
@@ -460,13 +533,99 @@ class Base:
             if l is None:
                 return None
             n = c.execute('SELECT COUNT(*) FROM photos WHERE dossier_id = ?', (dossier_id,)).fetchone()[0]
-            c.execute('DELETE FROM mini.miniatures WHERE id IN (SELECT id FROM main.photos WHERE dossier_id = ?)',
-                      (dossier_id,))
-            c.execute('DELETE FROM photos WHERE dossier_id = ?', (dossier_id,))
+            ids = [i for (i,) in c.execute('SELECT id FROM photos WHERE dossier_id = ?', (dossier_id,))]
+            self._effacer_photos(c, ids)
+            c.execute('DELETE FROM exclusions WHERE dossier_id = ?', (dossier_id,))
             c.execute('DELETE FROM dossiers WHERE id = ?', (dossier_id,))
             self._nouvelle_generation(c)
         self._liberer_place()
         return {'id': dossier_id, 'chemin': l[0], 'photos': n}
+
+    # ------------------------------------------------ sous-dossiers exclus
+
+    def exclusions(self, dossier_id=None):
+        """Sous-dossiers exclus [{id, dossier_id, chemin, ajoute}], d'un dossier ou de tous, par ordre alphabétique."""
+        sql, args = 'SELECT id, dossier_id, chemin, ajoute FROM exclusions', ()
+        if dossier_id is not None:
+            sql, args = sql + ' WHERE dossier_id = ?', (dossier_id,)
+        return [{'id': i, 'dossier_id': d, 'chemin': ch, 'ajoute': a}
+                for i, d, ch, a in self._cnx().execute(sql + ' ORDER BY chemin COLLATE NOCASE', args)]
+
+    def ajouter_exclusion(self, dossier_id, chemin):
+        """Exclut un sous-dossier d'un dossier suivi : ses photos sont oubliées tout de suite (base, miniatures,
+        empreintes des doublons) et l'inventaire ne le parcourt plus. Les fichiers ne sont JAMAIS touchés.
+
+        Le chemin se compare comme partout (normaliser_chemin, casse_reelle, cle_chemin : « Vacances. » reste
+        « Vacances. »). Lève DossierRefuse (message clair) s'il n'est pas DANS le dossier suivi, s'il est déjà exclu ou
+        introuvable. Les exclusions qu'il contient sont remplacées par lui. Renvoie {id, dossier_id, chemin, dossier,
+        photos (nombre oublié), remplacees (chemins)}."""
+        p = normaliser_chemin(chemin)
+        if not enregistrable(p):
+            raise DossierRefuse('Le nom de ce dossier contient un caractère que MyPhotos ne sait pas enregistrer.')
+        if not os.path.isdir(chemin_systeme(p)):
+            raise DossierRefuse(f'Ce dossier est introuvable : « {p} ».')
+        p = casse_reelle(p)
+        k = cle_chemin(p)
+        with self._transaction() as c:
+            l = c.execute('SELECT chemin FROM dossiers WHERE id = ?', (dossier_id,)).fetchone()
+            if l is None:
+                raise DossierRefuse('Ce dossier ne fait plus partie de MyPhotos.')
+            racine = l[0]
+            kd = cle_chemin(racine)
+            if k == kd:
+                raise DossierRefuse(f'Vous avez choisi « {racine} » lui-même. Pour ne plus voir ses photos, utilisez '
+                                    '« Retirer ». Pour en exclure une partie, choisissez un dossier qui se trouve '
+                                    'dedans.')
+            if not dedans(k, kd):
+                raise DossierRefuse(f'Ce dossier n\'est pas dans « {racine} » : choisissez un dossier qui se trouve à '
+                                    'l\'intérieur.')
+            remplacees = []
+            for eid, ex in c.execute('SELECT id, chemin FROM exclusions WHERE dossier_id = ?',
+                                     (dossier_id,)).fetchall():
+                kx = cle_chemin(ex)
+                if kx == k:
+                    raise DossierRefuse(f'Ce dossier est déjà exclu : « {ex} ».')
+                if dedans(k, kx):
+                    raise DossierRefuse(f'Ce dossier est déjà exclu, avec « {ex} » qui le contient.')
+                if dedans(kx, k):
+                    remplacees.append((eid, ex))
+            for eid, _ in remplacees:
+                c.execute('DELETE FROM exclusions WHERE id = ?', (eid,))
+            nid = c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
+                            (dossier_id, p, maintenant())).lastrowid
+            ids = [pid for pid, ch in c.execute('SELECT id, chemin FROM photos WHERE dossier_id = ?',
+                                                (dossier_id,)).fetchall()
+                   if dedans(cle_chemin(ch), k)]
+            self._effacer_photos(c, ids)
+        if ids:
+            self._liberer_place()
+        return {'id': nid, 'dossier_id': dossier_id, 'chemin': p, 'dossier': racine, 'photos': len(ids),
+                'remplacees': [ex for _, ex in remplacees]}
+
+    def retirer_exclusion(self, exclusion_id):
+        """« Ne plus exclure » : renvoie {id, dossier_id, chemin}, ou None si l'exclusion n'existe pas. L'inventaire
+        de son dossier est à relancer (Indexeur.relancer) pour retrouver ses photos."""
+        with self._transaction() as c:
+            l = c.execute('SELECT dossier_id, chemin FROM exclusions WHERE id = ?', (exclusion_id,)).fetchone()
+            if l is None:
+                return None
+            c.execute('DELETE FROM exclusions WHERE id = ?', (exclusion_id,))
+        return {'id': exclusion_id, 'dossier_id': l[0], 'chemin': l[1]}
+
+    def _effacer_photos(self, c, ids):
+        """Dans une transaction : efface des photos de la base, leurs miniatures et leurs empreintes de doublons."""
+        if not ids:
+            return
+        tables = {n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        doublons = tables.issuperset(_TABLES_DOUBLONS)
+        for paquet in _paquets(ids):
+            marques = ','.join('?' * len(paquet))
+            c.execute(f'DELETE FROM mini.miniatures WHERE id IN ({marques})', paquet)
+            c.execute(f'DELETE FROM photos WHERE id IN ({marques})', paquet)
+            if doublons:
+                c.execute(f'DELETE FROM doublons_empreintes WHERE photo_id IN ({marques})', paquet)
+                c.execute(f'DELETE FROM doublons_paires WHERE a IN ({marques}) OR b IN ({marques})', paquet + paquet)
+        self._nouvelle_generation(c)
 
     # ------------------------------------------------ photos
 
@@ -587,6 +746,11 @@ class Base:
         with self._transaction() as c:
             if not c.execute('SELECT 1 FROM dossiers WHERE id = ?', (dossier_id,)).fetchone():
                 return 0                              # dossier retiré entre-temps
+            # Sous-dossier exclu pendant que l'inventaire était en route : ses photos ne reviennent pas.
+            exclus = [cle_chemin(ex) for (ex,) in c.execute('SELECT chemin FROM exclusions WHERE dossier_id = ?',
+                                                            (dossier_id,))]
+            if exclus:
+                lignes = [x for x in lignes if not any(dedans(cle_chemin(x[0]), kx) for kx in exclus)]
             avant = c.total_changes
             c.executemany('INSERT INTO photos(chemin, dossier_id, taille, modifie, date_fichier, vu) '
                           'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chemin) DO NOTHING',
@@ -603,13 +767,10 @@ class Base:
             self._nouvelle_generation(c)
 
     def oublier_photos(self, ids):
-        """Photos disparues du disque : on les oublie (base et miniatures)."""
+        """Photos disparues du disque : on les oublie (base, miniatures, empreintes des doublons)."""
+        ids = [int(i) for i in ids]
         with self._transaction() as c:
-            for paquet in _paquets(ids):
-                marques = ','.join('?' * len(paquet))
-                c.execute(f'DELETE FROM mini.miniatures WHERE id IN ({marques})', paquet)
-                c.execute(f'DELETE FROM photos WHERE id IN ({marques})', paquet)
-            self._nouvelle_generation(c)
+            self._effacer_photos(c, ids)
 
     def deplacer_photos(self, paires):
         """Photos déplacées ou renommées [(ancien_id, nouveau_chemin)] : l'ancienne fiche (analyse, miniature,

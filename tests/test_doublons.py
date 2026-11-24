@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -249,6 +250,45 @@ class TestFonctions(unittest.TestCase):
         self.assertEqual(g['gain_octets'], 0)
         self.assertEqual(g['gain_possible_octets'], 4)
 
+    def test_choix_original_plutot_que_conversion_ou_cadre(self):
+        """À définition égale (à 3 % près) : la photo avec sa date de prise de vue, puis le format d'appareil photo ;
+        une version entourée d'un cadre ne compte que pour sa partie photo (constat R2 de la relecture 0.3.0)."""
+        def p(i, w, h, taille, nom, date=None):
+            chemin = 'E:\\P\\' + nom
+            return {'id': i, 'chemin': chemin, 'nom': nom, 'dossier': 'E:\\P', 'taille': taille, 'largeur': w,
+                    'hauteur': h, 'date_prise': date, 'date_fichier': '2024-01-01T00:00:00',
+                    'copie': doublons.motif_copie(chemin)}
+        exif = '2019-07-14T15:32:10'
+        # Conversion PNG (plus lourde, sans EXIF) : l'original JPEG est gardé.
+        g = doublons.former_groupe('retouchees', [p(1, 960, 599, 207_800, 'original.jpg', exif),
+                                                  p(2, 960, 599, 871_100, 'original-converti.png')])
+        self.assertEqual([(x['id'], x['garder'], x['critere']) for x in g['photos']],
+                         [(1, True, 'exif'), (2, False, 'exif')])
+        self.assertIn('date de prise de vue', g['photos'][0]['raison'])
+        # Ni l'une ni l'autre n'a d'EXIF : le format d'origine.
+        g = doublons.former_groupe('retouchees', [p(3, 960, 600, 100, 'a.png'), p(4, 958, 600, 90, 'a.jpg')])
+        self.assertEqual([x['id'] for x in g['photos']], [4, 3])
+        self.assertEqual(g['photos'][1]['critere'], 'format')
+        self.assertIn('PNG', g['photos'][1]['raison'])
+        # Version à bordure : plus grande, mais 74 % seulement de photo (mesure de verifier) ; l'original est gardé.
+        photos = {5: p(5, 960, 640, 2_400_000, 'original2.jpg', exif), 6: p(6, 1114, 742, 2_600_000, 'bordure.jpg'),
+                  7: p(7, 960, 640, 2_000_000, 'cadre.jpg')}
+        mesures = [{'sens': 1, 'couverture': 0.743}, {'sens': 1, 'couverture': 0.74}]
+        with mock.patch.object(doublons, 'est_retouchee', return_value=True):
+            doublons._marquer_cadres(photos, [(5, 6, 0, 0), (5, 7, 0, 0)], mesures)
+        g = doublons.former_groupe('retouchees', list(photos.values()))
+        self.assertEqual([x['id'] for x in g['photos']][0], 5)
+        criteres = {x['id']: x['critere'] for x in g['photos']}
+        self.assertEqual(criteres[6], 'exif')         # 1114 × 742 × 0,743 ≈ 960 × 640 : égales, puis la date
+        self.assertEqual(criteres[7], 'cadre')        # 960 × 640 dont 74 % de photo
+        # Un recadrage : l'original (avec sa date) contient le recadrage ; sa définition n'est jamais réduite.
+        photos = {8: p(8, 4000, 3000, 3_000_000, 'IMG.jpg', exif), 9: p(9, 2000, 1500, 900_000, 'IMG_crop.jpg')}
+        with mock.patch.object(doublons, 'est_retouchee', return_value=True):
+            doublons._marquer_cadres(photos, [(8, 9, 0, 0)], [{'sens': 0, 'couverture': 0.25}])
+        self.assertNotIn('utile', photos[8])
+        g = doublons.former_groupe('retouchees', list(photos.values()))
+        self.assertEqual([(x['id'], x['critere']) for x in g['photos']], [(8, 'definition'), (9, 'definition')])
+
 
 # ---------------------------------------------------------------- calcul complet
 
@@ -267,9 +307,16 @@ class TestDoublons(EssaiDoublons):
         self.assertEqual(self.noms(retouchees[0]), {'WhatsApp Images/IMG-20230501-WA0001.jpg',
                                                     'vacances/IMG_0001_recadree.jpg', 'export/IMG_0001.png',
                                                     'vacances/IMG_0001_claire.jpg', 'vacances/IMG_0001.jpg'})
-        # Gardée : la plus grande définition (900 × 675 : l'original, le PNG, l'éclaircie), puis le plus gros fichier.
-        self.assertEqual(retouchees[0]['photos'][0]['id'], ids['export/IMG_0001.png'])
+        # Gardée : la plus grande définition (900 × 675 : l'original, le PNG, l'éclaircie), puis celle qui a sa date de
+        # prise de vue (pas la conversion PNG, plus lourde mais sans EXIF), puis le plus gros fichier.
+        self.assertIn(retouchees[0]['photos'][0]['id'], {ids['vacances/IMG_0001.jpg'],
+                                                         ids['vacances/IMG_0001_claire.jpg']})
         self.assertEqual(retouchees[0]['photos'][0]['critere'], 'taille')
+        png = next(p for p in retouchees[0]['photos'] if p['id'] == ids['export/IMG_0001.png'])
+        self.assertEqual((png['garder'], png['critere']), (False, 'exif'))
+        # Le recadrage (avec sa date) ne fait pas perdre sa définition à l'original : proposé, lui.
+        recadree = next(p for p in retouchees[0]['photos'] if p['id'] == ids['vacances/IMG_0001_recadree.jpg'])
+        self.assertFalse(recadree['garder'])
         self.assertEqual(sum(1 for p in retouchees[0]['photos'] if p['garder']), 1)
         petite = next(p for p in retouchees[0]['photos'] if p['id'] == ids['WhatsApp Images/IMG-20230501-WA0001.jpg'])
         self.assertEqual(petite['critere'], 'definition')
