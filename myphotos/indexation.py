@@ -291,10 +291,11 @@ def _vers_8_bits(im):
     return Image.fromarray(np.clip(a * (255.0 / plafond), 0, 255).astype(np.uint8))
 
 
-def _ouvrir_a_part(f):
-    """Comme modele.ouvrir_image (dans le bon sens, en RVB, plus petit côté >= COTE_DECODAGE), pour une image que
+def _ouvrir_a_part(f, cote=COTE_DECODAGE):
+    """Comme modele.ouvrir_image (dans le bon sens, en RVB, plus petit côté >= cote), pour une image que
     Pillow décode en entier : une seule à la fois (4 fils x 3 Go, c'est trop pour un PC de 8 Go) et réduite dès le
-    décodage fini, au lieu des trois ou quatre copies pleine taille du chemin habituel."""
+    décodage fini, au lieu des trois ou quatre copies pleine taille du chemin habituel. modele.ouvrir_image passe
+    aussi par ici (visionneuse : cote plus grand)."""
     with _UNE_A_LA_FOIS:
         im = Image.open(f, formats=FORMATS)
         try:
@@ -304,7 +305,7 @@ def _ouvrir_a_part(f):
         im.load()
         if im.mode.startswith('I;16'):
             im = im.convert('I')                 # 16 -> 32 bits, valeurs gardées, et réductible
-        facteur = min(im.size) // COTE_DECODAGE
+        facteur = min(im.size) // max(1, cote)
         if facteur >= 2:
             if im.mode in ('P', 'PA', '1'):
                 im = modele.vers_rvb(im)         # une moyenne d'indices de palette donnerait n'importe quelle couleur

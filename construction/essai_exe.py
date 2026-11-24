@@ -36,7 +36,7 @@ DOSSIER = Path(sys.executable).resolve().parent if GELE else Path(__file__).reso
 # Fichier minuscule du moteur « base », révision figée (mêmes valeurs que le paquet myphotos).
 URL_ESSAI = ('https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/'
              'ba1f3b0843f24bc5417d38e19c37b287d719b2f4/tokenizer.json')
-AGENT = 'MyPhotos/0.1 (essai de construction)'
+AGENT = 'MyPhotos/1 (essai de construction)'          # même forme que celui de myphotos/modele.py
 
 
 # ---------------------------------------------------------------- journal

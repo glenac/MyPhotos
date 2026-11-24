@@ -44,7 +44,7 @@ Aucune licence n'interdit de publier MyPhotos.exe gratuitement sur GitHub. Il fa
 
 ## Ce que chaque publication doit contenir
 
-À joindre à chaque Release (dans l'exécutable, à côté de lui, ou dans une archive `licences.zip` publiée avec lui) :
+À joindre à chaque Release. `construction\construire.ps1 --paquet` les rassemble, après avoir vérifié leurs versions et leurs empreintes, dans le dossier `licences\` de l'archive `MyPhotos-<version>-windows.zip`, publiée avec MyPhotos.exe (voir [construction/LISEZMOI.md](construction/LISEZMOI.md)) :
 
 | Fichier | Où le prendre |
 |---|---|
@@ -54,7 +54,7 @@ Aucune licence n'interdit de publier MyPhotos.exe gratuitement sur GitHub. Il fa
 | `LICENSE.txt` et `ThirdPartyNotices.txt` de DirectML | paquet NuGet [Microsoft.AI.DirectML 1.15.4](https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4) (absents de la roue Python) |
 | `numpy-2.5.5.dist-info/licenses/` (dossier entier) | `site-packages` |
 | `pillow-13.0.0.dist-info/licenses/LICENSE` | `site-packages` |
-| licence Apache-2.0 de tokenizers et notices de ses bibliothèques Rust | [dépôt huggingface/tokenizers](https://github.com/huggingface/tokenizers/blob/main/LICENSE) ; liste dans `tokenizers-0.23.3.dist-info/sboms/` |
+| licence Apache-2.0 de tokenizers et notices de ses bibliothèques Rust | `LICENSE` du [dépôt huggingface/tokenizers](https://github.com/huggingface/tokenizers/blob/v0.23.3/LICENSE) (étiquette v0.23.3) ; liste dans `tokenizers-0.23.3.dist-info/sboms/` ; fichiers de licence des bibliothèques qui demandent leurs propres mentions, pris dans leur paquet [crates.io](https://crates.io) |
 | `LICENSE.txt` de Python (comprend OpenSSL, bzip2, libffi, Zstandard, Tcl, Tk et les conditions Microsoft) | dossier d'installation de Python 3.14 |
 | `COPYING.txt` de PyInstaller | `pyinstaller-6.22.3.dist-info/licenses/` |
 
@@ -151,7 +151,7 @@ Découpe en jetons le texte tapé dans la recherche. Fichier embarqué : `token
 
 - **Licence** : Apache-2.0, © Hugging Face.
 - **Obligations** : fournir une copie de la licence Apache-2.0 ; ne pas utiliser les marques de Hugging Face. La roue ne contient aucun fichier de licence, seulement un inventaire CycloneDX (`sboms/tokenizers-python.cyclonedx.json`).
-- **Bibliothèques Rust compilées dans le module** : 122 bibliothèques (« crates »), presque toutes sous `MIT OR Apache-2.0`. Exceptions : `aho-corasick`, `memchr`, `jiff` (`Unlicense OR MIT`) ; `macro_rules_attribute` (`Apache-2.0 OR MIT OR Zlib`) ; `numpy` pour Rust (`BSD-2-Clause`) ; `ryu` (`Apache-2.0 OR BSL-1.0`) ; `zerocopy` (`BSD-2-Clause OR Apache-2.0 OR MIT`) ; `unicode-ident` (`(MIT OR Apache-2.0) AND Unicode-3.0`, dont la mention Unicode doit accompagner le binaire).
+- **Bibliothèques Rust compilées dans le module** : 122 bibliothèques (« crates »), presque toutes sous `MIT OR Apache-2.0`. Dix-sept sont sous licence MIT seule, dont la mention de droits d'auteur doit accompagner le binaire : `castaway`, `compact_str`, `console`, `indicatif`, `mio`, `nom`, `onig`, `onig_sys`, `slab`, `strsim`, `tokio`, `unit-prefix`, `zmij`, et quatre qui ne servent qu'à la compilation (`darling`, `darling_core`, `darling_macro`, `tokio-macros`) ; `onig_sys` compile en plus la bibliothèque C Oniguruma (BSD-2-Clause). Autres exceptions : `aho-corasick`, `memchr`, `jiff` (`Unlicense OR MIT`) ; `macro_rules_attribute` (`Apache-2.0 OR MIT OR Zlib`) ; `numpy` pour Rust (`BSD-2-Clause`) ; `ryu` (`Apache-2.0 OR BSL-1.0`) ; `zerocopy` (`BSD-2-Clause OR Apache-2.0 OR MIT`) ; `unicode-ident` (`(MIT OR Apache-2.0) AND Unicode-3.0`, dont la mention Unicode doit accompagner le binaire).
 - **Liens** : [github.com/huggingface/tokenizers](https://github.com/huggingface/tokenizers), [licence Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 ## Python

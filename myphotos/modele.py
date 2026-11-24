@@ -249,9 +249,19 @@ def ouvrir_image(p, cote=448):
     """Ouvre une image, dans le bon sens, en RVB. Pour un JPEG, ne décode qu'une version réduite :
     4,5 fois plus rapide, vecteurs identiques à 0,9998 près (banc d'essai du 23/11/2026).
 
-    Le côté le plus court reste >= cote, ce qui suffit pour le modèle et pour la miniature.
+    Le côté le plus court reste >= cote, ce qui suffit pour le modèle et pour la miniature (la visionneuse demande
+    plus). Comme l'analyse, et avec son code (indexation.py) : seulement les formats de MyPhotos (indexation.FORMATS :
+    jamais EPS, donc jamais Ghostscript, même pour un « .jpg » qui serait un PostScript), et les niveaux de gris sur 16
+    bits ou en flottants ramenés sur 8 bits avec leurs nuances (Pillow les écrêterait : une numérisation toute blanche).
     """
-    im = Image.open(p)
+    from . import indexation                     # importé ici : indexation importe ce module
+    im = Image.open(p, formats=indexation.FORMATS)
+    if indexation._a_part(im):                   # 16 bits, flottants, très grande image non JPEG
+        if hasattr(p, 'seek'):
+            p.seek(0)
+        else:
+            im.close()
+        return indexation._ouvrir_a_part(p, cote)
     try:
         im.draft('RGB', (cote, cote))
     except Exception:

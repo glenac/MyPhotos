@@ -31,6 +31,39 @@ en erreur.
   `MyPhotos-essai.exe --modele <moteur>\base\onnx\vision_model_fp16.onnx --journal essai.log`
   (code de sortie 0 si tout va bien).
 
+## Publier
+
+Une fois `dist\MyPhotos.exe` construit **et essayé**, préparer ce qui sera publié :
+
+```
+construction\construire.ps1 --paquet
+```
+
+Cette étape ne reconstruit rien : elle relit l'exécutable (contenu, version), vérifie que les versions installées
+sont celles de `requirements*.txt` et de `THIRD_PARTY_NOTICES.md`, puis écrit dans `dist\` :
+
+- `licences\` : les textes de licence que demande `THIRD_PARTY_NOTICES.md` (section « Ce que chaque publication
+  doit contenir »), un sous-dossier par composant, présentés par `licences\LISEZMOI.txt` ;
+- `MyPhotos-<version>-windows.zip` : `MyPhotos.exe`, `LICENSE`, `THIRD_PARTY_NOTICES.md`,
+  `MyPhotos_mode_emploi.pdf` et `licences\` ;
+- `MyPhotos-<version>-windows.zip.sha256` et `MyPhotos.exe.sha256`, au format de `sha256sum`.
+
+Trois sortes de fichiers ne sont pas dans l'environnement de construction. Ils sont téléchargés une fois, contrôlés
+par leur empreinte, puis gardés dans un cache **hors du dépôt** (`--cache <dossier>`, sinon la variable
+`MYPHOTOS_CACHE_CONSTRUCTION`, sinon `%LOCALAPPDATA%\MyPhotos-construction\cache`) :
+
+- la licence de DirectML : paquet NuGet officiel `Microsoft.AI.DirectML` 1.15.4 (202 Mo), contrôlé par
+  l'empreinte SHA-512 que publie nuget.org. Le script vérifie aussi que la `DirectML.dll` embarquée est celle de
+  ce paquet : même version, même code (seule la signature numérique diffère) ;
+- la licence de tokenizers (Apache-2.0), absente de sa roue : fichier `LICENSE` de son dépôt, au commit de
+  l'étiquette v0.23.3, contrôlé par son empreinte SHA-256 ;
+- les fichiers de licence des bibliothèques Rust de tokenizers qui demandent leurs propres mentions (licence MIT
+  seule, BSD-2-Clause, Unicode-3.0) : pris dans leur paquet crates.io, contrôlé par l'empreinte SHA-256 de
+  l'inventaire de la roue (`sboms`). Les autres sont couvertes par la licence Apache-2.0 jointe.
+
+Après une mise à jour de tokenizers ou d'onnxruntime, le script s'arrête et indique quoi mettre à jour
+(`TOKENIZERS`, `DIRECTML` dans `construire.py`, inventaire de `THIRD_PARTY_NOTICES.md`).
+
 ## Ce qui est embarqué
 
 - Python 3.14, le paquet `myphotos`, `page\` et `construction\MyPhotos.ico`, qui sert d'icône à la
@@ -54,16 +87,19 @@ Ce qui n'est **pas** embarqué :
 
 ## Taille
 
-`MyPhotos.exe` pèse **47,8 Mo** et occupe 116 Mo une fois extrait. À chaque lancement, il s'extrait
+`MyPhotos.exe` 0.2.0 pèse **47,9 Mo** et occupe 117 Mo une fois extrait. À chaque lancement, il s'extrait
 dans `%TEMP%\_MEI…` en 0,9 s environ ; ce dossier est effacé à l'arrêt.
 
-Mesures du 23/11/2026 (Ryzen 5 5600X, Radeon RX 6600 XT) :
+Mesures du 24/11/2026 (0.2.0, Ryzen 5 5600X, Radeon RX 6600 XT), sur une base existante, l'exécutable
+lancé sur un bureau Windows invisible (`MYPHOTOS_SANS_PAGE=1`) :
 
-- Premier lancement : la page répond en 1,6 s.
-- Lancements suivants : la page répond en 1,6 à 6,5 s. Le chargement du moteur sur la carte graphique
-  prend 4 à 6 s et retarde soit la page, soit la première recherche. Lancé depuis les sources,
-  MyPhotos se comporte de la même façon.
-- Analyse Windows Defender (`MpCmdRun -Scan -ScanType 3`) : aucune menace.
+- La page répond en 1,0 s. Le moteur est prêt sur la carte graphique 5,8 à 6,2 s après le lancement,
+  sans retarder la page (« Préparation… »). En 0.1.0, ce chargement retardait la page (1,6 à 6,5 s).
+- 32 photos publiques analysées en 1,0 s, doublons en 0,5 s, arrêt par `POST /api/quitter` en 2 s :
+  plus aucun processus, dossier `_MEI…` effacé.
+- Une base faite par la 0.1.0 est reprise telle quelle (moteur, dossiers, analyse).
+- Analyse Windows Defender (`MpCmdRun -Scan -ScanType 3`, signatures 1.463.447.0) : aucune menace, pour
+  `MyPhotos.exe` comme pour l'archive `.zip`.
 
 ## Pièges connus
 

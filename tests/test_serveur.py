@@ -307,6 +307,184 @@ class TestSecurite(EssaiServeur):
         self.assertEqual(api('/api/dossiers/ajouter', {'chemin': ''})[0], 400)
         self.assertEqual(api('/api/dossiers/ajouter', {'chemin': 12})[0], 400)
 
+    # ---------------------------------------------------------------- relecture de sécurité du 24/11/2026
+
+    def test_autre_site_hors_navigation(self):
+        """Un autre site peut ouvrir la page dans un onglet, rien de plus : ni fetch « no-cors », ni cadre, ni feuille
+        de style, ni image (avant : la page lui était servie, ce qui comptait comme une activité)."""
+        for mode, dest in (('no-cors', 'empty'), ('navigate', 'iframe'), ('no-cors', 'style'), ('no-cors', 'image'),
+                           ('no-cors', 'script'), ('cors', 'empty')):
+            for site in ('cross-site', 'same-site'):
+                for chemin in ('/', '/index.html', '/favicon.ico', '/inconnu?x=1'):
+                    with self.subTest(mode=mode, dest=dest, site=site, chemin=chemin):
+                        statut, e, _ = requete('GET', chemin, entetes={'Sec-Fetch-Site': site, 'Sec-Fetch-Mode': mode,
+                                                                       'Sec-Fetch-Dest': dest})
+                        self.assertEqual(statut, 403)
+                        self.assertTrue(e['content-type'].startswith('application/json'))
+        for site in ('cross-site', 'same-site', 'none', 'same-origin'):
+            statut, e, corps = requete('GET', '/', entetes={'Sec-Fetch-Site': site, 'Sec-Fetch-Mode': 'navigate',
+                                                            'Sec-Fetch-Dest': 'document', 'Sec-Fetch-User': '?1'})
+            self.assertEqual(statut, 200, site)
+            self.assertIn(b'<title>MyPhotos</title>', corps)
+
+    def test_requetes_malformees_sans_trace(self):
+        """Requêtes piégées : un refus simple (400), jamais une « erreur inattendue » avec sa trace dans le journal
+        (avant : 500 et une trace de 1 Ko par requête, qu'un autre site pouvait répéter pour noyer le journal)."""
+        journal = DONNEES / 'journal.log'
+        avant = journal.stat().st_size if journal.exists() else 0
+        navigation = {'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document'}
+        q = '&'.join(f'a{i}=1' for i in range(30))
+        self.assertEqual(requete('GET', f'/?{q}', entetes=navigation)[0], 400)
+        self.assertEqual(requete('GET', f'/api/photos?{q}')[0], 400)
+        self.assertEqual(requete('GET', 'http://[x/api/etat')[0], 400)            # forme absolue, hôte illisible
+        imbrique = b'{"ids":' + b'[' * 20000 + b']' * 20000 + b', "confirme": true}'      # moins de 64 Ko
+        self.assertEqual(requete('POST', '/api/supprimer', brut=imbrique,
+                                 entetes={'X-MyPhotos': '1', 'Content-Type': 'application/json'})[0], 400)
+        self.vivant()
+        ajout = journal.read_bytes()[avant:].decode('utf-8', 'replace') if journal.exists() else ''
+        self.assertNotIn('Traceback', ajout)
+        self.assertNotIn('Max number of fields', ajout)
+
+    def test_erreurs_du_protocole(self):
+        """Méthode inconnue, demande préalable CORS : JSON et en-têtes de sécurité, jamais de CORS accordé (avant : la
+        page d'erreur HTML de Python, sans CSP ni nosniff ni X-Frame-Options)."""
+        for methode in ('OPTIONS', 'PUT', 'DELETE', 'PATCH', 'TRACE'):
+            with self.subTest(methode=methode):
+                statut, e, corps = requete(methode, '/api/quitter',
+                                           entetes={'Origin': 'http://evil.example',
+                                                    'Access-Control-Request-Method': 'POST',
+                                                    'Access-Control-Request-Headers': 'x-myphotos, content-type'})
+                self.assertEqual(statut, 501)
+                self.assertTrue(e['content-type'].startswith('application/json'))
+                self.assertEqual(json.loads(corps), {'erreur': 'Requête refusée.'})
+                for k in ('x-content-type-options', 'content-security-policy', 'x-frame-options',
+                          'cross-origin-resource-policy', 'referrer-policy'):
+                    self.assertIn(k, e)
+                self.assertFalse(any(k.startswith('access-control-') for k in e))
+        self.vivant()
+
+
+class TestSelectionHttp(EssaiServeur):
+    """Routes de la sélection (copier, copier dans un dossier, mettre à la Corbeille) : mêmes protections que les autres
+    POST, et seulement des identifiants. Base d'essai sans photo : rien ne peut être copié ni supprimé, aucune fenêtre
+    ne s'ouvre (une copie sans photo valable est refusée avant la fenêtre « Choisir un dossier »)."""
+
+    ROUTES = ('/api/copier', '/api/copier-vers', '/api/supprimer', '/api/copie/annuler', '/api/copie/montrer',
+              '/api/base-ecartee/vu')
+
+    def test_csrf_et_origine(self):
+        corps = {'ids': [INCONNU], 'confirme': True}
+        for route in self.ROUTES:
+            with self.subTest(route=route):
+                self.assertEqual(requete('POST', route, corps)[0], 403)                          # sans X-MyPhotos
+                self.assertEqual(requete('POST', route, corps, {'X-MyPhotos': '0'})[0], 403)
+                for origine in ('http://evil.example', 'null', f'http://127.0.0.1:{PORT + 1}'):
+                    self.assertEqual(requete('POST', route, corps, {'X-MyPhotos': '1', 'Origin': origine})[0], 403)
+                self.assertEqual(requete('POST', route, corps, {'X-MyPhotos': '1', 'Sec-Fetch-Site': 'cross-site'})[0],
+                                 403)
+                self.assertEqual(requete('POST', route, corps, {'X-MyPhotos': '1'}, hote='evil.example')[0], 403)
+                self.assertEqual(requete('POST', route, entetes={'X-MyPhotos': '1', 'Content-Type': 'text/plain'},
+                                         brut=json.dumps(corps).encode())[0], 415)
+        self.assertEqual(requete('GET', '/api/copie', entetes={'Sec-Fetch-Site': 'cross-site'})[0], 403)
+        self.vivant()
+
+    def test_identifiants_seulement(self):
+        for valeur in (None, [], 'abc', 12, {'id': 1}, [0], [-1], ['01'], ['1; calc'], [1.5], [True], [None], [[1]],
+                       [{'id': 1}], ['C:\\Windows\\win.ini'], ['..\\..\\config.py'], [' 1'], ['12345678901234567890']):
+            for route in ('/api/copier', '/api/copier-vers', '/api/supprimer'):
+                with self.subTest(route=route, valeur=valeur):
+                    statut, d = api(route, {'ids': valeur, 'confirme': True})
+                    self.assertEqual(statut, 400)
+                    self.assertIn('erreur', d)
+        for route in ('/api/copier', '/api/copier-vers', '/api/supprimer'):
+            self.assertEqual(api(route, {'chemins': ['C:\\Windows\\win.ini'], 'confirme': True})[0], 400)
+        statut, d = api('/api/supprimer', {'ids': list(range(1, 2002)), 'confirme': True})
+        self.assertEqual(statut, 400)
+        self.assertRegex(d['erreur'], r'2\s000 au plus')                  # espace fine insécable, comme ailleurs
+        self.vivant()
+
+    def test_photos_inconnues(self):
+        statut, d = api('/api/copier', {'ids': [INCONNU]})
+        self.assertEqual(statut, 409)
+        self.assertIn('plus dans MyPhotos', d['erreur'])
+        self.assertEqual(api('/api/copier-vers', {'ids': [INCONNU, INCONNU + 1]})[0], 409)
+        for confirme in (None, False, 'oui', 'true', 1, [True]):
+            with self.subTest(confirme=confirme):
+                statut, d = api('/api/supprimer', {'ids': [INCONNU], 'confirme': confirme})
+                self.assertEqual(statut, 400)
+                self.assertIn('confirm', d['erreur'])
+        statut, d = api('/api/supprimer', {'ids': [INCONNU, str(INCONNU + 1), INCONNU], 'confirme': True})
+        self.assertEqual(statut, 200, d)
+        self.assertEqual(d['supprimees'], [])
+        self.assertEqual([r['id'] for r in d['refusees']], [INCONNU, INCONNU + 1])   # sans doublon, dans l'ordre
+        self.assertTrue(all('plus dans MyPhotos' in r['raison'] for r in d['refusees']))
+        self.assertEqual(d['octets_liberes'], 0)
+        self.assertIsInstance(d['generation'], int)
+        self.assertEqual(api('/api/copie'), (200, None))
+        self.assertEqual(api('/api/copie/annuler', {}), (200, {'annule': False}))
+        self.assertEqual(api('/api/copie/montrer', {})[0], 404)
+        self.assertEqual(api('/api/base-ecartee/vu', {}), (200, {'ok': True}))
+        e = api('/api/etat')[1]
+        self.assertEqual((e['limite_selection'], e['copie'], e['base_ecartee']), (2000, None, None))
+        self.vivant()
+
+
+class TestDoublonsHttp(EssaiServeur):
+    """Routes des doublons : mêmes protections que les autres routes, aucun chemin accepté ni rendu en dehors du
+    dossier affiché de chaque photo. La base d'essai peut être vide ou contenir les images publiques (TestBoutEnBout)."""
+
+    CLES_PHOTO = {'id', 'garder', 'meilleure', 'raison', 'nom', 'dossier', 'taille', 'largeur', 'hauteur', 'date'}
+
+    def test_protections(self):
+        for route in ('/api/doublons/lancer', '/api/doublons/annuler'):
+            with self.subTest(route=route):
+                self.assertEqual(requete('POST', route, {})[0], 403)                              # sans X-MyPhotos
+                for origine in ('http://evil.example', 'null', f'http://127.0.0.1:{PORT + 1}'):
+                    self.assertEqual(requete('POST', route, {}, {'X-MyPhotos': '1', 'Origin': origine})[0], 403)
+                self.assertEqual(requete('POST', route, {}, {'X-MyPhotos': '1', 'Sec-Fetch-Site': 'cross-site'})[0],
+                                 403)
+                self.assertEqual(requete('POST', route, {}, {'X-MyPhotos': '1'}, hote='evil.example')[0], 403)
+                self.assertEqual(requete('POST', route, entetes={'X-MyPhotos': '1', 'Content-Type': 'text/plain'},
+                                         brut=b'{}')[0], 415)
+        self.assertEqual(requete('GET', '/api/doublons', entetes={'Sec-Fetch-Site': 'cross-site'})[0], 403)
+        self.assertEqual(requete('GET', '/api/doublons', hote='evil.example')[0], 403)
+        for depuis in ('abc', '-1', '1e3', '9' * 12):
+            self.assertEqual(api(f'/api/doublons?depuis={depuis}')[0], 400)
+        self.assertEqual(api('/api/doublons/inconnue', {})[0], 404)
+        self.vivant()
+
+    def test_lancer_suivre_lire(self):
+        statut, e = api('/api/etat')
+        self.assertEqual(set(e['doublons']), {'en_cours', 'phase', 'avancement', 'message', 'numero', 'perime',
+                                              'deja', 'arretee', 'erreur'})
+        avant = e['doublons']['numero']
+        statut, r = api('/api/doublons/lancer', {'chemin': 'C:\\Windows'})    # tout autre champ est ignoré
+        self.assertEqual(statut, 200, r)
+        self.assertIn('lance', r)
+        x = attendre(lambda: (lambda d: d if not d['en_cours'] and d['numero'] > avant else None)(
+            api('/api/etat')[1]['doublons']), 120)
+        self.assertTrue(x, 'recherche des doublons non terminée')
+        self.assertTrue(x['deja'])
+        self.assertIsNone(x['erreur'])
+        statut, d = api('/api/doublons')
+        self.assertEqual(statut, 200, d)
+        res = d['resultat']
+        self.assertEqual(res['numero'], x['numero'])
+        self.assertIsInstance(res['groupes'], list)
+        for g in res['groupes']:
+            self.assertIn(g['type'], ('identiques', 'retouchees', 'proches'))
+            self.assertGreaterEqual(len(g['photos']), 2)
+            self.assertTrue(any(p['garder'] for p in g['photos']))
+            for p in g['photos']:
+                self.assertEqual(set(p), self.CLES_PHOTO)
+                self.assertIsInstance(p['id'], int)
+        # La page a déjà ces groupes : seul l'état revient.
+        statut, d = api(f'/api/doublons?depuis={res["numero"]}')
+        self.assertEqual(statut, 200)
+        self.assertNotIn('groupes', d['resultat'])
+        self.assertEqual(api('/api/doublons/annuler', {}), (200, {'annule': False}))     # rien en cours
+        self.vivant()
+
 
 class TestReponses(EssaiServeur):
 
@@ -526,12 +704,34 @@ class TestBoutEnBout(EssaiServeur):
             self.assertEqual(self.recherche('chien')['mode'], 'recherche')
         self.vivant()
 
+        # Doublons : la copie exacte ajoutée est trouvée, l'originale est à garder ; la recherche répond pendant le
+        # calcul (il ne touche pas au moteur).
+        avant = api('/api/etat')[1]['doublons']['numero']
+        statut, d = api('/api/doublons/lancer', {})
+        self.assertEqual(statut, 200, d)
+        debut = time.monotonic()
+        self.assertEqual(self.recherche('chien')['mode'], 'recherche')
+        self.assertLess(time.monotonic() - debut, 10)
+        x = attendre(lambda: (lambda y: y if not y['en_cours'] and y['numero'] > avant else None)(
+            api('/api/etat')[1]['doublons']), 120)
+        self.assertTrue(x and not x['erreur'], x)
+        groupes = api('/api/doublons')[1]['resultat']['groupes']
+        groupe = next(g for g in groupes if 'chien-copie.jpg' in [p['nom'] for p in g['photos']])
+        self.assertEqual(groupe['type'], 'identiques')
+        self.assertEqual({p['nom']: p['garder'] for p in groupe['photos']}, {'chien-copie.jpg': False, source.name: True})
+        self.assertEqual(groupe['gain_octets'], (ajout / 'chien-copie.jpg').stat().st_size)
+        self.vivant()
+
         # Retrait du dossier ajouté : ses photos disparaissent, les fichiers restent.
         dossiers = api('/api/dossiers')[1]['dossiers']
         did = next(x['id'] for x in dossiers if x['chemin'].lower() == str(ajout).lower())
         statut, d = api('/api/dossiers/retirer', {'id': did})
         self.assertEqual(statut, 200, d)
         self.assertTrue((ajout / 'chien-copie.jpg').exists())
+        # Les doublons suivent tout de suite : le groupe de la copie disparaît, et le résultat est à refaire.
+        d = api('/api/doublons')[1]
+        self.assertTrue(d['perime'])
+        self.assertFalse(any('chien-copie.jpg' in [p['nom'] for p in g['photos']] for g in d['resultat']['groupes']))
         self.vivant()
 
         # Changement de moteur, aller et retour : l'ancien moteur part en entier, toutes les photos sont analysées
@@ -576,6 +776,34 @@ class TestInstances(unittest.TestCase):
                 second.sortie.close()
             self.assertIsNone(proc.poll())
             # Plus aucune requête : arrêt propre tout seul (délai réduit à 4 s pour l'essai).
+            self.assertEqual(proc.wait(timeout=60), 0)
+        finally:
+            arreter_par_pid(proc)
+            proc.sortie.close()
+        self.assertTrue(port_libre(self.PORT2))
+
+    def test_arret_malgre_un_autre_site(self):
+        """Un site ouvert dans le navigateur qui interroge MyPhotos toutes les secondes (page en « no-cors », données,
+        cadre) ne le garde pas éveillé : l'arrêt automatique a lieu quand même (avant : jamais, tant que le site
+        restait ouvert)."""
+        if not port_libre(self.PORT2):
+            self.skipTest(f'port {self.PORT2} déjà pris')
+        donnees = DONNEES / 'essai-instances'
+        proc = lancer_serveur(donnees, self.PORT2, neutre=True, MYPHOTOS_INACTIVITE_S='4')
+        hote = f'127.0.0.1:{self.PORT2}'
+        try:
+            attendre_serveur(proc, self.PORT2)
+            debut = time.monotonic()
+            while proc.poll() is None and time.monotonic() - debut < 20:
+                for chemin, mode, dest in (('/', 'no-cors', 'empty'), ('/api/etat', 'no-cors', 'empty'),
+                                           ('/', 'navigate', 'iframe'), ('/favicon.ico', 'no-cors', 'image')):
+                    try:
+                        requete('GET', chemin, hote=hote, port=self.PORT2, delai=5,
+                                entetes={'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': mode, 'Sec-Fetch-Dest': dest})
+                    except (OSError, http.client.HTTPException):
+                        pass                                       # déjà arrêté, ou en train de s'arrêter
+                time.sleep(1.0)
+            self.assertIsNotNone(proc.poll(), 'MyPhotos reste lancé tant qu\'un autre site l\'interroge')
             self.assertEqual(proc.wait(timeout=60), 0)
         finally:
             arreter_par_pid(proc)
@@ -636,6 +864,814 @@ class TestActionsWindows(unittest.TestCase):
             self.assertEqual(e.exception.statut, 404)
         ouvrir.assert_not_called()
         montrer.assert_not_called()
+
+
+class TestSelection(unittest.TestCase):
+    """Copier, copier dans un dossier, mettre à la Corbeille : Application dans ce processus, base et photos générées
+    dans un dossier temporaire. Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille de Windows sont
+    simulés (la « Corbeille » est un dossier d'essai) : rien ne touche le presse-papiers ni la vraie Corbeille."""
+
+    def setUp(self):
+        from PIL import Image
+        from myphotos import serveur
+        self.serveur = serveur
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-selection-'))
+        self.photos = self.tmp / 'photos'
+        (self.photos / 'sous').mkdir(parents=True)
+        self.fichiers = {}
+        for nom, couleur in (('rouge.jpg', (200, 30, 30)), ('vert.jpg', (30, 200, 30)), ('bleu.png', (30, 30, 200)),
+                             ('sous/rouge.jpg', (250, 120, 0))):
+            p = self.photos / nom
+            Image.new('RGB', (160, 120), couleur).save(p)
+            self.fichiers[nom] = p
+        self.correctifs = [mock.patch.object(serveur.config, 'BASE', self.tmp / 'index.db'),
+                           mock.patch.object(serveur.config, 'MINIATURES', self.tmp / 'miniatures.db'),
+                           mock.patch.object(serveur, 'dossiers_proposes', lambda: []),
+                           mock.patch.object(serveur, 'dossier_images', lambda: None)]
+        for c in self.correctifs:
+            c.start()
+        self.app = serveur.Application(serveur=None)
+        self.dossier = self.app.base.ajouter_dossier(str(self.photos))
+        self.ids = self.ajouter(self.fichiers.values())
+        self.corbeille = self.tmp / 'corbeille-simulee'
+        self.corbeille.mkdir()
+        self.envois = []
+
+    def tearDown(self):
+        try:
+            c = self.app._copie
+            if c is not None:
+                c.arret.set()
+                c.fil.join(10)
+            self.app.base.fermer()
+        finally:
+            for c in reversed(self.correctifs):
+                c.stop()
+            lien = self.photos / 'lien'
+            if lien.exists() or os.path.lexists(lien):
+                os.rmdir(lien)                                  # la jonction seule, jamais ce qu'elle désigne
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def ajouter(self, chemins):
+        """Photos connues de la base, comme après l'inventaire : {chemin relatif au dossier : identifiant}."""
+        lignes = [(str(p), p.stat().st_size, p.stat().st_mtime_ns, None) for p in chemins]
+        self.app.base.ajouter_photos(self.dossier['id'], lignes)
+        connues = self.app.base.connus(self.dossier['id'])
+        return {Path(ch).relative_to(self.photos).as_posix(): v[0] for ch, v in connues.items()}
+
+    def corbeille_simulee(self, ok=True, capacite=None):
+        """infos_corbeille et mettre_a_la_corbeille simulés : la « Corbeille » est un dossier d'essai."""
+        essai = self
+
+        def mettre(chemins):
+            essai.envois.append(list(chemins))
+            for c in chemins:
+                shutil.move(c, essai.corbeille / f'{len(essai.envois)}-{Path(c).name}')
+            return 0, False
+        infos = {'ok': True, 'raison': None, 'capacite': capacite} if ok else \
+            {'ok': False, 'raison': self.serveur.SANS_CORBEILLE, 'capacite': None}
+        return (mock.patch.object(self.serveur, 'infos_corbeille', return_value=infos),
+                mock.patch.object(self.serveur, 'mettre_a_la_corbeille', side_effect=mettre))
+
+    # ---------------------------------------------------------------- copier (presse-papiers)
+
+    def test_dropfiles(self):
+        d = self.serveur.dropfiles(['D:\\Photos\\a.jpg', 'E:\\Photos\\été 2024\\b.png'])
+        self.assertEqual(struct.unpack('<IiiII', d[:20]), (20, 0, 0, 0, 1))           # pFiles, pt, fNC, fWide
+        self.assertEqual(d[20:].decode('utf-16-le'), 'D:\\Photos\\a.jpg\0E:\\Photos\\été 2024\\b.png\0\0')
+
+    def test_copier_dans_le_presse_papiers(self):
+        recus = []
+        with mock.patch.object(self.serveur, 'mettre_au_presse_papiers', side_effect=lambda c: recus.append(c)):
+            r = self.app.copier([self.ids['vert.jpg'], INCONNU, self.ids['rouge.jpg']])
+        self.assertEqual(recus, [[str(self.fichiers['vert.jpg']), str(self.fichiers['rouge.jpg'])]])
+        self.assertEqual((r['copiees'], r['refusees'], r['nb_refusees']),
+                         (2, [{'id': INCONNU, 'raison': self.serveur.INTROUVABLE}], 1))
+        self.fichiers['bleu.png'].unlink()                                    # disque débranché, fichier déplacé…
+        with mock.patch.object(self.serveur, 'mettre_au_presse_papiers') as presse:
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.copier([self.ids['bleu.png'], INCONNU])
+        self.assertEqual(e.exception.statut, 409)
+        presse.assert_not_called()
+        occupe = self.serveur.PressePapiersOccupe('presse-papiers gardé ouvert par exemple.exe')
+        with mock.patch.object(self.serveur, 'mettre_au_presse_papiers', side_effect=occupe), \
+                self.assertLogs('myphotos.serveur', 'WARNING') as journal:
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.copier([self.ids['vert.jpg']])
+        self.assertIn('occupé par un autre programme', str(e.exception))
+        self.assertIn('exemple.exe', journal.output[0])                          # le journal dit qui le gardait
+
+    # ---------------------------------------------------------------- copier dans un dossier
+
+    def copier_vers(self, ids, dossier):
+        self.app.choix_dossier = mock.Mock(demander=mock.Mock(return_value=str(dossier) if dossier else None))
+        r = self.app.copier_vers(ids)
+        if not r.get('annule'):
+            self.app._copie.fil.join(30)
+            self.assertFalse(self.app._copie.fil.is_alive())
+        return r
+
+    def test_copier_vers_sans_jamais_ecraser(self):
+        dest = self.tmp / 'export'
+        dest.mkdir()
+        (dest / 'rouge.jpg').write_bytes(b'une autre photo, deja la')
+        ids = [self.ids['rouge.jpg'], self.ids['sous/rouge.jpg'], self.ids['vert.jpg'], INCONNU]
+        r = self.copier_vers(ids, dest)
+        self.assertFalse(r['annule'])
+        options = self.app.choix_dossier.demander.call_args.kwargs
+        self.assertEqual(options['titre'], 'Choisissez où copier les photos')
+        c = self.app.copie()
+        self.assertEqual((c['etat'], c['total'], c['fait'], c['copiees'], c['nb_renommees'], c['nb_refusees']),
+                         ('fini', 4, 4, 3, 2, 1))
+        self.assertEqual(c['pourcent'], 100.0)
+        self.assertEqual(c['refusees'], [{'id': INCONNU, 'raison': self.serveur.INTROUVABLE}])
+        self.assertEqual({x['nom'] for x in c['renommees']}, {'rouge (2).jpg', 'rouge (3).jpg'})
+        self.assertEqual((dest / 'rouge.jpg').read_bytes(), b'une autre photo, deja la')        # jamais écrasée
+        self.assertEqual((dest / 'rouge (2).jpg').read_bytes(), self.fichiers['rouge.jpg'].read_bytes())
+        self.assertEqual((dest / 'rouge (3).jpg').read_bytes(), self.fichiers['sous/rouge.jpg'].read_bytes())
+        self.assertEqual((dest / 'vert.jpg').read_bytes(), self.fichiers['vert.jpg'].read_bytes())
+        self.assertEqual((dest / 'vert.jpg').stat().st_mtime_ns, self.fichiers['vert.jpg'].stat().st_mtime_ns)
+        self.assertEqual(sorted(p.name for p in dest.iterdir()),
+                         ['rouge (2).jpg', 'rouge (3).jpg', 'rouge.jpg', 'vert.jpg'])       # aucun fichier provisoire
+        self.assertEqual(self.app.base.meta_get('copie_dossier'), str(dest))
+        # Les photos d'origine n'ont pas bougé.
+        self.assertTrue(all(p.exists() for p in self.fichiers.values()))
+        # Une seconde copie : la fenêtre s'ouvre sur le dernier dossier choisi, les noms continuent.
+        self.copier_vers([self.ids['vert.jpg']], dest)
+        self.assertEqual(self.app.choix_dossier.demander.call_args.kwargs['initial'], str(dest))
+        self.assertTrue((dest / 'vert (2).jpg').exists())
+
+    def test_copier_vers_annulation_et_refus(self):
+        self.assertEqual(self.copier_vers([self.ids['vert.jpg']], None), {'annule': True})   # fenêtre fermée
+        self.assertIsNone(self.app.copie())
+        self.app._copie = types.SimpleNamespace(etat='en_cours')                 # une copie à la fois
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.copier_vers([self.ids['vert.jpg']], self.tmp)
+        self.assertEqual(e.exception.statut, 409)
+        self.app._copie = None
+        with mock.patch.object(self.serveur.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=1000)):
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.copier_vers([self.ids['vert.jpg']], self.tmp)
+        self.assertIn('pas assez de place', str(e.exception))
+        with self.assertRaises(self.serveur.Refus):
+            self.copier_vers([INCONNU], self.tmp)                                # rien à copier : pas de fenêtre
+        self.app.choix_dossier.demander.assert_not_called()
+
+    def test_copie_interrompue_sans_fichier_a_moitie_ecrit(self):
+        import numpy as np
+        from PIL import Image
+        grande = self.photos / 'grande.png'
+        Image.fromarray(np.random.default_rng(1).integers(0, 255, (900, 1200, 3), np.uint8)).save(grande)
+        pid = self.ajouter([grande])['grande.png']
+        dest = self.tmp / 'export'
+        dest.mkdir()
+        vrai = self.serveur.Copie._avancer
+
+        def avancer(copie, n):
+            vrai(copie, n)
+            copie.arret.set()                                                  # « Annuler » après le premier bloc
+        with mock.patch.object(self.serveur, 'COPIE_BLOC', 64 * 1024), \
+                mock.patch.object(self.serveur.Copie, '_avancer', avancer):
+            self.copier_vers([pid, self.ids['vert.jpg']], dest)
+        c = self.app.copie()
+        self.assertEqual((c['etat'], c['copiees']), ('annule', 0))
+        self.assertEqual(list(dest.iterdir()), [])                             # ni copie partielle ni provisoire
+
+    # ---------------------------------------------------------------- mettre à la Corbeille
+
+    def test_corbeille_puis_oubli(self):
+        b = self.app.base
+        pid = self.ids['rouge.jpg']
+        taille = self.fichiers['rouge.jpg'].stat().st_size
+        b.enregistrer([{'id': pid, 'taille': taille, 'modifie': self.fichiers['rouge.jpg'].stat().st_mtime_ns,
+                        'largeur': 160, 'hauteur': 120, 'date_prise': None, 'lat': None, 'lon': None,
+                        'vecteur': bytes(16), 'miniature': b'\xff\xd8miniature'}], [], 'base')
+        self.assertIsNotNone(b.miniature(pid))
+        generation = b.generation()
+        ids = [pid, self.ids['vert.jpg'], INCONNU]
+        tailles = taille + self.fichiers['vert.jpg'].stat().st_size
+        infos, mettre = self.corbeille_simulee()
+        with infos, mettre:
+            r = self.app.supprimer(ids, True)
+        self.assertEqual(r['supprimees'], [pid, self.ids['vert.jpg']])
+        self.assertEqual(r['refusees'], [{'id': INCONNU, 'raison': self.serveur.INTROUVABLE}])
+        self.assertEqual(r['octets_liberes'], tailles)
+        self.assertGreater(r['generation'], generation)
+        self.assertEqual(len(self.envois), 1)                                    # un seul appel pour tout le lot
+        self.assertEqual(self.envois[0], [str(self.fichiers['rouge.jpg']), str(self.fichiers['vert.jpg'])])
+        # Envoyées à la « Corbeille », pas détruites ; oubliées de l'index et des miniatures.
+        self.assertEqual(sorted(p.name for p in self.corbeille.iterdir()), ['1-rouge.jpg', '1-vert.jpg'])
+        self.assertIsNone(b.photo(pid))
+        self.assertIsNone(b.miniature(pid))
+        self.assertIsNone(b.photo(self.ids['vert.jpg']))
+        self.assertIsNotNone(b.photo(self.ids['bleu.png']))
+        self.assertTrue(self.fichiers['bleu.png'].exists())
+
+    def test_disque_sans_corbeille(self):
+        infos, mettre = self.corbeille_simulee(ok=False)
+        with infos, mettre as m:
+            r = self.app.supprimer([self.ids['rouge.jpg'], self.ids['vert.jpg']], True)
+        m.assert_not_called()
+        self.assertEqual(r['supprimees'], [])
+        self.assertEqual({x['raison'] for x in r['refusees']},
+                         {'Ce disque n\'a pas de Corbeille : MyPhotos ne supprime pas définitivement.'})
+        self.assertTrue(self.fichiers['rouge.jpg'].exists())
+        self.assertIsNotNone(self.app.base.photo(self.ids['rouge.jpg']))
+
+    def test_verification_corbeille(self):
+        """infos_corbeille : un disque qui n'est pas fixe (réseau, Freebox, clé USB) ou dont la Corbeille ne répond pas,
+        ou une Corbeille réglée pour supprimer définitivement, est refusé. Appels à Windows simulés."""
+        s = self.serveur
+
+        class Faux:
+            def __init__(self, type_disque=s.DRIVE_FIXED, reponse=0):
+                self.type_disque, self.reponse = type_disque, reponse
+
+            def GetDriveTypeW(self, racine):
+                return self.type_disque
+
+            def SHQueryRecycleBinW(self, racine, info):
+                return self.reponse
+        if os.name != 'nt':
+            self.skipTest('Windows seulement')
+        for faux, reglages, attendu in ((Faux(4), (False, None), s.SANS_CORBEILLE),           # partage réseau
+                                        (Faux(2), (False, None), s.SANS_CORBEILLE),           # clé USB
+                                        (Faux(reponse=-2147467259), (False, None), s.SANS_CORBEILLE),
+                                        (Faux(), (True, None), s.CORBEILLE_DESACTIVEE),
+                                        (Faux(), (False, 50 << 20), None)):
+            with self.subTest(type=faux.type_disque, reponse=faux.reponse, reglages=reglages), \
+                    mock.patch.object(s, '_dll', lambda nom, f=faux: f), \
+                    mock.patch.object(s, '_reglages_corbeille', return_value=reglages):
+                r = s.infos_corbeille('Z:\\')
+                self.assertEqual(r['raison'], attendu)
+                self.assertEqual(r['ok'], attendu is None)
+                if attendu is None:
+                    self.assertEqual(r['capacite'], 50 << 20)
+
+    def test_refus_fichier_change_trop_grand_ou_non_confirme(self):
+        infos, mettre = self.corbeille_simulee(capacite=10)
+        rouge, vert = self.fichiers['rouge.jpg'], self.fichiers['vert.jpg']
+        with open(rouge, 'ab') as f:
+            f.write(b'retouche')                                            # changée depuis l'analyse : taille
+        st = vert.stat()
+        os.utime(vert, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))  # … ou date seulement
+        with infos, mettre as m:
+            r = self.app.supprimer([self.ids['rouge.jpg'], self.ids['vert.jpg'], self.ids['bleu.png']], True)
+            for confirme in (None, False, 'oui', 1):
+                with self.assertRaises(self.serveur.Refus) as e:
+                    self.app.supprimer([self.ids['bleu.png']], confirme)
+                self.assertEqual(e.exception.statut, 400)
+        m.assert_not_called()
+        raisons = {x['id']: x['raison'] for x in r['refusees']}
+        self.assertEqual(raisons[self.ids['rouge.jpg']], self.serveur.CHANGEE)
+        self.assertEqual(raisons[self.ids['vert.jpg']], self.serveur.CHANGEE)
+        self.assertEqual(raisons[self.ids['bleu.png']], self.serveur.TROP_GRANDE)   # Corbeille de 10 octets
+        self.assertTrue(all(p.exists() for p in self.fichiers.values()))
+
+    @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
+    def test_pas_a_travers_une_jonction(self):
+        import _winapi
+        from PIL import Image
+        ailleurs = self.tmp / 'ailleurs'
+        ailleurs.mkdir()
+        Image.new('RGB', (160, 120), (90, 90, 90)).save(ailleurs / 'gris.jpg')
+        _winapi.CreateJunction(str(ailleurs), str(self.photos / 'lien'))
+        pid = self.ajouter([self.photos / 'lien' / 'gris.jpg'])['lien/gris.jpg']
+        infos, mettre = self.corbeille_simulee()
+        with infos, mettre as m:
+            r = self.app.supprimer([pid], True)
+        m.assert_not_called()
+        self.assertEqual(r['refusees'], [{'id': pid, 'raison': self.serveur.PAR_UN_LIEN}])
+        self.assertTrue((ailleurs / 'gris.jpg').exists())
+
+    # ---------------------------------------------------------------- relecture de sécurité du 24/11/2026
+
+    @unittest.skipUnless(os.name == 'nt', 'noms réinterprétés par Windows')
+    def test_dossier_finissant_par_un_point(self):
+        """« sous. » (point final, créé avec le préfixe \\\\?\\) à côté de « sous » : sans préfixe, Windows lit
+        « sous\\rouge.jpg ». La mise à la Corbeille, le presse-papiers, « Ouvrir » et « Afficher dans le dossier »
+        de la photo de « sous. » ne doivent jamais désigner celle de « sous » (avant : elle partait à la Corbeille)."""
+        from PIL import Image
+        long_ = '\\\\?\\'
+        piege = str(self.photos / 'sous') + '.'                      # chaînes : jamais réinterprétées
+        os.makedirs(long_ + piege)
+        cible = long_ + piege + '\\rouge.jpg'
+        Image.new('RGB', (160, 120), (10, 10, 240)).save(cible, 'JPEG')
+        st = os.stat(cible)
+        self.app.base.ajouter_photos(self.dossier['id'], [(piege + '\\rouge.jpg', st.st_size, st.st_mtime_ns, None)])
+        pid = self.app.base.connus(self.dossier['id'])[piege + '\\rouge.jpg'][0]
+        leurre = self.fichiers['sous/rouge.jpg']
+        avant = leurre.read_bytes()
+
+        def designe_la_cible(c):
+            try:
+                return os.path.samefile(c, cible)
+            except OSError:
+                return False
+        recus = []
+        with mock.patch.object(self.serveur, 'mettre_au_presse_papiers', side_effect=lambda c: recus.append(c)):
+            try:
+                self.app.copier([pid])
+            except self.serveur.Refus as e:
+                self.assertEqual(str(e), self.serveur.CHEMIN_AMBIGU)
+        self.assertTrue(all(designe_la_cible(c) for x in recus for c in x), recus)
+        with mock.patch.object(self.serveur.os, 'startfile', create=True) as ouvrir, \
+                mock.patch.object(self.serveur, 'montrer_dans_dossier') as montrer:
+            self.app.ouvrir(pid)
+            try:
+                self.app.montrer(pid)
+            except self.serveur.Refus as e:
+                self.assertEqual(str(e), self.serveur.CHEMIN_AMBIGU)
+        for appel in ouvrir.call_args_list + montrer.call_args_list:
+            self.assertTrue(designe_la_cible(appel.args[0]), appel)
+        infos, mettre = self.corbeille_simulee()                   # shutil.move : lit les chemins comme Windows
+        with infos, mettre:
+            r = self.app.supprimer([pid], True)
+        self.assertEqual(leurre.read_bytes(), avant)                # l'autre photo n'a jamais bougé
+        if r['supprimees']:
+            self.assertFalse(os.path.exists(cible))                 # nom court (8.3) : la bonne photo est partie
+        else:
+            self.assertEqual(r['refusees'], [{'id': pid, 'raison': self.serveur.CHEMIN_AMBIGU}])
+            self.assertTrue(os.path.exists(cible))
+        self.assertIsNotNone(self.app.base.photo(self.ids['sous/rouge.jpg']))
+
+    @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
+    def test_copie_vers_jonction_posee_pendant_la_fenetre(self):
+        """La fenêtre « Choisir un dossier » reste ouverte le temps que l'utilisateur choisisse : la photo est vérifiée
+        de nouveau juste avant d'être copiée (avant : une jonction posée entre-temps faisait copier un fichier situé
+        hors des dossiers suivis)."""
+        import _winapi
+        from PIL import Image
+        ailleurs = self.tmp / 'ailleurs'
+        ailleurs.mkdir()
+        Image.new('RGB', (160, 120), (90, 90, 90)).save(ailleurs / 'rouge.jpg')
+        secret = (ailleurs / 'rouge.jpg').read_bytes()
+        dest = self.tmp / 'export'
+        dest.mkdir()
+        sous = self.photos / 'sous'
+
+        def fenetre(**_):
+            os.rename(sous, str(sous) + '-avant')                   # un programme rival, pendant que l'on choisit
+            _winapi.CreateJunction(str(ailleurs), str(sous))
+            return str(dest)
+        self.app.choix_dossier = mock.Mock(demander=mock.Mock(side_effect=fenetre))
+        try:
+            self.app.copier_vers([self.ids['sous/rouge.jpg'], self.ids['vert.jpg']])
+            self.app._copie.fil.join(30)
+            c = self.app.copie()
+        finally:
+            if os.path.isdir(sous) and os.path.exists(str(sous) + '-avant'):
+                os.rmdir(sous)                                      # la jonction seule
+                os.rename(str(sous) + '-avant', sous)
+        self.assertEqual((c['etat'], c['copiees']), ('fini', 1))
+        self.assertEqual(c['refusees'], [{'id': self.ids['sous/rouge.jpg'], 'raison': self.serveur.PAR_UN_LIEN}])
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), ['vert.jpg'])
+        self.assertFalse(any(p.read_bytes() == secret for p in dest.iterdir()))
+
+    @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
+    def test_course_jonction_avant_l_appel_a_windows(self):
+        """Un programme rival remplace le dossier de la photo par une jonction APRÈS les vérifications et juste avant
+        l'appel à Windows. Les dossiers sont tenus pendant toute l'opération : le remplacement échoue (avant : le
+        fichier situé hors des dossiers suivis partait à la Corbeille, et la photo était oubliée)."""
+        import _winapi
+        from PIL import Image
+        ailleurs = self.tmp / 'ailleurs'
+        ailleurs.mkdir()
+        Image.new('RGB', (160, 120), (90, 90, 90)).save(ailleurs / 'rouge.jpg')
+        sous = self.photos / 'sous'
+        essai, rival = self, []
+
+        def mettre(chemins):
+            try:
+                os.rename(sous, str(sous) + '-avant')
+                _winapi.CreateJunction(str(ailleurs), str(sous))
+                rival.append('jonction posée')
+            except OSError as e:
+                rival.append(f'refusé ({e.winerror})')
+            essai.envois.append(list(chemins))
+            for c in chemins:
+                shutil.move(c, essai.corbeille / Path(c).name)
+            return 0, False
+        try:
+            with mock.patch.object(self.serveur, 'infos_corbeille', return_value={'ok': True, 'raison': None,
+                                                                                 'capacite': None}), \
+                    mock.patch.object(self.serveur, 'mettre_a_la_corbeille', side_effect=mettre):
+                r = self.app.supprimer([self.ids['sous/rouge.jpg']], True)
+        finally:
+            if os.path.isdir(sous) and os.path.exists(str(sous) + '-avant'):
+                os.rmdir(sous)
+                os.rename(str(sous) + '-avant', sous)
+        self.assertTrue(rival and rival[0].startswith('refusé'), rival)
+        self.assertTrue((ailleurs / 'rouge.jpg').exists())          # rien hors des dossiers suivis
+        self.assertEqual(r['supprimees'], [self.ids['sous/rouge.jpg']])
+        self.assertFalse(self.fichiers['sous/rouge.jpg'].exists())  # c'est bien la photo qui est partie
+
+    @unittest.skipUnless(os.name == 'nt', 'noms réinterprétés par Windows')
+    def test_destination_finissant_par_un_point(self):
+        """« export. » choisi dans la fenêtre : MyPhotos aurait copié dans « export », un autre dossier."""
+        long_ = '\\\\?\\'
+        (self.tmp / 'export').mkdir()
+        os.makedirs(long_ + str(self.tmp / 'export.'))
+        self.app.choix_dossier = mock.Mock(demander=mock.Mock(return_value=str(self.tmp / 'export.')))
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.copier_vers([self.ids['vert.jpg']])
+        self.assertEqual(str(e.exception), self.serveur.DESTINATION_AMBIGUE)
+        self.assertEqual(list((self.tmp / 'export').iterdir()), [])
+
+    def test_journal_sans_le_texte_cherche(self):
+        """Une recherche qui échoue est notée dans le journal sans ce que l'utilisateur cherchait."""
+        self.app.recherche = mock.Mock(chercher=mock.Mock(side_effect=ValueError('panne')))
+        self.app._preparation = {'etat': 'pret', 'finie': threading.Event()}
+        with mock.patch.object(self.app, 'en_preparation', return_value=False), \
+                self.assertLogs('myphotos.serveur', 'ERROR') as journal:
+            with self.assertRaises(self.serveur.Refus):
+                self.app.chercher('photos de mon secret médical', 0, 10)
+        self.assertNotIn('secret', '\n'.join(journal.output))
+
+    def test_echec_de_windows(self):
+        """Un fichier ouvert ailleurs fait échouer tout le lot : on reprend un par un ; ce qui reste est refusé. Si
+        Windows a voulu supprimer définitivement et qu'on a répondu non, la photo est gardée."""
+        essai = self
+
+        def lot_refuse(chemins):
+            essai.envois.append(list(chemins))
+            if len(chemins) == 1 and not chemins[0].endswith('vert.jpg'):
+                shutil.move(chemins[0], essai.corbeille / Path(chemins[0]).name)
+            return 2, False
+        ids = [self.ids['rouge.jpg'], self.ids['vert.jpg'], self.ids['bleu.png']]
+        with mock.patch.object(self.serveur, 'infos_corbeille', return_value={'ok': True, 'raison': None,
+                                                                             'capacite': None}), \
+                mock.patch.object(self.serveur, 'mettre_a_la_corbeille', side_effect=lot_refuse):
+            r = self.app.supprimer(ids, True)
+        self.assertEqual([len(x) for x in self.envois], [3, 1, 1, 1])
+        self.assertEqual(r['supprimees'], [self.ids['rouge.jpg'], self.ids['bleu.png']])
+        self.assertEqual(r['refusees'], [{'id': self.ids['vert.jpg'], 'raison': self.serveur.PAS_MISE_A_LA_CORBEILLE}])
+        self.assertIsNotNone(self.app.base.photo(self.ids['vert.jpg']))
+        with mock.patch.object(self.serveur, 'infos_corbeille', return_value={'ok': True, 'raison': None,
+                                                                             'capacite': None}), \
+                mock.patch.object(self.serveur, 'mettre_a_la_corbeille', return_value=(0x4C7, True)):
+            r = self.app.supprimer([self.ids['vert.jpg']], True)
+        self.assertEqual(r['refusees'], [{'id': self.ids['vert.jpg'], 'raison': self.serveur.GARDEE}])
+        self.assertTrue(self.fichiers['vert.jpg'].exists())
+
+    def test_base_abimee_signalee_une_fois(self):
+        self.app.base.fermer()
+        for c in reversed(self.correctifs):
+            c.stop()
+        autre = self.tmp / 'abimee'
+        autre.mkdir()
+        (autre / 'index.db').write_bytes(b'ceci n\'est pas une base SQLite' * 100)
+        self.correctifs = [mock.patch.object(self.serveur.config, 'BASE', autre / 'index.db'),
+                           mock.patch.object(self.serveur.config, 'MINIATURES', autre / 'miniatures.db')]
+        for c in self.correctifs:
+            c.start()
+        with self.assertLogs('myphotos.serveur', 'WARNING'):
+            self.app = self.serveur.Application(serveur=None)
+        b = self.app.etat()['base_ecartee']
+        self.assertEqual((b['index'], b['miniatures']), (True, False))
+        self.app.base.fermer()
+        self.app = self.serveur.Application(serveur=None)                      # retenu tant que la page ne l'a pas dit
+        self.assertTrue(self.app.etat()['base_ecartee']['index'])
+        self.assertEqual(self.app.base_ecartee_vue(), {'ok': True})
+        self.assertIsNone(self.app.etat()['base_ecartee'])
+
+    def test_identifiants(self):
+        lire = self.serveur.Gestionnaire._identifiants
+        self.assertEqual(lire([3, '7', 3, 12]), [3, 7, 12])
+        for mauvais in (None, [], [0], ['x'], [True], [2.0], list(range(1, 2002))):
+            with self.assertRaises(self.serveur.Refus):
+                lire(mauvais)
+
+
+class TestDoublons(unittest.TestCase):
+    """Recherche des doublons branchée dans l'application (dans ce processus) : photos générées par Pillow (jamais de
+    vraies photos), analysées par le moteur factice de test_doublons ; Corbeille simulée (un dossier d'essai)."""
+
+    def setUp(self):
+        from PIL import Image
+        from myphotos import doublons, serveur
+        from myphotos.indexation import Indexeur
+        from tests.test_doublons import CLE, DATE_EXIF, dessin, ecrire, fabrique
+        self.serveur, self.doublons_mod, self.cle = serveur, doublons, CLE
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-doublons-serveur-'))
+        self.photos = p = self.tmp / 'photos'
+        a = dessin(1)
+        ecrire(p / 'vacances' / 'IMG_0001.jpg', a, date=DATE_EXIF)
+        shutil.copy2(p / 'vacances' / 'IMG_0001.jpg', p / 'vacances' / 'IMG_0001 - Copie.jpg')
+        ecrire(p / 'WhatsApp Images' / 'IMG-20230501-WA0001.jpg',
+               a.resize((a.width // 2, a.height // 2), Image.Resampling.LANCZOS), qualite=70)
+        ecrire(p / 'divers' / 'C.jpg', dessin(3))
+        ecrire(p / 'divers' / 'D.jpg', dessin(4))
+        self.correctifs = [mock.patch.object(serveur.config, 'BASE', self.tmp / 'index.db'),
+                           mock.patch.object(serveur.config, 'MINIATURES', self.tmp / 'miniatures.db'),
+                           mock.patch.object(serveur, 'dossiers_proposes', lambda: []),
+                           mock.patch.object(serveur, 'dossier_images', lambda: None)]
+        for c in self.correctifs:
+            c.start()
+        self.app = serveur.Application(serveur=None)
+        self.app.base.ajouter_dossier(str(p))
+        ix = Indexeur(self.app.base, fabrique, CLE, fils_decodage=2)
+        try:
+            ix.relancer()
+            self.assertTrue(ix.attendre(90), 'analyse trop longue')
+        finally:
+            ix.arreter(attendre=True)
+        self.chemins = dict(self.app.base._cnx().execute('SELECT id, chemin FROM photos'))
+        self.ids = {os.path.relpath(ch, p).replace('\\', '/'): pid for pid, ch in self.chemins.items()}
+        self.corbeille = self.tmp / 'corbeille-simulee'
+        self.corbeille.mkdir()
+
+    def tearDown(self):
+        try:
+            self.app.fermer()
+        finally:
+            for c in reversed(self.correctifs):
+                c.stop()
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def corbeille_simulee(self):
+        essai = self
+
+        def mettre(chemins):
+            for c in chemins:
+                shutil.move(c, essai.corbeille / Path(c).name)
+            return 0, False
+        return (mock.patch.object(self.serveur, 'infos_corbeille',
+                                  return_value={'ok': True, 'raison': None, 'capacite': None}),
+                mock.patch.object(self.serveur, 'mettre_a_la_corbeille', side_effect=mettre))
+
+    def finir(self, avant=0, delai=60):
+        """Attend la fin du calcul lancé ; renvoie le résumé de l'état (comme dans /api/etat)."""
+        e = attendre(lambda: (lambda x: x if not x['en_cours'] and x['numero'] > avant else None)(
+            self.app.etat_doublons()), delai, 0.05)
+        self.assertTrue(e, f'recherche des doublons non terminée : {self.app.etat_doublons()}')
+        return e
+
+    def noms(self, groupe):
+        inverse = {v: k for k, v in self.ids.items()}
+        return {inverse[p['id']]: p['garder'] for p in groupe['photos']}
+
+    def test_lancer_lire_puis_supprimer_depuis_un_groupe(self):
+        app = self.app
+        e = app.etat()['doublons']
+        self.assertEqual((e['numero'], e['en_cours'], e['deja'], e['perime']), (0, False, False, False))
+        self.assertFalse(app.lancer_doublons(auto=True)['lance'])     # jamais lancée : la page montre le bouton
+        with mock.patch.object(app, '_cle_doublons', return_value=self.cle):
+            r = app.lancer_doublons()
+            self.assertTrue(r['lance'])
+            e = self.finir()
+        self.assertEqual((e['numero'], e['deja'], e['perime'], e['erreur']), (1, True, False, None))
+        self.assertEqual(app.base.meta_get('doublons'), '1')
+        d = app.doublons()
+        self.assertEqual(d['numero'], 1)
+        res = d['resultat']
+        self.assertEqual(res['photos'], 5)
+        par_type = {g['type']: g for g in res['groupes']}
+        self.assertEqual(set(par_type), {'identiques', 'retouchees'})
+        self.assertEqual(self.noms(par_type['identiques']),
+                         {'vacances/IMG_0001.jpg': True, 'vacances/IMG_0001 - Copie.jpg': False})
+        self.assertEqual(self.noms(par_type['retouchees']),
+                         {'vacances/IMG_0001.jpg': True, 'WhatsApp Images/IMG-20230501-WA0001.jpg': False})
+        for g in res['groupes']:
+            self.assertEqual(g['photos'][0]['garder'], True)                    # la photo à garder d'abord
+            self.assertEqual(g['gain_octets'], sum(p['taille'] for p in g['photos'] if not p['garder']))
+            for p in g['photos']:
+                self.assertEqual(p['dossier'], os.path.dirname(self.chemins[p['id']]))   # son dossier à elle
+                self.assertNotIn('chemin', p)
+                self.assertTrue(p['raison'])
+        wa = next(p for p in par_type['retouchees']['photos'] if not p['garder'])
+        self.assertEqual(os.path.basename(wa['dossier']), 'WhatsApp Images')
+        self.assertNotIn('groupes', app.doublons(depuis=1)['resultat'])          # la page les a déjà
+
+        # « Supprimer les copies cochées » : la route de la Corbeille, avec les identifiants du groupe.
+        copies = [p['id'] for g in res['groupes'] for p in g['photos'] if not p['garder']]
+        infos, mettre = self.corbeille_simulee()
+        with infos, mettre:
+            r = app.supprimer(copies, True)
+        self.assertEqual(sorted(r['supprimees']), sorted(copies))
+        self.assertEqual(sorted(x.name for x in self.corbeille.iterdir()),
+                         ['IMG-20230501-WA0001.jpg', 'IMG_0001 - Copie.jpg'])
+        self.assertTrue((self.photos / 'vacances' / 'IMG_0001.jpg').exists())    # l'originale reste
+        # Tout de suite, avant tout nouveau calcul : les groupes ne montrent plus les photos parties.
+        d = app.doublons()
+        self.assertTrue(d['perime'])
+        self.assertEqual(d['resultat']['groupes'], [])
+        # L'index a changé : la page relance d'elle-même, le nouveau calcul ne trouve plus rien.
+        with mock.patch.object(app, '_cle_doublons', return_value=self.cle):
+            self.assertTrue(app.lancer_doublons(auto=True)['lance'])
+            e = self.finir(avant=1)
+        self.assertFalse(e['perime'])
+        self.assertEqual(app.doublons()['resultat']['groupes'], [])
+        self.assertFalse(app.lancer_doublons(auto=True)['lance'])                # à jour : rien à refaire
+
+    def inverse(self, pid):
+        return next(k for k, v in self.ids.items() if v == pid)
+
+    def test_photo_a_garder_partie(self):
+        """La photo à garder a été mise à la Corbeille (depuis la visionneuse) : une autre la remplace, jamais toutes
+        proposées."""
+        shutil.copy2(self.photos / 'vacances' / 'IMG_0001.jpg', self.photos / 'vacances' / 'IMG_0001 (2).jpg')
+        self.ids.update(self.ajouter(['vacances/IMG_0001 (2).jpg']))
+        self.app.lancer_doublons()
+        self.finir()
+        g = next(g for g in self.app.doublons()['resultat']['groupes'] if g['type'] == 'identiques')
+        self.assertEqual(len(g['photos']), 3)
+        garde = g['photos'][0]
+        self.assertEqual(self.inverse(garde['id']), 'vacances/IMG_0001.jpg')
+        infos, mettre = self.corbeille_simulee()
+        with infos, mettre:
+            self.assertEqual(self.app.supprimer([garde['id']], True)['supprimees'], [garde['id']])
+        g = next(g for g in self.app.doublons()['resultat']['groupes'] if g['type'] == 'identiques')
+        self.assertEqual(len(g['photos']), 2)
+        self.assertEqual([p['garder'] for p in g['photos']], [True, False])
+        self.assertEqual(g['photos'][0]['raison'], self.serveur.DOUBLONS_GARDER)
+        self.assertEqual(g['gain_octets'], g['photos'][1]['taille'])
+
+    def ajouter(self, relatifs):
+        """Photos ajoutées après l'analyse (connues, pas encore analysées : sans miniature)."""
+        lignes = []
+        for r in relatifs:
+            f = self.photos / r
+            lignes.append((str(f), f.stat().st_size, f.stat().st_mtime_ns, None))
+        dossier = self.app.base.dossiers()[0]['id']
+        self.app.base.ajouter_photos(dossier, lignes)
+        connues = {os.path.normcase(ch): v[0] for ch, v in self.app.base.connus(dossier).items()}
+        return {r: connues[os.path.normcase(str(self.photos / r))] for r in relatifs}
+
+    def test_jamais_bloquant_ni_moteur_ni_carte(self):
+        """Pendant le calcul : l'état, les photos et leurs fiches répondent tout de suite ; aucun verrou de
+        l'application n'est pris, ni celui de la carte graphique, et aucun moteur n'est chargé."""
+        app = self.app
+        porte, entree = threading.Event(), threading.Event()
+        vrai = self.doublons_mod.Doublons._lire_photos
+
+        def lire(d):
+            entree.set()
+            self.assertTrue(porte.wait(20))
+            return vrai(d)
+        with mock.patch.object(self.doublons_mod.Doublons, '_lire_photos', lire), \
+                mock.patch.object(self.serveur.modele, 'Moteur', side_effect=AssertionError('moteur chargé')):
+            with app._verrou_carte, app.verrou, app._verrou_suppression, app._verrou_copie:
+                self.assertTrue(app.lancer_doublons()['lance'])
+                self.assertTrue(entree.wait(20))
+                self.assertIn('myphotos-doublons', [t.name for t in threading.enumerate()])
+                debut = time.monotonic()
+                e = app.etat()
+                self.assertTrue(e['doublons']['en_cours'])
+                self.assertEqual(e['doublons']['phase'], 'empreintes')
+                self.assertEqual(app.chercher('', 0, 10)['total'], 5)
+                self.assertEqual(app.info_photo(self.ids['divers/C.jpg'])['nom'], 'C.jpg')
+                self.assertFalse(app.lancer_doublons()['lance'])                # une seule à la fois
+                self.assertLess(time.monotonic() - debut, 2.0)
+                porte.set()
+                self.finir()
+        self.assertTrue(app.doublons()['resultat']['groupes'])
+
+    def test_annulation_et_relance(self):
+        app = self.app
+        entree = threading.Event()
+
+        def lire(d):
+            entree.set()
+            self.assertTrue(app._doublons_arret.wait(20))                       # « Arrêter » attendu
+            return {}
+        with mock.patch.object(self.doublons_mod.Doublons, '_lire_photos', lire):
+            app.lancer_doublons()
+            self.assertTrue(entree.wait(20))
+            self.assertEqual(app.annuler_doublons(), {'annule': True})
+            self.assertTrue(attendre(lambda: not app.etat_doublons()['en_cours'], 20, 0.05))
+        e = app.etat_doublons()
+        self.assertEqual((e['numero'], e['erreur'], e['arretee']), (0, None, True))
+        self.assertEqual(app.annuler_doublons(), {'annule': False})
+        self.assertFalse(app.lancer_doublons(auto=True)['lance'])     # arrêtée par l'utilisateur : pas de relance seule
+        self.assertTrue(app.lancer_doublons()['lance'])                 # un clic la relance
+        self.assertFalse(self.finir()['arretee'])
+
+    def test_relance_espacee_pendant_l_analyse_et_echec(self):
+        app = self.app
+        app.lancer_doublons()
+        self.finir()
+        app.base.marquer_modifiees([])                                   # l'index change (nouvelle génération)
+        self.assertTrue(app.etat_doublons()['perime'])
+        with mock.patch.object(app, '_analyse_active', return_value=True):
+            self.assertFalse(app.lancer_doublons(auto=True)['lance'])   # analyse en cours, calcul tout récent
+            with mock.patch.object(self.serveur, 'DOUBLONS_RELANCE_S', 0):
+                self.assertTrue(app.lancer_doublons(auto=True)['lance'])
+                self.finir(avant=1)
+        # Un échec : message en français, pas de relance automatique immédiate.
+        app.base.marquer_modifiees([])
+        with mock.patch.object(self.doublons_mod.Doublons, 'calculer', side_effect=RuntimeError('boom')), \
+                self.assertLogs('myphotos.serveur', 'ERROR'):
+            self.assertTrue(app.lancer_doublons()['lance'])
+            self.assertTrue(attendre(lambda: not app.etat_doublons()['en_cours'], 20, 0.05))
+        e = app.etat_doublons()
+        self.assertEqual(e['erreur'], self.serveur.DOUBLONS_ECHEC)
+        self.assertNotIn('boom', json.dumps(app.doublons()))
+        self.assertFalse(app.lancer_doublons(auto=True)['lance'])
+        self.assertTrue(app.lancer_doublons()['lance'])
+        self.finir(avant=2)
+        self.assertIsNone(app.etat_doublons()['erreur'])
+
+    def test_changement_de_moteur_et_arret_pendant_le_calcul(self):
+        app = self.app
+        with mock.patch.object(app, '_cle_doublons', return_value='a'):
+            app.lancer_doublons()
+            self.finir()
+        premier = app._doublons
+        with mock.patch.object(app, '_cle_doublons', return_value='b'):
+            app.lancer_doublons()
+            self.finir(avant=1)
+        self.assertEqual(app._doublons.cle_modele, 'b')
+        self.assertIsNot(app._doublons, premier)
+        self.assertTrue(premier._fermee)                                  # l'ancien a rendu ses connexions
+        # Arrêt de MyPhotos en plein calcul : le calcul s'interrompt, tout se ferme sans attendre la fin.
+        entree = threading.Event()
+
+        def lire(d):
+            entree.set()
+            app._doublons_arret.wait(20)
+            return {}
+        with mock.patch.object(self.doublons_mod.Doublons, '_lire_photos', lire):
+            app.lancer_doublons()
+            self.assertTrue(entree.wait(20))
+            debut = time.monotonic()
+            app.fermer()
+        self.assertLess(time.monotonic() - debut, 10)
+        self.assertFalse(app._doublons_fil.is_alive())
+        with self.assertRaises(self.serveur.Refus):
+            app.lancer_doublons()
+
+
+@unittest.skipUnless(os.name == 'nt' and os.environ.get('MYPHOTOS_ESSAI_WINDOWS') == '1',
+                     'MYPHOTOS_ESSAI_WINDOWS=1 : vrais presse-papiers et Corbeille de Windows')
+class TestWindowsReel(unittest.TestCase):
+    """Les vrais appels à Windows, à la demande seulement (ils touchent le presse-papiers et la Corbeille de la session) :
+    fichiers générés dans un dossier temporaire, nommés avec un marqueur unique. Le presse-papiers est collé par
+    l'Explorateur lui-même (verbe « paste » du dossier, celui de Ctrl+V) ; la Corbeille n'est purgée que de ces
+    fichiers-là, repérés par leur chemin d'origine."""
+
+    def setUp(self):
+        import uuid
+        from PIL import Image
+        self.marqueur = 'myphotos-essai-' + uuid.uuid4().hex[:10]
+        self.tmp = Path(tempfile.mkdtemp(prefix='myphotos-windows-'))
+        self.chemins = []
+        for i in range(2):
+            p = self.tmp / f'{self.marqueur}-{i + 1}.jpg'
+            Image.new('RGB', (200, 150), (60 * i + 40, 120, 180)).save(p)
+            self.chemins.append(p)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def powershell(script):
+        return subprocess.run(['powershell', '-NoProfile', '-STA', '-Command', script], capture_output=True,
+                              text=True, encoding='utf-8', errors='replace', timeout=120).stdout
+
+    def test_presse_papiers_puis_ctrl_v_dans_l_explorateur(self):
+        from myphotos import serveur
+        dest = self.tmp / 'collees'
+        dest.mkdir()
+        # Le texte que l'utilisateur avait copié est remis à la fin.
+        avant = self.powershell('$t = Get-Clipboard -Raw -Format Text; if ($t) { [Convert]::ToBase64String('
+                                '[Text.Encoding]::UTF8.GetBytes($t)) }').strip()
+        try:
+            serveur.PressePapiers().copier([str(p) for p in self.chemins])
+            lus = self.powershell('Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }').split()
+            self.assertEqual([Path(x).name for x in lus], [p.name for p in self.chemins])
+            self.powershell(f"(New-Object -ComObject Shell.Application).NameSpace('{dest}').Self.InvokeVerb('paste');"
+                            " Start-Sleep -Seconds 3")
+            self.assertTrue(attendre(lambda: len(list(dest.glob('*.jpg'))) == 2, 15))
+            for p in self.chemins:
+                self.assertEqual((dest / p.name).read_bytes(), p.read_bytes())
+        finally:
+            if avant:
+                texte = self.tmp / 'presse-papiers.txt'
+                texte.write_text(base64.b64decode(avant).decode('utf-8'), encoding='utf-8')
+                self.powershell(f"Set-Clipboard -Value (Get-Content -Raw -Encoding UTF8 '{texte}')")
+
+    def test_corbeille(self):
+        from myphotos import serveur
+        racine = serveur.racine_volume(str(self.chemins[0]))
+        self.assertTrue(serveur.infos_corbeille(racine)['ok'])
+        self.assertEqual(serveur.mettre_a_la_corbeille([str(p) for p in self.chemins]), (0, False))
+        self.assertFalse(any(p.exists() for p in self.chemins))
+        trouves = []
+        for i in Path(racine, '$Recycle.Bin').glob('*/$I*'):
+            try:
+                d = i.read_bytes()
+            except OSError:
+                continue
+            n = struct.unpack_from('<i', d, 24)[0] if struct.unpack_from('<q', d, 0)[0] == 2 else 260
+            origine = d[28:28 + 2 * n].decode('utf-16-le', 'replace').split('\0')[0] if n != 260 else \
+                d[24:544].decode('utf-16-le', 'replace').split('\0')[0]
+            if self.marqueur in Path(origine).name and Path(origine).parent == self.tmp:
+                trouves.append(i)
+        self.assertEqual(len(trouves), 2, 'fichiers absents de la Corbeille')
+        for i in trouves:                                              # purge : nos deux fichiers d'essai, rien d'autre
+            for f in (i.with_name('$R' + i.name[2:]), i):
+                f.unlink(missing_ok=True)
 
 
 class TestChoixDossier(unittest.TestCase):
@@ -708,6 +1744,44 @@ class TestOutils(unittest.TestCase):
         self.assertEqual(sans_jargon('Ce dossier est déjà dans la photothèque : « E:\\X ».'),
                          'Ce dossier est déjà dans MyPhotos : « E:\\X ».')
         self.assertEqual(sans_jargon('Une version plus récente de MyPhotos.'), 'Une version plus récente de MyPhotos.')
+        # Jamais de message brut en anglais dans la page (exception glissée dans un message du cœur).
+        self.assertEqual(sans_jargon("L'indexation s'est arrêtée sur une erreur inattendue : database is locked"),
+                         "L'analyse s'est arrêtée sur une erreur inattendue : les fichiers de MyPhotos sont "
+                         "momentanément occupés")
+        self.assertEqual(sans_jargon('database is locked'), 'Les fichiers de MyPhotos sont momentanément occupés')
+        self.assertEqual(sans_jargon('disk I/O error'), "Erreur de lecture ou d'écriture sur le disque")
+        self.assertEqual(sans_jargon("Le moteur de recherche n'a pas pu démarrer ([ONNXRuntimeError] : 6 : "
+                                     "RUNTIME_EXCEPTION : Non-zero status code returned while running Conv node)."),
+                         "Le moteur de recherche n'a pas pu démarrer (erreur interne du moteur).")
+        self.assertEqual(sans_jargon('[WinError 32] Le processus ne peut pas accéder au fichier'),
+                         'Le processus ne peut pas accéder au fichier')
+        for anglais in ('database or disk is full', 'unable to open database file', 'file is not a database',
+                        'attempt to write a readonly database', 'database disk image is malformed',
+                        'no such table: photos', 'out of memory', 'database table is locked'):
+            self.assertNotRegex(sans_jargon(anglais), r'\b(?:database|disk|file|table|memory|unable|attempt)\b',
+                                anglais)
+
+    def test_base_occupee_jamais_en_anglais(self):
+        """Une requête qui bute sur « database is locked » répond en français, sans le message brut."""
+        import sqlite3
+        from myphotos import serveur
+        g = serveur.Gestionnaire.__new__(serveur.Gestionnaire)
+        g.server = types.SimpleNamespace(hotes={'h'})
+        g.headers = {'Host': 'h'}
+        g.path = '/api/etat'
+        g.close_connection = False
+        envoye = []
+        g._erreur = lambda statut, message, fermer=False: envoye.append((statut, message))
+        app = mock.Mock()
+        app.etat.side_effect = sqlite3.OperationalError('database is locked')
+        g._aiguiller(app, 'GET')
+        self.assertEqual(envoye, [(503, 'Les fichiers de MyPhotos sont momentanément occupés : réessayez dans un '
+                                        'moment.')])
+        envoye.clear()
+        app.etat.side_effect = sqlite3.OperationalError('cannot rollback - no transaction is active')
+        g._aiguiller(app, 'GET')
+        self.assertEqual(envoye[0][0], 503)
+        self.assertNotIn('transaction', envoye[0][1])
 
     def test_resume_materiel(self):
         from myphotos.serveur import resume_materiel

@@ -14,10 +14,22 @@ Sécurité : n'importe quel site ouvert dans le navigateur peut viser 127.0.0.1.
 - Host obligatoire : 127.0.0.1:PORT ou localhost:PORT (parade au « DNS rebinding ») ;
 - POST : en-tête X-MyPhotos: 1 (un autre site ne peut pas le poser sans autorisation CORS, jamais donnée),
   corps JSON de 64 Ko au plus, Origin identique à l'adresse du serveur quand elle est présente ;
-- GET des données (/api/, /miniature/, /photo/) refusés quand Sec-Fetch-Site désigne un autre site ;
-- CSP stricte (nonce, aucune ressource externe), nosniff, no-referrer, no-store sur l'API ;
-- photos servies, ouvertes ou montrées uniquement par un identifiant présent en base, et seulement si leur
-  extension est celle d'une image ; aucun chemin de fichier n'est jamais lu dans l'URL.
+- GET refusés quand Sec-Fetch-Site désigne un autre site, sauf l'ouverture de la page dans un onglet (navigate +
+  document) : un autre site ne lit rien et ne garde pas MyPhotos éveillé (arrêt automatique) ;
+- CSP stricte (nonce, aucune ressource externe), nosniff, no-referrer, no-store sur l'API, y compris pour les
+  erreurs du protocole (send_error) ; requêtes malformées refusées sans trace dans le journal ;
+- photos servies, ouvertes, montrées, copiées ou mises à la Corbeille uniquement par un identifiant présent en base,
+  et seulement si leur extension est celle d'une image ; aucun chemin de fichier n'est jamais lu dans l'URL ni dans
+  un corps de requête (la destination d'une copie vient de la fenêtre « Choisir un dossier », ouverte ici) ;
+- jamais transmis à Windows un chemin qu'il lirait autrement (dossier « Vacances. » -> « Vacances ») ; dossiers des
+  photos tenus ouverts entre la vérification et l'action (GardeDossiers) : pas de jonction glissée entre les deux.
+
+Promesse : MyPhotos ne modifie jamais vos photos. Il ne les supprime que si vous le demandez, et alors vers la Corbeille
+de Windows (jamais de suppression définitive : un disque sans Corbeille est refusé, voir infos_corbeille).
+
+Doublons (écran « Doublons » de la page) : la recherche tourne dans son propre fil, avec la base et numpy seulement
+(doublons.py n'utilise ni le moteur ni la carte graphique) ; la recherche de photos et l'analyse continuent pendant ce
+temps. Elle ne fait que proposer : les photos partent par /api/supprimer, après un clic et une confirmation.
 
 Variables d'environnement : MYPHOTOS_PORT, MYPHOTOS_DOSSIER, MYPHOTOS_MODELES (voir config.py) ;
 MYPHOTOS_SANS_PAGE=1 n'ouvre pas la page ; MYPHOTOS_TELECHARGEMENT_FACTICE=1 simule le téléchargement du
@@ -41,6 +53,9 @@ import secrets
 import shutil
 import socket
 import socketserver
+import sqlite3
+import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -53,9 +68,11 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import config, materiel, modele
+from . import doublons as _doublons
 from . import recherche as _recherche
-from .base import Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans
-from .indexation import Indexeur, Parcours
+from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, maintenant,
+                   normaliser_chemin)
+from .indexation import _BALISES_LIENS, Indexeur, Parcours
 from .recherche import Recherche
 
 NOM = 'MyPhotos'
@@ -100,6 +117,39 @@ PHOTO_ABSENTE = ("La photo d'origine est introuvable : le disque est peut-être 
 _IDENTIFIANT = re.compile(r'[1-9][0-9]{0,17}')
 _FOLDERID_PICTURES = '{33E28130-4E1E-4676-835A-98395C3BC3BB}'
 
+# Sélection : copier, copier dans un dossier, mettre à la Corbeille. Jamais de chemin venu de la page : seulement des
+# identifiants de photos présentes en base, au plus LIMITE_SELECTION par requête.
+LIMITE_SELECTION = 2000
+COPIE_BLOC = 1 << 20               # copie vers un dossier : par blocs de 1 Mo (annulable, avancement)
+COPIE_MARGE = 16 * 1024 * 1024     # place gardée libre sur le disque de destination
+REFUS_MAX = 200                    # refus détaillés dans un compte rendu (le nombre total est toujours donné)
+INTROUVABLE = "Cette photo n'est plus dans MyPhotos."
+PAS_UNE_PHOTO = "Ce fichier n'est pas une photo."
+PAR_UN_LIEN = ("Cette photo est atteinte par un raccourci vers un autre emplacement (lien symbolique ou jonction) : "
+               "MyPhotos n'y touche pas.")
+CHANGEE = ("Cette photo a changé depuis son analyse : MyPhotos ne la supprime pas. Réessayez quand l'analyse l'aura "
+           "revue.")
+SANS_CORBEILLE = "Ce disque n'a pas de Corbeille : MyPhotos ne supprime pas définitivement."
+CORBEILLE_DESACTIVEE = "La Corbeille de ce disque est désactivée : MyPhotos ne supprime pas définitivement."
+TROP_GRANDE = ("Cette photo est trop grande pour la Corbeille de ce disque : MyPhotos ne la supprime pas "
+               "définitivement.")
+CHEMIN_TROP_LONG = "Le chemin de cette photo est trop long pour Windows."
+# Un nom de dossier qui finit par un point (« Vacances. », possible hors de l'Explorateur) : sans le préfixe \\?\, Windows
+# retire ce point et désigne un AUTRE dossier (« Vacances »). Mise à la Corbeille, copie, ouverture : refusées.
+CHEMIN_AMBIGU = ("Un dossier de cette photo a un nom que Windows confond avec un autre (il finit par un point) : "
+                 "MyPhotos n'y touche pas.")
+DESTINATION_AMBIGUE = ("Le nom de ce dossier finit par un point ou une espace : Windows le confondrait avec un autre "
+                       "dossier. Choisissez-en un autre.")
+PAS_MISE_A_LA_CORBEILLE = ("Windows n'a pas pu mettre cette photo à la Corbeille : elle est peut-être ouverte dans un "
+                           "autre programme.")
+GARDEE = "Windows allait la supprimer définitivement : elle a été gardée."
+PHOTO_ILLISIBLE = "Cette photo n'a pas pu être lue : le disque est peut-être débranché."
+
+# Doublons (voir doublons.py) : calcul en arrière-plan, avec la base et numpy seulement (ni moteur ni carte graphique).
+DOUBLONS_RELANCE_S = 30            # index changé pendant l'analyse : nouveau calcul demandé par la page, au plus toutes les 30 s
+DOUBLONS_ECHEC = 'La recherche des doublons n\'a pas abouti. Réessayez ; si cela continue, relancez MyPhotos.'
+DOUBLONS_GARDER = 'À garder : la meilleure des photos qui restent.'
+
 # Le public ne connaît ni « modèle » ni « indexation » : on parle de moteur de reconnaissance et d'analyse.
 _JARGON = ((re.compile(r'\bmodèles\b'), 'moteurs'), (re.compile(r'\bmodèle\b'), 'moteur'),
            (re.compile(r'\bModèles\b'), 'Moteurs'), (re.compile(r'\bModèle\b'), 'Moteur'),
@@ -107,6 +157,21 @@ _JARGON = ((re.compile(r'\bmodèles\b'), 'moteurs'), (re.compile(r'\bmodèle\b')
            # Ancien nom du logiciel, encore présent dans quelques messages du cœur.
            (re.compile(r'\b(de|à) la [Pp]hotothèque\b'), r'\1 MyPhotos'),
            (re.compile(r'\bla [Pp]hotothèque\b'), 'MyPhotos'), (re.compile(r'\b[Pp]hotothèque\b'), 'MyPhotos'))
+# Messages bruts en anglais (SQLite, ONNX Runtime, numéros d'erreur) qu'une exception peut glisser dans un message
+# du cœur (« L'indexation s'est arrêtée sur une erreur inattendue : database is locked ») : jamais tels quels.
+_ANGLAIS = (
+    (re.compile(r'\[ONNXRuntimeError\][^()]*'), 'erreur interne du moteur'),
+    (re.compile(r'\[(?:WinError|Errno) -?\d+\]\s*'), ''),
+    (re.compile(r'\bdatabase (?:table )?is locked\b', re.I), 'les fichiers de MyPhotos sont momentanément occupés'),
+    (re.compile(r'\bdatabase or disk is full\b', re.I), 'le disque est plein'),
+    (re.compile(r'\bdisk I/O error\b', re.I), "erreur de lecture ou d'écriture sur le disque"),
+    (re.compile(r'\bunable to open database file\b', re.I), 'les fichiers de MyPhotos sont inaccessibles'),
+    (re.compile(r'\battempt to write a readonly database\b', re.I), 'les fichiers de MyPhotos sont en lecture seule'),
+    (re.compile(r'\b(?:database disk image is malformed|file is not a database)\b', re.I),
+     'un fichier de MyPhotos est abîmé'),
+    (re.compile(r'\bno such (?:table|column)\b[^.;)]*', re.I), 'un fichier de MyPhotos est incomplet'),
+    (re.compile(r'\bout of memory\b', re.I), 'mémoire insuffisante'),
+)
 
 
 class Refus(Exception):
@@ -155,8 +220,15 @@ class MoteurPartage:
 
 
 def sans_jargon(texte):
+    """Message du cœur dit avec les mots du public : ni « modèle » ni « indexation », jamais de message brut en
+    anglais (traduit, en commençant par une majuscule s'il ouvre la phrase)."""
     if not isinstance(texte, str):
         return texte
+    for motif, mot in _ANGLAIS:
+        m = motif.search(texte)
+        if m and m.start() == 0 and mot:
+            texte = mot[0].upper() + mot[1:] + texte[m.end():]
+        texte = motif.sub(mot, texte)
     for motif, mot in _JARGON:
         texte = motif.sub(mot, texte)
     return texte
@@ -209,22 +281,50 @@ def configurer_journal():
 # ---------------------------------------------------------------- Windows
 
 _DLL = {}
+_32_BITS = ctypes.sizeof(ctypes.c_void_p) == 4     # en 32 bits, shellapi.h serre ses structures (pshpack1.h)
+
+
+class _OperationFichiers(ctypes.Structure):
+    """SHFILEOPSTRUCTW."""
+    if _32_BITS:
+        _pack_ = 1
+    _fields_ = [('hwnd', ctypes.c_void_p), ('wFunc', ctypes.c_uint), ('pFrom', ctypes.c_void_p),
+                ('pTo', ctypes.c_void_p), ('fFlags', ctypes.c_ushort), ('fAnyOperationsAborted', ctypes.c_int),
+                ('hNameMappings', ctypes.c_void_p), ('lpszProgressTitle', ctypes.c_wchar_p)]
+
+
+class _InfosCorbeille(ctypes.Structure):
+    """SHQUERYRBINFO."""
+    if _32_BITS:
+        _pack_ = 1
+    _fields_ = [('cbSize', ctypes.c_uint32), ('i64Size', ctypes.c_int64), ('i64NumItems', ctypes.c_int64)]
 
 
 def _dll(nom):
     """Instance privée d'une DLL : nos argtypes ne touchent pas ceux des autres modules."""
     if nom not in _DLL:
         d = ctypes.WinDLL(nom, use_last_error=True)
-        v, u, b = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int
+        v, u, b, w = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p
         signatures = {
             'user32': {'GetForegroundWindow': ([], v), 'GetWindowThreadProcessId': ([v, v], u),
                        'AttachThreadInput': ([u, u, b], b), 'SetForegroundWindow': ([v], b),
                        'BringWindowToTop': ([v], b), 'GetAncestor': ([v, u], v),
-                       'MessageBoxW': ([v, ctypes.c_wchar_p, ctypes.c_wchar_p, u], b)},
-            'kernel32': {'GetCurrentThreadId': ([], u)},
+                       'MessageBoxW': ([v, w, w, u], b),
+                       'CreateWindowExW': ([u, w, w, u, b, b, b, b, v, v, v, v], v), 'DestroyWindow': ([v], b),
+                       'OpenClipboard': ([v], b), 'EmptyClipboard': ([], b), 'CloseClipboard': ([], b),
+                       'SetClipboardData': ([u, v], v), 'RegisterClipboardFormatW': ([w], u),
+                       'GetOpenClipboardWindow': ([], v)},
+            'kernel32': {'GetCurrentThreadId': ([], u), 'GlobalAlloc': ([u, ctypes.c_size_t], v),
+                         'GlobalLock': ([v], v), 'GlobalUnlock': ([v], b), 'GlobalFree': ([v], v),
+                         'GetDriveTypeW': ([w], u), 'GetVolumePathNameW': ([w, w, u], b),
+                         'GetVolumeNameForVolumeMountPointW': ([w, w, u], b), 'GetShortPathNameW': ([w, w, u], u),
+                         'CreateFileW': ([w, u, u, v, u, u, v], v), 'CloseHandle': ([v], b),
+                         'GetFinalPathNameByHandleW': ([v, w, u, u], u)},
             'shell32': {'SHGetKnownFolderPath': ([v, u, v, ctypes.POINTER(v)], ctypes.c_long),
-                        'ILCreateFromPathW': ([ctypes.c_wchar_p], v), 'ILFree': ([v], None),
-                        'SHOpenFolderAndSelectItems': ([v, u, v, u], ctypes.c_long)},
+                        'ILCreateFromPathW': ([w], v), 'ILFree': ([v], None),
+                        'SHOpenFolderAndSelectItems': ([v, u, v, u], ctypes.c_long),
+                        'SHFileOperationW': ([ctypes.POINTER(_OperationFichiers)], b),
+                        'SHQueryRecycleBinW': ([w, ctypes.POINTER(_InfosCorbeille)], ctypes.c_long)},
             'ole32': {'CoTaskMemFree': ([v], None), 'CoInitializeEx': ([v, u], ctypes.c_long),
                       'CoUninitialize': ([], None)},
         }[nom]
@@ -341,6 +441,412 @@ def montrer_dans_dossier(chemin):
         subprocess.Popen(f'explorer.exe /select,"{chemin}"')
 
 
+def compris_tel_quel(chemin):
+    """Vrai si Windows comprend ce chemin habituel (sans le préfixe \\\\?\\) tel quel. Sinon il le réinterprète : un nom
+    de dossier qui finit par un point (« Vacances. », que l'Explorateur ne sait pas créer mais qu'une archive ou un
+    autre système peut laisser) perd ce point et le chemin désigne alors un AUTRE dossier, « Vacances »."""
+    if os.name != 'nt':
+        return True
+    try:
+        return os.path.abspath(chemin) == chemin          # GetFullPathNameW : la lecture qu'en fera Windows
+    except (OSError, ValueError):
+        return False
+
+
+def chemin_pour_windows(chemin):
+    """Chemin à donner à l'Explorateur, au presse-papiers et à la Corbeille, qui n'acceptent pas le préfixe \\\\?\\ : le
+    chemin habituel s'il désigne bien CE fichier (moins de 260 caractères, compris tel quel), sinon son nom court
+    (8.3) ; None si aucun ne convient (voir refus_chemin_windows)."""
+    if os.name != 'nt':
+        return chemin if len(chemin) < 260 else None
+    if len(chemin) < 260 and compris_tel_quel(chemin):
+        return chemin
+    tampon = ctypes.create_unicode_buffer(32768)
+    n = _dll('kernel32').GetShortPathNameW(chemin_systeme(chemin), tampon, len(tampon))
+    court = chemin_affiche(tampon.value) if 0 < n < len(tampon) else ''
+    return court if court and len(court) < 260 and compris_tel_quel(court) else None
+
+
+def refus_chemin_windows(chemin):
+    """Pourquoi chemin_pour_windows n'a rien trouvé : chemin trop long, ou nom que Windows comprendrait autrement."""
+    return CHEMIN_TROP_LONG if compris_tel_quel(chemin) else CHEMIN_AMBIGU
+
+
+# ---------------------------------------------------------------- dossiers tenus pendant une action
+
+_INVALIDE = ctypes.c_void_p(-1).value
+_FILE_LIST_DIRECTORY, _FILE_READ_ATTRIBUTES = 0x0001, 0x0080
+_FILE_SHARE_READ, _FILE_SHARE_WRITE, _FILE_SHARE_DELETE = 0x1, 0x2, 0x4
+_OPEN_EXISTING, _FILE_FLAG_BACKUP_SEMANTICS = 3, 0x02000000
+
+
+def _ouvrir_dossier(chemin, acces, partage):
+    """Poignée Windows sur un dossier (les liens et jonctions sont suivis), ou None."""
+    h = _dll('kernel32').CreateFileW(chemin_systeme(chemin), acces, partage, None, _OPEN_EXISTING,
+                                     _FILE_FLAG_BACKUP_SEMANTICS, None)
+    return None if h in (None, 0, _INVALIDE) else h
+
+
+def _emplacement_reel(h):
+    """Chemin réel (habituel) de l'objet tenu par cette poignée, liens et jonctions résolus ; None si inconnu."""
+    tampon = ctypes.create_unicode_buffer(32768)
+    n = _dll('kernel32').GetFinalPathNameByHandleW(h, tampon, len(tampon), 0)
+    return chemin_affiche(tampon.value) if 0 < n < len(tampon) else None
+
+
+class GardeDossiers:
+    """Tient ouverts les dossiers des photos pendant qu'on les vérifie puis qu'on agit (mise à la Corbeille, ouverture
+    pour une copie). Sans partage de suppression, et avec un accès qui compte pour le partage (une poignée « attributs
+    seuls » ne bloquerait rien), personne ne peut renommer ni supprimer un dossier tenu ; et NTFS refuse de renommer un
+    dossier au-dessus d'une poignée ouverte. Le chemin ne peut donc plus être détourné par une jonction ou un lien posé
+    entre la vérification et l'action (essai du 24/11/2026 : sans cela, un programme rival bien synchronisé envoyait à
+    la Corbeille un fichier situé hors des dossiers suivis). Ailleurs que sous Windows : rien n'est tenu."""
+
+    def __init__(self):
+        self._poignees = {}                      # clé du dossier -> poignée (None : Windows a refusé)
+        self._racines = {}                       # clé d'un dossier suivi -> son emplacement réel
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.relacher()
+
+    def tenir(self, dossier):
+        """Tient ce dossier (chemin habituel) jusqu'à relacher() ; faux si Windows refuse (dossier absent…)."""
+        if os.name != 'nt':
+            return True
+        k = cle_chemin(dossier)
+        if k not in self._poignees:
+            self._poignees[k] = _ouvrir_dossier(dossier, _FILE_LIST_DIRECTORY | _FILE_READ_ATTRIBUTES,
+                                                _FILE_SHARE_READ | _FILE_SHARE_WRITE)
+        return self._poignees[k] is not None
+
+    def au_bon_endroit(self, dossier, racine):
+        """Le dossier tenu est-il bien celui que désigne son chemin depuis le dossier suivi `racine`, sans lien ni
+        jonction entre les deux ? Son emplacement réel doit être celui de la racine suivi du reste du chemin (la racine
+        elle-même peut être un lien : c'est l'utilisateur qui l'a choisie)."""
+        if os.name != 'nt':
+            return True
+        h = self._poignees.get(cle_chemin(dossier))
+        if h is None:
+            return False
+        k = cle_chemin(racine)
+        if k not in self._racines:
+            hr = _ouvrir_dossier(racine, _FILE_READ_ATTRIBUTES,
+                                 _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE)
+            try:
+                self._racines[k] = _emplacement_reel(hr) if hr is not None else None
+            finally:
+                if hr is not None:
+                    _dll('kernel32').CloseHandle(hr)
+        vraie_racine, reel = self._racines[k], _emplacement_reel(h)
+        parties = _parties_sous(dossier, racine)
+        if vraie_racine is None or reel is None or parties is None:
+            return False
+        return cle_chemin(reel) == cle_chemin(os.path.join(vraie_racine, *parties))
+
+    def relacher(self):
+        for h in self._poignees.values():
+            if h is not None:
+                _dll('kernel32').CloseHandle(h)
+        self._poignees.clear()
+
+
+# ---------------------------------------------------------------- presse-papiers de Windows
+
+CF_HDROP = 15
+_GMEM = 0x0002 | 0x0040                    # GMEM_MOVEABLE | GMEM_ZEROINIT
+_HWND_MESSAGE = -3                         # fenêtre « message-only » : jamais affichée
+_DROPEFFECT_COPY = 1
+PRESSE_PAPIERS_ESSAIS = 100                # presse-papiers tenu par un autre programme : 100 essais…
+PRESSE_PAPIERS_PAUSE_S = 0.05              # … espacés de 50 ms (5 s : un gestionnaire de presse-papiers peut le garder)
+
+
+class PressePapiersOccupe(OSError):
+    """Un autre programme garde le presse-papiers ouvert."""
+
+
+def _programme_de(fenetre):
+    """Nom du programme d'une fenêtre (« notepad.exe »), pour le journal seulement ; « ? » si inconnu."""
+    if not fenetre:
+        return '?'
+    try:
+        pid = ctypes.c_uint32()
+        f = ctypes.WinDLL('user32', use_last_error=True).GetWindowThreadProcessId
+        f.argtypes, f.restype = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)], ctypes.c_uint32
+        f(fenetre, ctypes.byref(pid))
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        k.OpenProcess.argtypes, k.OpenProcess.restype = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32], ctypes.c_void_p
+        k.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p,
+                                                 ctypes.POINTER(ctypes.c_uint32)]
+        k.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k.OpenProcess(0x1000, False, pid.value)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return f'processus {pid.value}'
+        try:
+            tampon = ctypes.create_unicode_buffer(1024)
+            n = ctypes.c_uint32(len(tampon))
+            if k.QueryFullProcessImageNameW(h, 0, tampon, ctypes.byref(n)):
+                return os.path.basename(tampon.value)
+        finally:
+            k.CloseHandle(h)
+        return f'processus {pid.value}'
+    except Exception:
+        return '?'
+
+
+def dropfiles(chemins):
+    """Contenu du format CF_HDROP : structure DROPFILES (pFiles = 20, pt = (0, 0), fNC = 0, fWide = 1), puis chaque
+    chemin en UTF-16 terminé par un zéro, et un zéro de plus pour finir la liste."""
+    return struct.pack('<IiiII', 20, 0, 0, 0, 1) + (''.join(c + '\0' for c in chemins) + '\0').encode('utf-16-le')
+
+
+def _poser(user32, kernel32, format_, octets):
+    h = kernel32.GlobalAlloc(_GMEM, len(octets))
+    if not h:
+        raise MemoryError('mémoire insuffisante pour le presse-papiers')
+    try:
+        p = kernel32.GlobalLock(h)
+        if not p:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            ctypes.memmove(p, octets, len(octets))
+        finally:
+            kernel32.GlobalUnlock(h)
+        if not user32.SetClipboardData(format_, h):
+            raise ctypes.WinError(ctypes.get_last_error())
+    except BaseException:
+        kernel32.GlobalFree(h)                  # refusé par le presse-papiers : la mémoire reste à nous
+        raise
+
+
+def mettre_au_presse_papiers(chemins, essais=PRESSE_PAPIERS_ESSAIS, pause=PRESSE_PAPIERS_PAUSE_S):
+    """Met ces fichiers dans le presse-papiers, comme « Copier » dans l'Explorateur : format CF_HDROP, plus « Preferred
+    DropEffect » = copie (pas couper). Un Ctrl+V dans un dossier, un e-mail ou un document les colle.
+
+    Une fenêtre invisible en est la propriétaire le temps de l'écriture, puis elle est détruite : les données restent,
+    et aucun autre programme n'attendra jamais qu'elle réponde (elle n'a pas de boucle de messages)."""
+    if os.name != 'nt':
+        raise OSError('presse-papiers de Windows indisponible')
+    user32, kernel32 = _dll('user32'), _dll('kernel32')
+    fenetre = user32.CreateWindowExW(0, 'STATIC', NOM, 0, 0, 0, 0, 0, _HWND_MESSAGE, None, None, None)
+    if not fenetre:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        for _ in range(max(1, essais)):
+            if user32.OpenClipboard(fenetre):
+                break
+            time.sleep(pause)
+        else:
+            raise PressePapiersOccupe(f'presse-papiers gardé ouvert par {_programme_de(user32.GetOpenClipboardWindow())}')
+        try:
+            if not user32.EmptyClipboard():
+                raise ctypes.WinError(ctypes.get_last_error())
+            _poser(user32, kernel32, CF_HDROP, dropfiles(chemins))
+            effet = user32.RegisterClipboardFormatW('Preferred DropEffect')
+            if effet:
+                _poser(user32, kernel32, effet, struct.pack('<I', _DROPEFFECT_COPY))
+        finally:
+            user32.CloseClipboard()
+    finally:
+        user32.DestroyWindow(fenetre)
+
+
+class PressePapiers:
+    """Fil réservé au presse-papiers : les demandes passent une à une, toujours par le même fil."""
+
+    def __init__(self):
+        self._demandes = queue.Queue()
+        self._fil = None
+        self._verrou = threading.Lock()
+
+    def copier(self, chemins, delai=30):
+        with self._verrou:
+            if self._fil is None or not self._fil.is_alive():
+                self._fil = threading.Thread(target=self._boucle, name='myphotos-presse-papiers', daemon=True)
+                self._fil.start()
+        reponse = concurrent.futures.Future()
+        self._demandes.put((reponse, list(chemins)))
+        return reponse.result(timeout=delai)
+
+    def _boucle(self):
+        while True:
+            reponse, chemins = self._demandes.get()
+            if not reponse.set_running_or_notify_cancel():
+                continue
+            try:
+                mettre_au_presse_papiers(chemins)
+            except BaseException as e:
+                reponse.set_exception(e)
+            else:
+                reponse.set_result(len(chemins))
+
+
+# ---------------------------------------------------------------- Corbeille de Windows
+
+FO_DELETE = 3
+FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 0x0004, 0x0010, 0x0040, 0x0400
+FOF_NO_CONNECTED_ELEMENTS, FOF_WANTNUKEWARNING = 0x2000, 0x4000
+DRIVE_FIXED = 3
+CORBEILLE_PART_DEFAUT = 20                 # taille de la Corbeille non réglée : 1/20 du disque (5 %, prudent)
+
+
+def racine_volume(chemin):
+    """Racine du volume qui porte ce chemin : « C:\\ », « \\\\serveur\\partage\\ » ou un dossier de montage."""
+    tampon = ctypes.create_unicode_buffer(32768)
+    if not _dll('kernel32').GetVolumePathNameW(chemin_systeme(chemin), tampon, len(tampon)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return chemin_affiche(tampon.value)
+
+
+def _reglages_corbeille(racine):
+    """(detruire, capacite) : la Corbeille de ce volume supprime-t-elle définitivement (réglage « Ne pas déplacer les
+    fichiers vers la Corbeille », ou stratégie NoRecycleFiles), et sa taille maximale en octets (None : non réglée)."""
+    import winreg
+    detruire, capacite = False, None
+    for ruche in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(ruche, r'Software\Microsoft\Windows\CurrentVersion\Policies\Explorer') as k:
+                detruire = detruire or winreg.QueryValueEx(k, 'NoRecycleFiles')[0] == 1
+        except OSError:
+            pass
+    tampon = ctypes.create_unicode_buffer(64)
+    if _dll('kernel32').GetVolumeNameForVolumeMountPointW(racine, tampon, len(tampon)):
+        guid = re.search(r'\{[0-9A-Fa-f-]{36}\}', tampon.value)
+        if guid:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Software\\Microsoft\\Windows\\CurrentVersion\\'
+                                    'Explorer\\BitBucket\\Volume\\' + guid.group(0)) as k:
+                    for nom in ('NukeOnDelete', 'MaxCapacity'):
+                        try:
+                            v = winreg.QueryValueEx(k, nom)[0]
+                        except OSError:
+                            continue
+                        if nom == 'NukeOnDelete':
+                            detruire = detruire or v == 1
+                        elif isinstance(v, int) and v > 0:
+                            capacite = v * 1024 * 1024
+            except OSError:
+                pass
+    return detruire, capacite
+
+
+def infos_corbeille(racine):
+    """Ce volume a-t-il une Corbeille où envoyer des photos ? {'ok', 'raison', 'capacite'} ; capacite : taille
+    maximale d'un fichier qu'elle accepte, en octets (au-delà, Windows supprimerait définitivement).
+
+    Refusés : tout ce qui n'est pas un disque fixe (partage réseau, Freebox, clé USB, carte mémoire…), un volume pour
+    lequel SHQueryRecycleBinW échoue, et une Corbeille réglée pour supprimer définitivement."""
+    non = {'ok': False, 'raison': SANS_CORBEILLE, 'capacite': None}
+    if os.name != 'nt':
+        return non
+    try:
+        if _dll('kernel32').GetDriveTypeW(racine) != DRIVE_FIXED:
+            return non
+        info = _InfosCorbeille()
+        info.cbSize = ctypes.sizeof(info)
+        if _dll('shell32').SHQueryRecycleBinW(racine, ctypes.byref(info)) != 0:
+            return non
+        detruire, capacite = _reglages_corbeille(racine)
+    except OSError:
+        journal.info('Corbeille du volume %s : vérification impossible', racine, exc_info=True)
+        return non
+    if detruire:
+        return {'ok': False, 'raison': CORBEILLE_DESACTIVEE, 'capacite': None}
+    if capacite is None:
+        try:
+            capacite = shutil.disk_usage(racine).total // CORBEILLE_PART_DEFAUT
+        except OSError:
+            capacite = None
+    return {'ok': True, 'raison': None, 'capacite': capacite}
+
+
+def mettre_a_la_corbeille(chemins):
+    """Envoie ces fichiers à la Corbeille : SHFileOperationW, FO_DELETE avec FOF_ALLOWUNDO. Aucune fenêtre (FOF_SILENT,
+    FOF_NOCONFIRMATION, FOF_NOERRORUI), sauf une : FOF_WANTNUKEWARNING. Si Windows s'apprêtait malgré tout à supprimer
+    définitivement un fichier (ce que les vérifications d'infos_corbeille écartent), il le demanderait. Jamais les
+    fichiers « liés » (FOF_NO_CONNECTED_ELEMENTS). Chemins complets, de moins de 260 caractères, sans * ni ?.
+
+    Renvoie (code, abandon) ; l'appelant regarde ensuite quels fichiers sont partis."""
+    if os.name != 'nt':
+        raise OSError('Corbeille de Windows indisponible')
+    if not chemins:
+        return 0, False
+    tampon = ctypes.create_string_buffer((''.join(c + '\0' for c in chemins) + '\0').encode('utf-16-le') + b'\0\0')
+    op = _OperationFichiers()
+    op.wFunc = FO_DELETE
+    op.pFrom = ctypes.addressof(tampon)
+    op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_NO_CONNECTED_ELEMENTS
+                 | FOF_WANTNUKEWARNING)
+    ole32 = _dll('ole32')
+    init = ole32.CoInitializeEx(None, 0x2)                   # COINIT_APARTMENTTHREADED
+    try:
+        code = _dll('shell32').SHFileOperationW(ctypes.byref(op))
+    finally:
+        if init in (0, 1):
+            ole32.CoUninitialize()
+    return code, bool(op.fAnyOperationsAborted)
+
+
+def _est_un_lien(st):
+    """Lien symbolique ou jonction (comme indexation.Parcours, qui ne les suit jamais). Les autres points d'analyse,
+    dont les fichiers OneDrive à la demande, n'en sont pas."""
+    return stat.S_ISLNK(st.st_mode) or (bool(getattr(st, 'st_file_attributes', 0) & 0x400)
+                                       and getattr(st, 'st_reparse_tag', 0) in _BALISES_LIENS)
+
+
+def _parties_sous(chemin, racine):
+    """Éléments de `chemin` situés sous le dossier `racine`, ou None s'il n'est pas dessous. Comparaison élément par
+    élément, sans os.path.relpath : celui-ci passe par GetFullPathNameW, qui retire le point final d'un nom de dossier
+    (« Vacances. » devenait « Vacances », un autre dossier)."""
+    pc = chemin_affiche(chemin).rstrip(os.sep).split(os.sep)
+    pr = chemin_affiche(racine).rstrip(os.sep).split(os.sep)
+    if len(pc) < len(pr) or [os.path.normcase(x) for x in pc[:len(pr)]] != [os.path.normcase(x) for x in pr]:
+        return None
+    return pc[len(pr):]
+
+
+def _passe_par_un_lien(chemin, racine):
+    """Vrai si l'un des dossiers entre `racine` (le dossier suivi, choisi par l'utilisateur) et le fichier est un lien
+    symbolique ou une jonction : l'analyse ne les suit pas, la suppression non plus."""
+    parties = _parties_sous(chemin, racine)
+    if not parties or any(x in ('', '.', '..') for x in parties):
+        return True
+    courant = racine
+    for nom in parties[:-1]:
+        courant = os.path.join(courant, nom)
+        try:
+            if _est_un_lien(os.lstat(chemin_systeme(courant))):
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def message_copie(e):
+    """Panne du côté du dossier de destination, en français simple."""
+    if getattr(e, 'winerror', None) in (39, 112) or getattr(e, 'errno', None) == errno.ENOSPC:
+        return 'Le disque de destination est plein : la copie s\'est arrêtée.'
+    if isinstance(e, PermissionError) or getattr(e, 'winerror', None) == 5:
+        return 'MyPhotos n\'a pas le droit d\'écrire dans ce dossier : choisissez-en un autre.'
+    return 'La copie s\'est arrêtée : le dossier de destination n\'est plus accessible (disque débranché ?).'
+
+
+def _effacer_provisoire(chemin):
+    """Efface un fichier provisoire de MyPhotos (copie interrompue) ; jamais une photo."""
+    try:
+        os.chmod(chemin, stat.S_IWRITE)
+    except OSError:
+        pass
+    try:
+        os.unlink(chemin)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        journal.warning('fichier provisoire impossible à effacer : %s', os.path.basename(chemin))
+
+
 def alerter(message):
     """Message d'erreur de démarrage : boîte de dialogue (l'exécutable n'a pas de console) et journal."""
     journal.error('%s', message)
@@ -374,7 +880,7 @@ class ChoixDossier:
         self._ouverte = threading.Event()
         self._verrou = threading.Lock()
 
-    def demander(self, initial=None, delai=CHOIX_DOSSIER_S):
+    def demander(self, initial=None, delai=CHOIX_DOSSIER_S, titre='Choisissez un dossier de photos'):
         with self._verrou:
             if self._ouverte.is_set():
                 raise Refus("La fenêtre de choix d'un dossier est déjà ouverte : regardez dans la barre des "
@@ -384,7 +890,7 @@ class ChoixDossier:
                 self._fil = threading.Thread(target=self._boucle, name='myphotos-choix-dossier', daemon=True)
                 self._fil.start()
         reponse = concurrent.futures.Future()
-        self._demandes.put((reponse, initial))
+        self._demandes.put((reponse, initial, titre))
         try:
             return reponse.result(timeout=delai)
         except concurrent.futures.TimeoutError:
@@ -393,7 +899,7 @@ class ChoixDossier:
     def _boucle(self):
         racine = None
         while True:
-            reponse, initial = self._demandes.get()
+            reponse, initial, titre = self._demandes.get()
             resultat = erreur = None
             try:
                 import tkinter
@@ -418,8 +924,8 @@ class ChoixDossier:
                 hote.update()
                 _premier_plan(hote)
                 try:
-                    chemin = filedialog.askdirectory(parent=hote, title='Choisissez un dossier de photos',
-                                                     initialdir=initial or None, mustexist=True)
+                    chemin = filedialog.askdirectory(parent=hote, title=titre, initialdir=initial or None,
+                                                     mustexist=True)
                 finally:
                     hote.destroy()
                     racine.update()
@@ -439,6 +945,167 @@ class ChoixDossier:
                 reponse.set_exception(erreur)
             else:
                 reponse.set_result(resultat)
+
+
+# ---------------------------------------------------------------- copie vers un dossier
+
+class _SourceIllisible(Exception):
+    """La photo d'origine ne se lit plus (disque débranché…) : elle est passée, la copie continue."""
+
+
+class _SourceRefusee(Exception):
+    """La photo d'origine n'est plus ce que MyPhotos a vérifié (atteinte par un lien ou une jonction posés depuis…) :
+    elle est passée, avec sa raison, la copie continue."""
+
+    def __init__(self, raison):
+        super().__init__(raison)
+        self.raison = raison
+
+
+class Copie:
+    """Copie de photos vers un dossier choisi, dans un fil d'arrière-plan.
+
+    Jamais d'écrasement : un nom déjà pris devient « nom (2).jpg », « nom (3).jpg »… Chaque fichier est écrit sous un
+    nom provisoire, puis renommé (un renommage n'écrase jamais rien sous Windows) ; ses dates sont gardées. Annulable
+    entre deux blocs ; une copie interrompue ne laisse pas de fichier à moitié écrit. Une photo illisible est passée
+    (compte rendu), une panne du dossier de destination (disque plein, débranché) arrête tout."""
+
+    def __init__(self, app, numero, dossier, fichiers, refusees):
+        self.app = app
+        self.numero = numero
+        self.dossier = dossier                   # chemin habituel du dossier de destination
+        self.fichiers = fichiers                 # [(id, chemin système, nom, taille, fiche de la base)]
+        self.refusees = list(refusees)           # [{id, raison}]
+        self.renommees = []                      # [{id, nom}] : copies qui ont pris un autre nom
+        self.copies = []                         # chemins habituels des copies
+        self.octets_total = sum(f[3] for f in fichiers)
+        self.octets_faits = 0
+        self.total = len(fichiers) + len(self.refusees)
+        self.fait = len(self.refusees)           # photos traitées : copiées ou refusées
+        self.etat = 'en_cours'                   # en_cours, fini, annule, erreur
+        self.message = None
+        self.arret = threading.Event()
+        self._verrou = threading.Lock()
+        self._activite = 0.0
+        self.fil = threading.Thread(target=self._executer, name='myphotos-copie', daemon=True)
+
+    def resume(self):
+        with self._verrou:
+            total = self.octets_total
+            return {'numero': self.numero, 'etat': self.etat, 'dossier': self.dossier, 'total': self.total,
+                    'fait': self.fait, 'copiees': len(self.copies), 'octets': total, 'octets_faits': self.octets_faits,
+                    'pourcent': round(100 * self.octets_faits / total, 1) if total else
+                    (100.0 if self.etat == 'fini' else 0.0),
+                    'renommees': self.renommees[:REFUS_MAX], 'nb_renommees': len(self.renommees),
+                    'refusees': self.refusees[:REFUS_MAX], 'nb_refusees': len(self.refusees),
+                    'message': self.message}
+
+    def _avancer(self, n):
+        with self._verrou:
+            self.octets_faits += n
+        t = time.monotonic()
+        if t - self._activite > 1.0:             # une longue copie garde MyPhotos éveillé, page fermée ou non
+            self._activite = t
+            self.app.activite()
+
+    def _executer(self):
+        try:
+            for pid, source, nom, taille, fiche in self.fichiers:
+                if self.arret.is_set():
+                    raise InterruptedError('copie annulée')
+                avant = self.octets_faits
+                try:
+                    final = self._copier_un(source, nom, fiche)
+                except (_SourceIllisible, _SourceRefusee) as e:
+                    with self._verrou:
+                        self.refusees.append({'id': pid, 'raison': getattr(e, 'raison', PHOTO_ILLISIBLE)})
+                        self.fait += 1
+                        self.octets_faits = avant + taille
+                    continue
+                with self._verrou:
+                    self.copies.append(final)
+                    if os.path.basename(final) != nom:
+                        self.renommees.append({'id': pid, 'nom': os.path.basename(final)})
+                    self.fait += 1
+                    self.octets_faits = avant + taille
+            self.etat = 'fini'
+        except InterruptedError:
+            self.etat = 'annule'
+        except OSError as e:
+            journal.warning('copie vers un dossier arrêtée : %r', e)
+            self.message = message_copie(e)
+            self.etat = 'erreur'
+        except Exception:
+            journal.exception('copie vers un dossier')
+            self.message = 'La copie s\'est arrêtée sur une erreur inattendue.'
+            self.etat = 'erreur'
+        finally:
+            journal.info('copie n° %d : %s, %d photo(s) copiée(s), %d refusée(s)', self.numero, self.etat,
+                         len(self.copies), len(self.refusees))
+            try:
+                self.app._apres_copie(self)
+            except Exception:
+                journal.exception('après la copie')
+
+    def _copier_un(self, source, nom, fiche):
+        dossier = chemin_systeme(self.dossier)
+        provisoire = os.path.join(dossier, f'myphotos-copie-{secrets.token_hex(6)}.partiel')
+        # Vérifiée de nouveau juste avant de l'ouvrir, son dossier tenu : la vérification faite avant la fenêtre
+        # « Choisir un dossier » date peut-être de plusieurs minutes (essai du 24/11/2026 : une jonction posée pendant
+        # que la fenêtre était ouverte faisait copier un fichier situé hors des dossiers suivis).
+        with GardeDossiers() as garde:
+            garde.tenir(os.path.dirname(fiche['chemin']))        # au mieux (partage réseau…) : la vérification suit
+            raison, _, _ = Application._fichier_present(fiche)
+            if raison == PHOTO_ABSENTE:
+                raise _SourceIllisible(OSError(raison))
+            if raison:
+                raise _SourceRefusee(raison)
+            try:
+                f = open(source, 'rb')
+            except OSError as e:
+                raise _SourceIllisible(e) from e
+        with f:
+            g = open(provisoire, 'xb')           # OSError : panne du dossier de destination
+            try:
+                with g:
+                    while True:
+                        if self.arret.is_set():
+                            raise InterruptedError('copie annulée')
+                        try:
+                            bloc = f.read(COPIE_BLOC)
+                        except OSError as e:
+                            raise _SourceIllisible(e) from e
+                        if not bloc:
+                            break
+                        g.write(bloc)
+                        self._avancer(len(bloc))
+                try:
+                    shutil.copystat(source, provisoire)    # dates de la photo d'origine
+                except OSError:
+                    pass
+                return self._nommer(provisoire, nom)
+            except BaseException:
+                _effacer_provisoire(provisoire)
+                raise
+
+    def _nommer(self, provisoire, nom):
+        """Donne au fichier provisoire le nom de la photo, ou « nom (2).jpg »… si le nom est déjà pris."""
+        base, ext = os.path.splitext(nom)
+        dossier = chemin_systeme(self.dossier)
+        for n in range(1, 10000):
+            cible = os.path.join(dossier, nom if n == 1 else f'{base} ({n}){ext}')
+            if os.name != 'nt' and os.path.lexists(cible):
+                continue                         # ailleurs que sous Windows, rename() écraserait
+            try:
+                os.rename(provisoire, cible)
+            except FileExistsError:
+                continue
+            except PermissionError:
+                if os.path.lexists(cible):       # nom pris par un dossier ou un fichier verrouillé
+                    continue
+                raise
+            return chemin_affiche(cible)
+        raise FileExistsError(errno.EEXIST, 'trop de fichiers du même nom')
 
 
 # ---------------------------------------------------------------- matériel : résumé lisible
@@ -684,6 +1351,37 @@ class Application:
         self._requetes = 0                           # requêtes HTTP en cours
         self._derniere_requete = time.monotonic()    # début ou fin de la plus récente
         self._verrou_requetes = threading.Lock()
+        # Sélection : presse-papiers, copie vers un dossier (une à la fois), mise à la Corbeille (une à la fois).
+        self.presse_papiers = PressePapiers()
+        self._copie = None
+        self._numero_copie = 0
+        self._verrou_copie = threading.Lock()
+        self._verrou_suppression = threading.Lock()
+        # Doublons : un calcul à la fois, dans son fil ; dernier résultat {numero, generation, resultat} en mémoire.
+        self._doublons = None                    # doublons.Doublons du moteur actif, créé par le premier calcul
+        self._verrou_doublons = threading.Lock()
+        self._doublons_fil = None
+        self._doublons_arret = threading.Event()
+        self._doublons_res = None
+        self._doublons_numero = 0
+        self._doublons_fin = 0.0                 # time.monotonic() de la fin du dernier calcul
+        self._doublons_erreur = None             # message (français) du dernier échec
+        self._doublons_deja = None               # déjà lancée une fois par l'utilisateur (meta 'doublons')
+        self._doublons_annulee = False           # arrêtée par l'utilisateur : la page ne la relance plus seule
+        if self.base.ecartes:
+            self._noter_base_ecartee(self.base.ecartes)
+
+    def _noter_base_ecartee(self, ecartes):
+        """Une base abîmée vient d'être mise de côté (Base.ecartes) : la page le dira une fois, avec quoi faire. Retenu
+        dans la base neuve jusqu'à ce que la page l'ait montré (POST /api/base-ecartee/vu), même après un arrêt."""
+        index = any(x.startswith(self.base.chemin_index + '.') for x in ecartes)
+        miniatures = any(x.startswith(self.base.chemin_miniatures + '.') for x in ecartes)
+        journal.warning('base abîmée mise de côté : %s', ', '.join(os.path.basename(x) for x in ecartes))
+        try:
+            self.base.meta_set('base_ecartee', json.dumps({'index': index, 'miniatures': miniatures,
+                                                           'quand': maintenant()}))
+        except Exception:
+            journal.exception('base abîmée : avertissement impossible à retenir')
 
     # ------------------------------------------------ démarrage et arrêt
 
@@ -772,6 +1470,11 @@ class Application:
                 t = self.telechargement
                 if t is not None:
                     t.arret.set()
+                c = self._copie
+                if c is not None and c.fil.is_alive():
+                    c.arret.set()                    # la copie s'arrête entre deux blocs, sans fichier à moitié écrit
+                    c.fil.join(timeout=15)
+                self._arreter_doublons(15)           # ce qui est déjà calculé est gardé pour la prochaine fois
                 ix = self.indexeur
                 if ix is not None:
                     ix.arreter(attendre=True)
@@ -793,6 +1496,9 @@ class Application:
         t = self.telechargement
         if t is not None:
             t.arret.set()
+        c = self._copie
+        if c is not None:
+            c.arret.set()
         ix = self.indexeur
         if ix is not None:
             try:
@@ -801,6 +1507,12 @@ class Application:
                 journal.exception('arrêt de l\'analyse')
         if t is not None and t.fil.is_alive():
             t.fil.join(timeout=10)
+        if c is not None and c.fil.is_alive():
+            c.fil.join(timeout=15)
+        self._arreter_doublons(15)
+        d = self._doublons
+        if d is not None:
+            d.fermer()                           # ses connexions, avant celles de la base
         self._attendre_preparation(self._preparation, 60)   # jamais de sortie au milieu d'un chargement
         self._liberer_moteurs()                  # dans un ordre sûr, plutôt qu'au hasard de la sortie de Python
         self.base.fermer()
@@ -1238,6 +1950,7 @@ class Application:
         prep = self._preparation
         pret = m is not None and prep is not None and prep['etat'] == 'pret'
         sur = (analyse or {}).get('materiel') or (partage[1].materiel if partage is not None else None)
+        generation = self.base.generation()
         return {
             'nom': NOM, 'version': config.VERSION,
             'assistant': self.base.meta_get('assistant'),
@@ -1253,9 +1966,15 @@ class Application:
             'photos': photos,
             'nb_dossiers': self._nb_dossiers,
             'recherche_prete': self.recherche is not None and pret,
-            'generation': self.base.generation(),
+            'generation': generation,
             'arret': self.arret_lance,
             'factice': FACTICE,
+            'copie': self._copie.resume() if self._copie is not None else None,
+            # Base abîmée mise de côté au démarrage : {index, miniatures, quand}, jusqu'à ce que la page l'ait dit.
+            'base_ecartee': self._json(self.base.meta_get('base_ecartee')),
+            'limite_selection': LIMITE_SELECTION,
+            # Recherche des doublons : avancement et numéro du dernier résultat (les groupes : GET /api/doublons).
+            'doublons': self.etat_doublons(generation),
         }
 
     # ------------------------------------------------ photos
@@ -1279,7 +1998,7 @@ class Application:
         except getattr(_recherche, 'MoteurIndisponible', RuntimeError) as e:
             raise Refus(sans_jargon(str(e)), 503)
         except Exception:
-            journal.exception('recherche « %s »', q[:100])
+            journal.exception('recherche (%d caractères)', len(q))     # jamais le texte cherché dans le journal
             raise Refus('La recherche a rencontré un problème. Réessayez ; si cela continue, relancez MyPhotos.', 500)
         if res is None:
             return self.photos_par_date(debut, n)
@@ -1342,7 +2061,8 @@ class Application:
     def ouvrir(self, pid):
         _, chemin, systeme, _ = self.fichier_photo(pid)
         try:
-            os.startfile(chemin if len(chemin) < 260 else systeme)
+            # Jamais un chemin que Windows lirait autrement (dossier « Vacances. ») : il ouvrirait une autre photo.
+            os.startfile(chemin_pour_windows(chemin) or systeme)
         except OSError as e:
             journal.info('ouverture de la photo %d impossible : %r', pid, e)
             if getattr(e, 'winerror', None) in (1155, 1156):
@@ -1352,8 +2072,11 @@ class Application:
 
     def montrer(self, pid):
         _, chemin, _, _ = self.fichier_photo(pid)
+        cible = chemin_pour_windows(chemin) or (chemin if compris_tel_quel(chemin) else None)
+        if cible is None:
+            raise Refus(CHEMIN_AMBIGU, 409)
         try:
-            montrer_dans_dossier(chemin)
+            montrer_dans_dossier(cible)
         except OSError as e:
             journal.info('affichage du dossier de la photo %d impossible : %r', pid, e)
             raise Refus('Windows n\'a pas pu ouvrir le dossier de cette photo.', 409)
@@ -1371,6 +2094,424 @@ class Application:
             ix.reprendre()
             ix.relancer(erreurs=True)
         return {'ok': True}
+
+    def base_ecartee_vue(self):
+        self.base.meta_set('base_ecartee', None)
+        return {'ok': True}
+
+    # ------------------------------------------------ sélection : copier, copier dans un dossier, supprimer
+
+    @staticmethod
+    def _fichier_present(p):
+        """(raison, chemin système, stat) : la photo est-elle bien là, fichier ordinaire d'image, sans lien vers un
+        autre emplacement entre son dossier suivi et elle ? raison vaut None si oui."""
+        chemin = p['chemin']
+        if os.path.splitext(chemin)[1].lower() not in config.EXTENSIONS or '*' in chemin or '?' in chemin:
+            return PAS_UNE_PHOTO, None, None
+        systeme = chemin_systeme(chemin)
+        try:
+            st = os.lstat(systeme)
+        except OSError:
+            return PHOTO_ABSENTE, None, None
+        if _est_un_lien(st) or not p.get('dossier') or _passe_par_un_lien(chemin, p['dossier']):
+            return PAR_UN_LIEN, None, None
+        if not stat.S_ISREG(st.st_mode):
+            return PAS_UNE_PHOTO, None, None
+        return None, systeme, st
+
+    def _a_copier(self, ids):
+        """([(id, chemin habituel, chemin système, nom, taille, fiche)], refusees) dans l'ordre des identifiants."""
+        fiches = {p['id']: p for p in self.base.photos(ids)}
+        fichiers, refusees = [], []
+        for pid in ids:
+            p = fiches.get(pid)
+            if p is None:
+                refusees.append({'id': pid, 'raison': INTROUVABLE})
+                continue
+            raison, systeme, st = self._fichier_present(p)
+            if raison:
+                refusees.append({'id': pid, 'raison': raison})
+                continue
+            fichiers.append((pid, p['chemin'], systeme, os.path.basename(p['chemin']), st.st_size,
+                             {'chemin': p['chemin'], 'dossier': p['dossier']}))
+        return fichiers, refusees
+
+    def copier(self, ids):
+        """Met les fichiers de ces photos dans le presse-papiers de Windows : un Ctrl+V dans l'Explorateur les colle."""
+        fichiers, refusees = self._a_copier(ids)
+        chemins = []
+        for pid, chemin, *_ in fichiers:
+            w = chemin_pour_windows(chemin)
+            if w is None:
+                refusees.append({'id': pid, 'raison': refus_chemin_windows(chemin)})
+            else:
+                chemins.append(w)
+        if not chemins:
+            raise Refus(refusees[0]['raison'] if refusees else 'Aucune photo à copier.', 409)
+        try:
+            self.presse_papiers.copier(chemins)
+        except PressePapiersOccupe as e:
+            journal.warning('%s', e)
+            raise Refus('Le presse-papiers de Windows est occupé par un autre programme : réessayez dans un instant.',
+                        409)
+        except (OSError, concurrent.futures.TimeoutError) as e:
+            journal.warning('presse-papiers : %r', e)
+            raise Refus('Windows n\'a pas pu copier ces photos. Réessayez dans un instant.', 409)
+        journal.info('%d photo(s) copiée(s) dans le presse-papiers', len(chemins))
+        return {'copiees': len(chemins), 'refusees': refusees[:REFUS_MAX], 'nb_refusees': len(refusees)}
+
+    def copier_vers(self, ids):
+        """Demande un dossier (fenêtre de Windows, ouverte ici et non par la page), puis y copie les photos en
+        arrière-plan : la page suit l'avancement par GET /api/copie."""
+        with self._verrou_copie:
+            if self._copie is not None and self._copie.etat == 'en_cours':
+                raise Refus('Une copie est déjà en cours : attendez qu\'elle se termine, ou annulez-la.', 409)
+        fichiers, refusees = self._a_copier(ids)
+        if not fichiers:
+            raise Refus(refusees[0]['raison'] if refusees else 'Aucune photo à copier.', 409)
+        initial = self.base.meta_get('copie_dossier')
+        try:
+            if not (isinstance(initial, str) and os.path.isdir(chemin_systeme(initial))):
+                initial = dossier_images()
+        except (OSError, ValueError):
+            initial = dossier_images()
+        chemin = self.choix_dossier.demander(initial=initial, titre='Choisissez où copier les photos')
+        if not chemin:
+            return {'annule': True}
+        try:
+            dossier = normaliser_chemin(chemin)
+            # « Photos. » (point ou espace final) deviendrait « Photos » : un autre dossier que celui de la fenêtre.
+            brut = chemin_affiche(chemin)
+            if len(brut) == 2 and brut[1] == ':':
+                brut += '\\'
+            if cle_chemin(os.path.normpath(brut)) != cle_chemin(dossier):
+                raise Refus(DESTINATION_AMBIGUE, 409)
+            if not os.path.isdir(chemin_systeme(dossier)):
+                raise Refus('Ce dossier est introuvable.', 409)
+            libre = shutil.disk_usage(chemin_systeme(dossier)).free
+        except DossierRefuse as e:
+            raise Refus(str(e), 409)
+        except (OSError, ValueError):
+            raise Refus('Ce dossier est inaccessible : choisissez-en un autre.', 409)
+        besoin = sum(f[4] for f in fichiers)
+        if libre < besoin + COPIE_MARGE:
+            raise Refus(f'Il n\'y a pas assez de place sur ce disque : il faut {materiel.formater_taille(besoin)}, il '
+                        f'reste {materiel.formater_taille(libre)}.', 409)
+        self.base.meta_set('copie_dossier', dossier)
+        with self._verrou_copie:
+            if self._copie is not None and self._copie.etat == 'en_cours':
+                raise Refus('Une copie est déjà en cours : attendez qu\'elle se termine, ou annulez-la.', 409)
+            self._numero_copie += 1
+            c = Copie(self, self._numero_copie, dossier, [(f[0], f[2], f[3], f[4], f[5]) for f in fichiers], refusees)
+            self._copie = c
+            c.fil.start()
+        journal.info('copie n° %d : %d photo(s) vers un dossier choisi', c.numero, len(fichiers))
+        return {'annule': False, 'copie': c.resume()}
+
+    def copie(self):
+        return self._copie.resume() if self._copie is not None else None
+
+    def annuler_copie(self):
+        c = self._copie
+        if c is None or c.etat != 'en_cours':
+            return {'annule': False}
+        c.arret.set()
+        return {'annule': True}
+
+    def montrer_copie(self):
+        """Ouvre le dossier de la dernière copie dans l'Explorateur, la première photo copiée sélectionnée."""
+        c = self._copie
+        if c is None:
+            raise Refus('Aucune copie récente.', 404)
+        try:
+            premiere = c.copies[0] if c.copies else None
+            w = chemin_pour_windows(premiere) if premiere else None
+            if w and os.path.isfile(chemin_systeme(premiere)):
+                montrer_dans_dossier(w)
+            else:
+                os.startfile(chemin_pour_windows(c.dossier) or chemin_systeme(c.dossier))
+        except (AttributeError, OSError):
+            raise Refus('Windows n\'a pas pu ouvrir ce dossier.', 409)
+        return {'ok': True}
+
+    def _apres_copie(self, c):
+        """Des photos copiées dans un dossier suivi : l'analyse les découvre tout de suite."""
+        if not c.copies:
+            return
+        k = cle_chemin(c.dossier)
+        if any(k == cle_chemin(d['chemin']) or dedans(k, cle_chemin(d['chemin'])) for d in self.base.dossiers()):
+            ix = self.indexeur
+            if ix is not None:
+                ix.relancer()
+
+    def _verifier_suppression(self, p, volumes, garde):
+        """(raison, chemin pour Windows, chemin système) : raison vaut None si la photo peut partir à la Corbeille.
+        Son dossier est tenu par `garde` AVANT les vérifications, et le reste jusqu'après l'appel à Windows."""
+        parent = os.path.dirname(p['chemin'])
+        if not garde.tenir(parent):
+            return (PAS_MISE_A_LA_CORBEILLE if os.path.isdir(chemin_systeme(parent)) else PHOTO_ABSENTE), None, None
+        raison, systeme, st = self._fichier_present(p)
+        if raison:
+            return raison, None, None
+        if not garde.au_bon_endroit(parent, p['dossier']):
+            return PAR_UN_LIEN, None, None             # le dossier tenu n'est pas celui que désigne le chemin
+        if st.st_size != p['taille'] or st.st_mtime_ns != p['modifie']:
+            return CHANGEE, None, None                 # ce n'est plus le fichier que MyPhotos connaît
+        try:
+            racine = racine_volume(p['chemin'])
+        except OSError:
+            return SANS_CORBEILLE, None, None
+        infos = volumes.get(cle_chemin(racine))
+        if infos is None:
+            infos = volumes[cle_chemin(racine)] = infos_corbeille(racine)
+        if not infos['ok']:
+            return infos['raison'], None, None
+        if infos['capacite'] is not None and st.st_size > infos['capacite']:
+            return TROP_GRANDE, None, None
+        w = chemin_pour_windows(p['chemin'])
+        if w is None:
+            return refus_chemin_windows(p['chemin']), None, None
+        return None, w, systeme
+
+    def supprimer(self, ids, confirme):
+        """Met ces photos à la Corbeille de Windows, jamais ailleurs, puis les oublie (index et miniatures).
+
+        Refusées, avec leur raison : photo inconnue ou absente, fichier changé depuis l'analyse (taille ou date),
+        atteint par un lien ou une jonction, disque sans Corbeille (réseau, Freebox, clé USB…), Corbeille désactivée
+        ou trop petite pour la photo. Renvoie {supprimees, refusees, octets_liberes, generation}."""
+        if confirme is not True:
+            raise Refus('La suppression doit être confirmée.', 400)
+        # Les dossiers des photos restent tenus de leur vérification jusqu'après l'appel à Windows (GardeDossiers).
+        with self._verrou_suppression, GardeDossiers() as garde:
+            fiches = {p['id']: p for p in self.base.photos(ids)}
+            refusees, candidats, volumes = [], [], {}
+            for pid in ids:
+                p = fiches.get(pid)
+                if p is None:
+                    refusees.append({'id': pid, 'raison': INTROUVABLE})
+                    continue
+                raison, chemin_windows, systeme = self._verifier_suppression(p, volumes, garde)
+                if raison:
+                    refusees.append({'id': pid, 'raison': raison})
+                else:
+                    candidats.append((pid, chemin_windows, systeme, p['taille']))
+            partis, gardes = self._envoyer_a_la_corbeille(candidats)
+            supprimees = [c[0] for c in candidats if c[0] in partis]
+            for c in candidats:
+                if c[0] not in partis:
+                    refusees.append({'id': c[0], 'raison': GARDEE if c[0] in gardes else PAS_MISE_A_LA_CORBEILLE})
+            if supprimees:
+                self.base.oublier_photos(supprimees)
+            octets = sum(c[3] for c in candidats if c[0] in partis)
+        journal.info('%d photo(s) mise(s) à la Corbeille (%s), %d refusée(s)', len(supprimees),
+                     materiel.formater_taille(octets), len(refusees))
+        ordre = {pid: i for i, pid in enumerate(ids)}
+        refusees.sort(key=lambda r: ordre.get(r['id'], 0))
+        return {'supprimees': supprimees, 'refusees': refusees[:REFUS_MAX], 'nb_refusees': len(refusees),
+                'octets_liberes': octets, 'generation': self.base.generation()}
+
+    @staticmethod
+    def _envoyer_a_la_corbeille(candidats):
+        """Tous d'un coup (rapide), puis un par un ceux qui restent (un fichier ouvert ailleurs arrête le lot). Renvoie
+        (identifiants partis, identifiants gardés parce que Windows allait les supprimer définitivement)."""
+        def partis():
+            return {c[0] for c in candidats if not os.path.lexists(c[2])}
+
+        gardes = set()
+        paquets, premier_tour = ([candidats] if candidats else []), True
+        while paquets:
+            for paquet in paquets:
+                try:
+                    _, abandon = mettre_a_la_corbeille([c[1] for c in paquet])
+                except OSError as e:
+                    journal.warning('Corbeille : %r', e)
+                    abandon = False
+                if abandon:                          # « supprimer définitivement ? » : non (FOF_WANTNUKEWARNING)
+                    gardes.update(c[0] for c in paquet if os.path.lexists(c[2]))
+                    return partis(), gardes
+            if not premier_tour:
+                break
+            premier_tour = False
+            restants = [c for c in candidats if os.path.lexists(c[2])]
+            paquets = [[c] for c in restants] if len(candidats) > 1 else []
+        return partis(), gardes
+
+    # ------------------------------------------------ doublons
+    # La recherche tourne dans son fil, sans aucun verrou de l'application (ni celui de la carte graphique : elle
+    # n'utilise que la base et numpy) ; ce qu'elle calcule est gardé dans index.db, une relance est donc rapide.
+    # Elle ne fait que proposer : les photos ne partent que par supprimer(), après un clic et une confirmation.
+
+    def _cle_doublons(self):
+        """Moteur dont les vecteurs aident à repérer les photos proches ; sans moteur (None), copies exactes et
+        retouches seulement, d'après les miniatures."""
+        m = self.moteur
+        return m['cle'] if m else None
+
+    def _analyse_active(self):
+        ix = self.indexeur
+        if ix is None:
+            return False
+        try:
+            return ix.etat().get('phase') in ('inventaire', 'analyse')
+        except Exception:
+            return False
+
+    def _deja_doublons(self):
+        """L'utilisateur a déjà lancé la recherche des doublons (retenu dans la base) : la page la relance seule."""
+        if self._doublons_deja is None:
+            self._doublons_deja = self.base.meta_get('doublons') == '1'
+        return self._doublons_deja
+
+    def _calcul_doublons_en_cours(self):
+        f = self._doublons_fil
+        return f is not None and f.is_alive()
+
+    def etat_doublons(self, generation=None):
+        """Résumé léger (dans /api/etat et GET /api/doublons) : {en_cours, phase, avancement (0-1), message, numero
+        (du dernier résultat, 0 s'il n'y en a pas), perime (l'index a changé depuis), deja (lancée au moins une fois),
+        arretee (arrêtée par l'utilisateur : pas de relance automatique), erreur}."""
+        if generation is None:
+            generation = self.base.generation()
+        res = self._doublons_res
+        en_cours = self._calcul_doublons_en_cours()
+        sortie = {'en_cours': en_cours, 'phase': None, 'avancement': None, 'message': None,
+                  'numero': res['numero'] if res else 0,
+                  'perime': res is not None and res['generation'] != generation,
+                  'deja': self._deja_doublons(), 'arretee': self._doublons_annulee,
+                  'erreur': None if en_cours else self._doublons_erreur}
+        if en_cours:
+            d = self._doublons
+            e = d.etat() if d is not None else {}
+            if e.get('en_cours') and e.get('phase') in _doublons.PHASES[1:6]:
+                sortie.update(phase=e['phase'], avancement=e['avancement'], message=e['message'])
+            else:                                # le fil vient de partir : rien de mesuré encore
+                sortie.update(phase='empreintes', avancement=0.0, message='Recherche des doublons…')
+        return sortie
+
+    def lancer_doublons(self, auto=False):
+        """Lance la recherche des doublons dans son fil, sans effet si elle tourne déjà. La page suit l'avancement
+        (/api/etat), puis lit les groupes (GET /api/doublons).
+
+        auto=True : la page la relance d'elle-même parce que l'index a changé (photos analysées, supprimées…). Rien
+        n'est fait si le résultat est à jour, si l'utilisateur ne l'a jamais lancée ou vient de l'arrêter, ou si le
+        dernier calcul a moins de DOUBLONS_RELANCE_S alors que l'analyse tourne (il serait aussitôt dépassé) ou qu'il
+        a échoué."""
+        if self.arret_lance:
+            raise Refus('MyPhotos est en train de s\'arrêter.', 409)
+        generation = self.base.generation()
+        if auto:
+            res = self._doublons_res
+            recent = time.monotonic() - self._doublons_fin < DOUBLONS_RELANCE_S
+            if ((res is None and not self._deja_doublons()) or (res is not None and res['generation'] == generation)
+                    or self._doublons_annulee
+                    or (recent and (self._doublons_erreur or self._analyse_active()))):
+                return dict(self.etat_doublons(generation), lance=False)
+        else:
+            self._doublons_annulee = False
+            if not self._deja_doublons():
+                self.base.meta_set('doublons', '1')
+                self._doublons_deja = True
+        with self._verrou_doublons:
+            lance = not self.arret_lance and not self._calcul_doublons_en_cours()   # arrêt lancé entre-temps : rien
+            if lance:
+                self._doublons_arret = arret = threading.Event()
+                self._doublons_erreur = None
+                self._doublons_fil = threading.Thread(target=self._calculer_doublons, args=(generation, arret),
+                                                      name='myphotos-doublons', daemon=True)
+                self._doublons_fil.start()
+        if lance:
+            journal.info('doublons : recherche lancée%s', ' (relance automatique)' if auto else '')
+        return dict(self.etat_doublons(generation), lance=lance)
+
+    def annuler_doublons(self):
+        with self._verrou_doublons:
+            if not self._calcul_doublons_en_cours():
+                return {'annule': False}
+            self._doublons_arret.set()
+            self._doublons_annulee = True        # la page ne la relance plus d'elle-même
+        return {'annule': True}
+
+    def _arreter_doublons(self, delai):
+        self._doublons_arret.set()
+        f = self._doublons_fil
+        if f is not None and f.is_alive() and f is not threading.current_thread():
+            f.join(timeout=delai)
+
+    def _outil_doublons(self):
+        """(dans le fil du calcul) Le doublons.Doublons du moteur actif, refait quand le moteur a changé. Un seul
+        calcul à la fois : personne d'autre ne le remplace pendant ce temps."""
+        cle = self._cle_doublons()
+        d = self._doublons
+        if d is not None and d.cle_modele == cle:
+            return d
+        nouveau = _doublons.Doublons(self.base, cle)
+        self._doublons = nouveau
+        if d is not None:
+            d.fermer()
+        return nouveau
+
+    def _calculer_doublons(self, generation, arret):
+        try:
+            if arret.is_set():
+                return
+            res = self._outil_doublons().calculer(arret=arret)
+        except _doublons.Annule:
+            journal.info('doublons : recherche interrompue')
+            return
+        except Exception:
+            journal.exception('doublons : échec de la recherche')
+            self._doublons_erreur = DOUBLONS_ECHEC
+            return
+        finally:
+            self._doublons_fin = time.monotonic()
+        with self._verrou_doublons:
+            self._doublons_numero += 1
+            self._doublons_res = {'numero': self._doublons_numero, 'generation': generation, 'resultat': res}
+        c = res['comptes']
+        journal.info('doublons : %d photos examinées en %.1f s ; groupes %s ; %d photo(s) en trop (%s)', c['photos'],
+                     res['duree_s'], c['groupes'], c['photos_en_trop'],
+                     materiel.formater_taille(res['total_gain_octets']))
+
+    def doublons(self, depuis=0):
+        """GET /api/doublons : l'avancement (comme dans /api/etat) et le dernier résultat, {numero, quand, duree_s,
+        photos (examinées), sans_miniature (pas encore analysées), groupes}. Les groupes ne sont pas renvoyés quand la
+        page les a déjà (depuis = ce numéro)."""
+        generation = self.base.generation()
+        r = self.etat_doublons(generation)
+        res = self._doublons_res
+        r['resultat'] = None
+        if res is not None:
+            x = res['resultat']
+            r['resultat'] = {'numero': res['numero'], 'quand': x['quand'], 'duree_s': x['duree_s'],
+                             'photos': x['comptes']['photos'], 'sans_miniature': x['comptes']['sans_miniature']}
+            if depuis != res['numero']:
+                r['resultat']['groupes'] = self._groupes_publics(x['groupes'])
+        return r
+
+    def _groupes_publics(self, groupes):
+        """Groupes tels que la page les montre, d'après la base actuelle : sans les photos parties entre-temps (mises à
+        la Corbeille, dossier retiré ou débranché), d'au moins deux photos, et toujours avec au moins une photo à
+        garder (si elle est partie, la meilleure des autres prend sa place)."""
+        ids = list({p['id'] for g in groupes for p in g['photos']})
+        fiches = {p['id']: p for p in self.base.photos(ids)} if ids else {}
+        sortie = []
+        for g in groupes:
+            photos = []
+            for p in g['photos']:
+                f = fiches.get(p['id'])
+                if f is None or not f['disponible']:
+                    continue
+                photos.append({'id': f['id'], 'garder': bool(p['garder']), 'meilleure': bool(p['meilleure']),
+                               'raison': p['raison'], 'nom': f['nom'], 'dossier': os.path.dirname(f['chemin']),
+                               'taille': f['taille'], 'largeur': f['largeur'], 'hauteur': f['hauteur'],
+                               'date': f['date']})
+            if len(photos) < 2:
+                continue
+            if not any(p['garder'] for p in photos):
+                photos[0].update(garder=True, meilleure=True, raison=DOUBLONS_GARDER)
+            sortie.append({'id': g['id'], 'type': g['type'], 'photos': photos,
+                           'gain_octets': sum(p['taille'] for p in photos if not p['garder'])})
+        return sortie
 
 
 # ---------------------------------------------------------------- page
@@ -1487,6 +2628,13 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         site = self.headers.get('Sec-Fetch-Site')
         return site is None or site.strip().lower() in ('same-origin', 'none')
 
+    def _navigation(self):
+        """La page ouverte dans un onglet (lien, favori…), pas chargée en douce par un autre site (fetch « no-cors »,
+        cadre, image, feuille de style) : Sec-Fetch-Mode navigate et Sec-Fetch-Dest document, quand ils sont là."""
+        mode = (self.headers.get('Sec-Fetch-Mode') or 'navigate').strip().lower()
+        dest = (self.headers.get('Sec-Fetch-Dest') or 'document').strip().lower()
+        return mode == 'navigate' and dest == 'document'
+
     def _origine_ok(self):
         origine = self.headers.get('Origin')
         return origine is None or origine.strip().lower() == 'http://' + self.headers.get('Host', '').strip().lower()
@@ -1511,7 +2659,7 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         brut = self.rfile.read(longueur)
         try:
             d = json.loads(brut.decode('utf-8'))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):   # RecursionError : « [[[[… » très imbriqué
             raise Refus('Requête illisible.', 400)
         if not isinstance(d, dict):
             raise Refus('Requête illisible.', 400)
@@ -1541,7 +2689,10 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 return self._erreur(503, 'MyPhotos démarre, un instant…', fermer=True)
             if not self._hote_ok():
                 return self._erreur(403, 'Adresse non autorisée.', fermer=True)
-            url = urllib.parse.urlsplit(self.path)
+            try:
+                url = urllib.parse.urlsplit(self.path)
+            except ValueError:                       # « http://[x/ » : jamais une erreur inattendue dans le journal
+                return self._erreur(400, 'Requête refusée.', fermer=True)
             chemin = url.path
             if methode == 'POST':
                 if self.headers.get(EN_TETE) != '1' or not self._origine_ok() or not self._site_ok():
@@ -1549,10 +2700,16 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 corps = self._corps()
             else:
                 corps = None
-                if chemin.startswith(('/api/', '/miniature/', '/photo/')) and not self._site_ok():
+                # Un autre site n'obtient rien, hormis l'ouverture de la page dans un onglet : ni données, ni page
+                # chargée en douce (fetch « no-cors », cadre…), qui comptait comme une activité et empêchait l'arrêt
+                # automatique (essai du 24/11/2026 : une requête toutes les 4 s gardait MyPhotos lancé indéfiniment).
+                if not self._site_ok() and not (chemin in ('/', '/index.html') and self._navigation()):
                     return self._erreur(403, 'Requête refusée.', fermer=True)
             app.activite()
-            params = urllib.parse.parse_qs(url.query, keep_blank_values=True, max_num_fields=20)
+            try:
+                params = urllib.parse.parse_qs(url.query, keep_blank_values=True, max_num_fields=20)
+            except ValueError:                       # plus de 20 paramètres : refus simple, sans trace d'erreur
+                raise Refus('Requête refusée.', 400)
             if methode == 'GET':
                 self._get(app, chemin, params)
             else:
@@ -1561,13 +2718,47 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             self._erreur(e.statut, str(e))
         except (ConnectionError, socket.timeout, TimeoutError):
             self.close_connection = True
+        except sqlite3.Error as e:
+            # « database is locked » (un autre programme écrit dans la base) et compagnie : jamais en anglais.
+            journal.warning('requête %s %s : base : %r', methode, self._chemin_journal(), e)
+            texte = sans_jargon(str(e))
+            if texte == str(e):                  # message inconnu : rien d'anglais dans la page
+                texte = 'Les fichiers de MyPhotos sont momentanément indisponibles'
+            try:
+                self._erreur(503, f'{texte.rstrip(".")} : réessayez dans un moment.', fermer=True)
+            except Exception:
+                pass
         except Exception:
-            journal.exception('requête %s %s', methode, self.path[:200])
+            journal.exception('requête %s %s', methode, self._chemin_journal())
             try:
                 self._erreur(500, 'Une erreur inattendue est survenue. Réessayez ; si elle revient, relancez MyPhotos.',
                              fermer=True)
             except Exception:
                 pass
+
+    def _chemin_journal(self):
+        """Chemin de la requête pour le journal, sans ses paramètres : ils peuvent contenir ce que l'utilisateur
+        cherche (« /api/recherche?q=… »), qui n'a rien à faire dans un fichier qu'on envoie parfois pour de l'aide."""
+        return self.path.split('?', 1)[0][:200]
+
+    def send_error(self, code, message=None, explain=None):
+        """Erreurs du protocole (méthode inconnue, demande préalable OPTIONS, requête illisible…) : réponse JSON avec
+        les mêmes en-têtes de sécurité que les autres, au lieu de la page HTML d'erreur de Python, qui n'en avait
+        aucun (ni CSP, ni nosniff, ni X-Frame-Options)."""
+        self.close_connection = True
+        try:
+            corps = json.dumps({'erreur': 'Requête refusée.'}, ensure_ascii=False).encode('utf-8')
+            self.send_response(code)                     # libellé standard : rien de la requête n'y est recopié
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(corps)))
+            for k, v in _securite({'Cache-Control': 'no-store'}).items():
+                self.send_header(k, v)
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            if getattr(self, 'command', '') != 'HEAD' and code >= 200 and code not in (204, 304):
+                self.wfile.write(corps)
+        except (ConnectionError, socket.timeout, TimeoutError):
+            pass
 
     @staticmethod
     def _identifiant(texte):
@@ -1577,6 +2768,23 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         if not _IDENTIFIANT.fullmatch(texte):
             raise Refus('Cette photo est introuvable.', 404)
         return int(texte)
+
+    @staticmethod
+    def _identifiants(valeur):
+        """Liste d'identifiants de photos venue de la page (sans doublon, dans l'ordre) ; jamais un chemin."""
+        if not isinstance(valeur, list) or not valeur:
+            raise Refus('Aucune photo choisie.', 400)
+        if len(valeur) > LIMITE_SELECTION:
+            raise Refus(f'Trop de photos à la fois : {_nombre_fr(LIMITE_SELECTION)} au plus.', 400)
+        ids, vus = [], set()
+        for v in valeur:
+            if isinstance(v, bool) or not isinstance(v, (int, str)) or not _IDENTIFIANT.fullmatch(str(v)):
+                raise Refus('Requête illisible.', 400)
+            i = int(v)
+            if i not in vus:
+                vus.add(i)
+                ids.append(i)
+        return ids
 
     @staticmethod
     def _entier(params, nom, defaut, mini, maxi):
@@ -1598,6 +2806,10 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             return self._json(app.infos_materiel(refaire=(params.get('refaire') or [''])[-1] == '1'))
         if chemin == '/api/dossiers':
             return self._json(app.liste_dossiers())
+        if chemin == '/api/copie':
+            return self._json(app.copie())
+        if chemin == '/api/doublons':
+            return self._json(app.doublons(self._entier(params, 'depuis', 0, 0, 10 ** 9)))
         if chemin in ('/api/recherche', '/api/photos'):
             q = (params.get('q') or [''])[-1] if chemin == '/api/recherche' else ''
             if len(q) > 1000:
@@ -1636,6 +2848,22 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             r = app.ouvrir(self._identifiant(corps.get('id')))
         elif chemin == '/api/montrer':
             r = app.montrer(self._identifiant(corps.get('id')))
+        elif chemin == '/api/copier':
+            r = app.copier(self._identifiants(corps.get('ids')))
+        elif chemin == '/api/copier-vers':
+            r = app.copier_vers(self._identifiants(corps.get('ids')))
+        elif chemin == '/api/copie/annuler':
+            r = app.annuler_copie()
+        elif chemin == '/api/copie/montrer':
+            r = app.montrer_copie()
+        elif chemin == '/api/supprimer':
+            r = app.supprimer(self._identifiants(corps.get('ids')), corps.get('confirme'))
+        elif chemin == '/api/base-ecartee/vu':
+            r = app.base_ecartee_vue()
+        elif chemin == '/api/doublons/lancer':
+            r = app.lancer_doublons(auto=corps.get('auto') is True)
+        elif chemin == '/api/doublons/annuler':
+            r = app.annuler_doublons()
         elif chemin == '/api/assistant':
             etape = corps.get('etape')
             if etape not in (1, 2, 3, 'fini'):

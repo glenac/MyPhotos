@@ -24,6 +24,8 @@
   --attention: #8a5300;
   --attention-doux: #fdf1dc;
   --danger: #bf2a1f;
+  --danger-survol: #a3231a;
+  --danger-texte: #ffffff;
   --danger-doux: #fce9e7;
   --tuile: #e2e6eb;
   --ombre: 0 1px 2px rgba(16, 24, 40, .06), 0 6px 20px rgba(16, 24, 40, .08);
@@ -48,6 +50,8 @@
     --attention: #f2b65e;
     --attention-doux: #33280f;
     --danger: #ff8f85;
+    --danger-survol: #ffaba3;
+    --danger-texte: #3b0b07;
     --danger-doux: #3a1d1b;
     --tuile: #252a30;
     --ombre: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
@@ -94,7 +98,9 @@ a { color: var(--accent); }
 .bouton.petit { min-height: 40px; padding: 0 16px; font-size: .95rem; }
 .bouton.danger { color: var(--danger); }
 .bouton.danger:hover { border-color: var(--danger); background: var(--danger-doux); }
-.bouton.danger-plein { background: var(--danger); border-color: var(--danger); color: #fff; }
+.bouton.danger-plein { background: var(--danger); border-color: var(--danger); color: var(--danger-texte); }
+.bouton.danger-plein:hover { background: var(--danger-survol); border-color: var(--danger-survol); color: var(--danger-texte); }
+.bouton.danger-plein:disabled:hover { background: var(--danger); border-color: var(--danger); color: var(--danger-texte); }
 .bouton.fantome { border-color: transparent; background: transparent; }
 .bouton.fantome:hover { background: var(--surface-2); color: var(--texte); }
 .bouton:disabled, .bouton[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
@@ -189,6 +195,20 @@ progress:not([value]), .bandeau progress:not([value]) {
 }
 progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-webkit-progress-bar { background: transparent; }
 @keyframes indetermine { from { background-position: 0 0; } to { background-position: 100% 0; } }
+.operation { background: var(--surface-2); }
+.operation-boutons { display: flex; flex-wrap: wrap; gap: 8px; }
+.operation-boutons .bouton-icone { width: 40px; height: 40px; }
+/* Barre de la sélection : elle prend la place de l'en-tête, à la même hauteur. */
+.barre-selection {
+  display: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 16px;
+  min-height: 83px; padding: 12px var(--gouttiere); background: var(--accent-doux); border-bottom: 1px solid var(--bordure);
+}
+.en-selection .entete { display: none; }
+.en-selection .barre-selection { display: grid; }
+.sel-compte { margin: 0; font-size: 1.25rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.liste-raisons { margin: 4px 0 0; padding-left: 1.2em; }
+.liste-raisons li { margin: 4px 0; }
 
 /* ------------------------------------------------ écran principal */
 .zone-principale { padding: 4px var(--gouttiere) 80px; max-width: 1900px; margin: 0 auto; }
@@ -205,12 +225,18 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .compte strong { color: var(--texte); }
 .compte .roue { width: 1.1em; height: 1.1em; border-width: 2px; margin-right: 10px; }
 .maj { margin: 0; color: var(--texte-doux); font-size: .95rem; }
-.mois { font-size: 1.2rem; font-weight: 650; margin: 30px 0 12px; }
-.section-mois:first-child .mois { margin-top: 6px; }
+.mois-tete { display: flex; align-items: center; gap: 6px; margin: 30px 0 12px; }
+.section-mois:first-child .mois-tete { margin-top: 6px; }
+.mois { font-size: 1.2rem; font-weight: 650; margin: 0; }
 .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--tuile-min), 1fr)); gap: 6px; }
+/* Une case par photo : la miniature (lien vers la visionneuse) et son rond de sélection. */
+.case {
+  position: relative; aspect-ratio: 1 / 1; border-radius: 10px; transition: background-color .15s;
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+}
 .tuile {
-  position: relative; display: block; aspect-ratio: 1 / 1; overflow: hidden; border-radius: 10px;
-  background: var(--tuile);
+  position: absolute; inset: 0; display: block; overflow: hidden; border-radius: 10px; background: var(--tuile);
+  transition: transform .15s ease, border-radius .15s;
 }
 .tuile img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .3s; visibility: hidden; }
 .tuile img.chargee { visibility: visible; }
@@ -218,6 +244,50 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .tuile:focus-visible { outline-offset: 3px; }
 .tuile.sans-image::after {
   content: ""; position: absolute; inset: 34%; border: 2px dashed var(--bordure); border-radius: 8px;
+}
+/* Voile sombre en haut de la miniature : le rond blanc se voit sur une photo claire. */
+.tuile::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 64px; z-index: 1; pointer-events: none; opacity: 0;
+  background: linear-gradient(rgba(0, 0, 0, .42), rgba(0, 0, 0, 0)); transition: opacity .15s;
+}
+.case:hover .tuile::before, .case:focus-within .tuile::before, .en-selection .tuile::before { opacity: 1; }
+.case.choisie { background: var(--accent-doux); }
+.case.choisie .tuile { transform: scale(.86); border-radius: 8px; }
+.case.choisie .tuile::before { opacity: 0; }
+.case.choisie .tuile img, .en-selection .tuile:hover img { transform: none; }
+.coche, .coche-mois {
+  display: grid; place-items: center; padding: 0; border: none; background: none; color: inherit; cursor: pointer;
+  transition: opacity .15s;
+}
+.coche { position: absolute; top: 0; left: 0; z-index: 2; width: 48px; height: 48px; opacity: 0; }
+.coche .rond, .coche-mois .rond {
+  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  transition: background-color .15s, border-color .15s;
+}
+.coche .rond { border: 2px solid #fff; background: rgba(0, 0, 0, .18); box-shadow: 0 1px 4px rgba(0, 0, 0, .5); }
+.coche .icone, .coche-mois .icone { width: 16px; height: 16px; stroke-width: 3.2; opacity: 0; transition: opacity .15s; }
+.coche .icone { color: #fff; }
+.coche:hover .icone { opacity: .9; }
+.coche:hover .rond { background: rgba(0, 0, 0, .35); }
+.case:hover .coche, .case:focus-within .coche, .en-selection .coche, .case.choisie .coche { opacity: 1; }
+.case.choisie .coche .rond, .coche-mois[aria-checked="true"] .rond {
+  background: var(--accent); border-color: var(--accent); box-shadow: none;
+}
+.case.choisie .coche .icone, .coche-mois[aria-checked="true"] .icone { opacity: 1; color: var(--accent-texte); }
+.coche-mois { width: 44px; height: 44px; border-radius: 50%; color: var(--texte-doux); opacity: 0; }
+.coche-mois .rond { width: 24px; height: 24px; border: 2px solid currentColor; }
+.coche-mois:hover { color: var(--accent); }
+.coche-mois:hover .icone { opacity: .8; }
+.coche-mois[aria-checked="mixed"] { color: var(--accent); }
+.coche-mois[aria-checked="mixed"] .icone { display: none; }
+.coche-mois[aria-checked="mixed"] .rond::after { content: ""; width: 11px; height: 3px; border-radius: 2px; background: currentColor; }
+.mois-tete:hover .coche-mois, .coche-mois:focus-visible, .en-selection .coche-mois,
+.coche-mois[aria-checked="true"], .coche-mois[aria-checked="mixed"] { opacity: 1; }
+/* Écran tactile : pas de survol, les ronds restent visibles. */
+@media (hover: none) {
+  .coche { opacity: .9; }
+  .coche-mois { opacity: .85; }
+  .tuile::before { opacity: 1; }
 }
 .sentinelle { height: 1px; }
 .vide { text-align: center; padding: 56px 16px; color: var(--texte-doux); max-width: 40em; margin: 0 auto; }
@@ -384,7 +454,89 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 .v-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .bouton.sombre { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .22); color: #fff; }
 .bouton.sombre:hover { background: rgba(255, 255, 255, .2); border-color: rgba(255, 255, 255, .5); color: #fff; }
+.bouton.sombre.danger { color: #ffb4ab; }
+.bouton.sombre.danger:hover { background: rgba(255, 110, 96, .2); border-color: #ff8f85; color: #ffd4cf; }
 .visionneuse :focus-visible { outline-color: #9cc2ff; }
+
+/* ------------------------------------------------ doublons */
+.entete-actions { display: flex; align-items: center; gap: 4px; }
+.bouton.fantome[aria-current="page"] { background: var(--accent-doux); color: var(--accent); }
+.doublons { max-width: 1560px; padding-bottom: 0; }
+.d-tete { margin: 22px 0 4px; max-width: 62em; }
+.d-tete h1 { margin-bottom: .3em; }
+.d-tete h1:focus { outline: none; }
+.d-tete .intro { margin-bottom: .7em; }
+.d-rassurant {
+  display: flex; align-items: flex-start; gap: 10px; width: fit-content; max-width: 100%; margin: 0;
+  padding: 10px 16px; border-radius: 12px; background: var(--succes-doux); color: var(--succes); font-weight: 600;
+}
+.d-etat { margin: 22px 0 6px; }
+.d-etat .dl { max-width: 720px; }
+.d-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin: 0; font-size: 1.08rem; }
+.d-ligne strong { font-weight: 650; }
+.d-maj { display: inline-flex; align-items: center; gap: 10px; color: var(--texte-doux); font-size: .98rem; }
+.d-maj .roue { width: 1.05em; height: 1.05em; border-width: 2px; }
+.d-etat .note, .d-etat .alerte { margin: 10px 0 0; max-width: 62em; }
+.d-etat .d-ligne + .d-ligne { margin-top: 8px; }
+.d-etat .d-ligne .note { margin: 0; }
+.d-accueil { text-align: left; padding: 12px 0 8px; max-width: 46em; }
+.d-accueil .bouton { margin: 8px 0 4px; }
+.d-section { margin: 34px 0 0; }
+.d-section-tete { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 4px; }
+.d-section-tete h2 { margin: 0; font-size: 1.25rem; }
+.d-compte { color: var(--texte-doux); font-weight: 600; }
+.d-section .note { margin: 0 0 14px; max-width: 62em; }
+details.d-section { border-top: 1px solid var(--bordure); padding-top: 14px; }
+details.d-section > summary {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 6px; margin-left: -6px;
+  cursor: pointer; list-style: none; border-radius: 10px;
+}
+details.d-section > summary::-webkit-details-marker { display: none; }
+details.d-section > summary .icone { transition: transform .2s; }
+details.d-section[open] > summary .icone { transform: rotate(90deg); }
+/* Groupes de deux photos côte à côte sur un grand écran ; trois photos et plus : toute la largeur. */
+.d-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 470px), 1fr)); gap: 14px; align-items: start; }
+.d-groupe {
+  background: var(--surface); border: 1px solid var(--bordure); border-radius: var(--rayon); padding: 14px 18px 16px;
+  content-visibility: auto; contain-intrinsic-block-size: auto 360px;
+}
+.d-groupe.large { grid-column: 1 / -1; }
+.d-groupe.d-complet { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+.d-groupe-tete { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 16px; margin: 0 0 12px; }
+.d-groupe-titre { font-weight: 650; }
+.d-gain { color: var(--texte-doux); font-weight: 600; font-size: .95rem; }
+.d-complet .d-gain { color: var(--danger); }
+.d-photos { display: flex; flex-wrap: wrap; gap: 18px; }
+.d-photo { flex: 1 1 196px; max-width: 300px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.d-photo .case { aspect-ratio: 4 / 3; }
+.d-photo .tuile img { object-fit: contain; }
+.doublons .coche { opacity: 1; }
+.doublons .tuile::before { opacity: 1; }
+.d-infos { display: grid; gap: 1px; min-width: 0; font-size: .92rem; }
+.d-etiquette {
+  justify-self: start; display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px; padding: 2px 10px 2px 8px;
+  border-radius: 999px; font-size: .85rem; font-weight: 700;
+}
+.d-etiquette .icone { width: 1.05em; height: 1.05em; stroke-width: 2.6; }
+.d-etiquette.garder { background: var(--succes-doux); color: var(--succes); }
+.d-etiquette.jeter { display: none; background: var(--danger-doux); color: var(--danger); }
+.d-photo:has(.case.choisie) .d-etiquette.garder { display: none; }
+.d-photo:has(.case.choisie) .d-etiquette.jeter { display: inline-flex; }
+.d-infos p { margin: 0; }
+.d-nom { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-dossier, .d-raison { color: var(--texte-doux); }
+.d-dossier {
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.d-raison { margin-top: 4px !important; font-size: .88rem; }
+.d-barre {
+  position: sticky; bottom: 0; z-index: 15; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+  margin: 30px calc(-1 * var(--gouttiere)) 0; padding: 12px var(--gouttiere) 14px;
+  background: color-mix(in srgb, var(--fond) 92%, transparent); -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px); border-top: 1px solid var(--bordure);
+}
+.d-resume { margin: 0; font-weight: 650; font-size: 1.05rem; }
+.d-barre .bouton.danger-plein { margin-left: auto; }
 
 /* ------------------------------------------------ annonces */
 .annonce {
@@ -393,6 +545,8 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
   box-shadow: 0 8px 30px rgba(0, 0, 0, .35); font-size: 1rem; text-align: center;
 }
 .annonce[data-genre="erreur"] { background: #8f1f17; }
+/* Écran « Doublons » : au-dessus de la barre « Supprimer les copies cochées ». */
+body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 
 /* ------------------------------------------------ largeur */
 @media (max-width: 900px) {
@@ -405,12 +559,30 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
   .v-fleche.gauche { left: 12px; }
   .v-fleche.droite { right: 12px; }
 }
+@media (max-width: 760px) {
+  /* Barre de la sélection : les boutons gardent leur nom pour les lecteurs d'écran, les icônes suffisent à l'œil. */
+  .sel-actions .bouton { padding: 0 14px; }
+  .sel-actions .bouton span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .barre-selection { gap: 8px; }
+}
 @media (max-width: 560px) {
   :root { --tuile-min: 104px; }
   html { font-size: 106%; }
   .recherche .bouton { padding: 0 16px; }
   .recherche .bouton span { display: none; }
-  #ouvrir-reglages span { display: none; }
+  /* En-tête : les icônes suffisent à l'œil, les noms restent pour les lecteurs d'écran. */
+  .entete-actions .bouton { padding: 0 14px; }
+  .entete-actions .bouton span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .d-photos { gap: 14px; }
+  .d-photo { flex: 0 0 calc(50% - 7px); max-width: calc(50% - 7px); }
+  .d-groupe { padding: 12px 12px 14px; }
+  .d-barre .bouton { flex: 1 1 100%; white-space: normal; text-align: center; }
+  .sel-compte { font-size: 1.05rem; }
+  .sel-actions { gap: 6px; }
   .etapes { gap: 8px 18px; }
   .etapes li + li::before { display: none; }
   .materiel { grid-template-columns: 1fr; gap: 0; }
@@ -473,7 +645,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 
   <section id="etape-2" class="carte" aria-labelledby="titre-2" hidden>
     <h1 id="titre-2" tabindex="-1">Vos photos</h1>
-    <p class="intro">Choisissez les dossiers où se trouvent vos photos. MyPhotos les regarde sans jamais les modifier, les déplacer ni les supprimer.</p>
+    <p class="intro">Choisissez les dossiers où se trouvent vos photos. MyPhotos ne modifie jamais vos photos. Il ne les supprime que si vous le demandez, et alors vers la Corbeille de Windows.</p>
     <ul id="e2-proposes" class="liste-proposes" aria-label="Dossiers proposés"></ul>
     <button id="e2-ajouter" class="bouton grand" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ajouter un dossier…</button>
     <div id="e2-manuel" class="manuel" hidden>
@@ -515,12 +687,30 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
         </div>
         <button class="bouton principal" type="submit"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Chercher</span></button>
       </form>
-      <button id="ouvrir-reglages" class="bouton fantome" type="button" aria-haspopup="dialog"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Réglages</span></button>
+      <div class="entete-actions">
+        <a id="ouvrir-doublons" class="bouton fantome" href="#doublons" title="Trouver les photos en double"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h11a2 2 0 0 1 2 2v9"/><rect x="3" y="8" width="14" height="12" rx="2"/><path d="m5.5 18 3.5-3.5 2.5 2.5 1.5-1.5 2.5 2.5"/><circle cx="12.5" cy="11.8" r="1.2"/></svg><span>Doublons</span></a>
+        <button id="ouvrir-reglages" class="bouton fantome" type="button" aria-haspopup="dialog"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Réglages</span></button>
+      </div>
     </header>
+    <!-- Barre de la sélection : remplace l'en-tête dès qu'une photo est cochée. -->
+    <div id="barre-selection" class="barre-selection" role="region" aria-label="Photos sélectionnées">
+      <button id="sel-vider" class="bouton-icone" type="button" aria-label="Annuler la sélection (Échap)" aria-keyshortcuts="Escape"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <p id="sel-compte" class="sel-compte" aria-live="polite"></p>
+      <div class="sel-actions">
+        <button id="sel-copier" class="bouton" type="button" aria-keyshortcuts="Control+C" title="Copier (Ctrl+C), puis coller où vous voulez avec Ctrl+V"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg><span>Copier</span></button>
+        <button id="sel-copier-vers" class="bouton" type="button" title="Copier dans un dossier de votre choix"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9.5 13h6M13 10.5l2.5 2.5-2.5 2.5"/></svg><span>Copier dans un dossier…</span></button>
+        <button id="sel-supprimer" class="bouton danger" type="button" aria-keyshortcuts="Delete" title="Mettre à la Corbeille de Windows (Suppr)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span>Supprimer</span></button>
+      </div>
+    </div>
     <div id="bandeau" class="bandeau" role="status" hidden>
       <span id="bandeau-texte" class="bandeau-texte"></span>
       <progress id="bandeau-barre" max="100" aria-label="Avancement"></progress>
       <button id="bandeau-bouton" class="bouton petit" type="button" hidden></button>
+    </div>
+    <div id="operation" class="bandeau operation" role="status" hidden>
+      <span id="operation-texte" class="bandeau-texte"></span>
+      <progress id="operation-barre" max="100" aria-label="Avancement de la copie"></progress>
+      <span id="operation-boutons" class="operation-boutons"></span>
     </div>
   </div>
 
@@ -561,6 +751,22 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
       </div>
     </section>
   </main>
+
+  <!-- Écran « Doublons » (#doublons) : rempli par la partie « doublons » du script. -->
+  <main id="ecran-doublons" class="zone-principale doublons" aria-labelledby="d-titre" hidden>
+    <div class="d-tete">
+      <h1 id="d-titre" tabindex="-1">Doublons</h1>
+      <p class="intro">Les photos que vous avez en plusieurs exemplaires : copies exactes, copies retouchées (réduites, recadrées, envoyées par une messagerie…) et rafales.</p>
+      <p class="d-rassurant"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 9.5 4-1.2 7-5 7-9.5V6z"/><path d="m9 12 2 2 4-4"/></svg><span>Rien n’est supprimé sans votre clic, et tout part dans la Corbeille de Windows : vous pourrez y retrouver vos photos.</span></p>
+    </div>
+    <div id="d-etat" class="d-etat"></div>
+    <div id="d-sections" class="d-sections"></div>
+    <div id="d-barre" class="d-barre" role="region" aria-label="Photos cochées" hidden>
+      <p id="d-resume" class="d-resume" aria-live="polite"></p>
+      <button id="d-tout" class="bouton-lien" type="button"></button>
+      <button id="d-supprimer" class="bouton danger-plein" type="button" aria-keyshortcuts="Delete"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span>Supprimer les copies cochées</span></button>
+    </div>
+  </main>
 </div>
 
 <!-- ============================================ visionneuse -->
@@ -582,6 +788,9 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
     </div>
     <span id="v-position" class="v-position"></span>
     <div class="v-actions">
+      <button id="v-copier" class="bouton sombre" type="button" aria-keyshortcuts="Control+C" title="Copier (Ctrl+C), puis coller où vous voulez avec Ctrl+V"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>Copier</button>
+      <button id="v-copier-vers" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9.5 13h6M13 10.5l2.5 2.5-2.5 2.5"/></svg>Copier dans un dossier…</button>
+      <button id="v-supprimer" class="bouton sombre danger" type="button" aria-keyshortcuts="Delete" title="Mettre à la Corbeille de Windows (Suppr)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>Supprimer</button>
       <button id="v-ouvrir" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Ouvrir avec la visionneuse Windows</button>
       <button id="v-montrer" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Afficher dans le dossier</button>
     </div>
@@ -665,6 +874,9 @@ const PEU_DE_RESULTATS = 10;       // moins de résultats sûrs : la page propos
 const RELANCE_MS = 1000;           // recherche lancée pendant la préparation du moteur : redemandée chaque seconde
 const PATIENCE_MS = 30000;         // « MyPhotos ne répond plus » : jamais avant 30 s sans aucune réponse
 const PREPARATION = 'Préparation du moteur de reconnaissance…';
+const APPUI_LONG_MS = 450;         // écran tactile : un appui long coche une photo
+const SUIVI_COPIE_MS = 500;        // copie vers un dossier : avancement redemandé deux fois par seconde
+let LIMITE_SELECTION = 2000;       // photos par action (copier, mettre à la Corbeille) : donnée par /api/etat
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre',
   'novembre', 'décembre'];
 const ICONES = {
@@ -674,6 +886,8 @@ const ICONES = {
   loupe: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>',
   plus: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   telecharger: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  croix: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  chevron: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
 };
 
 function icone(nom) {
@@ -799,6 +1013,7 @@ function confirmer({titre, texte, oui = 'Confirmer', non = 'Annuler', danger = f
     const bOui = $('#c-oui'), bNon = $('#c-non');
     bOui.textContent = oui;
     bNon.textContent = non;
+    bNon.hidden = false;
     bOui.classList.toggle('danger-plein', danger);
     bOui.classList.toggle('principal', !danger);
     const finir = (v) => { if (d.open) d.close(); resoudre(v); };
@@ -807,6 +1022,26 @@ function confirmer({titre, texte, oui = 'Confirmer', non = 'Annuler', danger = f
     d.oncancel = (ev) => { ev.preventDefault(); finir(false); };
     d.showModal();
     bNon.focus();
+  });
+}
+
+/** Message qui demande seulement d'être lu : un titre, des paragraphes, une liste éventuelle, un bouton. */
+function informer({titre, texte = [], liste = [], ok = 'J’ai compris'}) {
+  return new Promise((resoudre) => {
+    const d = $('#confirmation');
+    $('#c-titre').textContent = titre;
+    $('#c-texte').replaceChildren(...[].concat(texte).filter(Boolean).map((t) => el('p', {texte: t})),
+      ...(liste.length ? [el('ul', {classe: 'liste-raisons'}, liste.map((t) => el('li', {texte: t})))] : []));
+    const bOui = $('#c-oui'), bNon = $('#c-non');
+    bOui.textContent = ok;
+    bOui.classList.remove('danger-plein');
+    bOui.classList.add('principal');
+    bNon.hidden = true;
+    const finir = () => { if (d.open) d.close(); bNon.hidden = false; resoudre(); };
+    bOui.onclick = finir;
+    d.oncancel = (ev) => { ev.preventDefault(); finir(); };
+    d.showModal();
+    bOui.focus();
   });
 }
 
@@ -862,6 +1097,8 @@ const E = {
   resonder: false,
   derniereReponse: Date.now(),
   arretVolontaire: false,
+  baseEcarteeVue: false,  // « base abîmée mise de côté » : dit une fois
+  vue: 'photos',          // écran de l'appli : photos (recherche, toutes les photos) ou doublons (#doublons)
 };
 
 async function sonder() {
@@ -882,7 +1119,9 @@ async function sonder() {
   } finally {
     E.sondeEnCours = false;
   }
-  const delai = E.resonder ? 0 : document.hidden ? 30000 : (E.ecran === 'arrete' ? 5000 : 2000);
+  // Recherche des doublons en cours, écran « Doublons » affiché : l'avancement est suivi de plus près.
+  const doublons = E.vue === 'doublons' && E.serveur && E.serveur.doublons && E.serveur.doublons.en_cours;
+  const delai = E.resonder ? 0 : document.hidden ? 30000 : (E.ecran === 'arrete' ? 5000 : (doublons ? 700 : 2000));
   E.resonder = false;
   E.sonde = setTimeout(sonder, delai);
 }
@@ -892,6 +1131,7 @@ function appliquerEtat(e) {
   const avant = E.serveur;
   E.serveur = e;
   if (e.arret) { montrerArret(); return; }
+  if (e.limite_selection) LIMITE_SELECTION = e.limite_selection;
   if (E.ecran === 'demarrage' || E.ecran === 'arrete') {
     $('#arrete').hidden = true;
     $('#ecran-demarrage').hidden = true;
@@ -902,6 +1142,19 @@ function appliquerEtat(e) {
   if (E.ecran === 'assistant') majAssistant(e);
   if (E.ecran === 'appli') majAppli(e, avant);
   if ($('#reglages').open) majReglages(e);
+  if (e.base_ecartee && !E.baseEcarteeVue && !document.querySelector('dialog[open]')) prevenirBaseEcartee(e.base_ecartee);
+}
+
+/** Une base abîmée a été mise de côté au démarrage : on le dit une fois, simplement, avec ce qu'il faut faire. */
+async function prevenirBaseEcartee(b) {
+  E.baseEcarteeVue = true;
+  const texte = b.index
+    ? ['Le fichier où MyPhotos range ce qu’il sait de vos photos était abîmé (coupure de courant, disque fatigué…). Il a été mis de côté, et MyPhotos repart de zéro.',
+      'Vos photos n’ont pas été touchées. Ce qu’il faut faire : choisissez de nouveau vos dossiers de photos. MyPhotos les analysera une nouvelle fois.']
+    : ['Le fichier des miniatures de MyPhotos était abîmé (coupure de courant, disque fatigué…). Il a été mis de côté.',
+      'Vos photos n’ont pas été touchées. Vous n’avez rien à faire : MyPhotos refait les miniatures pendant l’analyse ; laissez-le ouvert le temps qu’elle se termine.'];
+  await informer({titre: b.index ? 'MyPhotos a dû repartir de zéro' : 'Les miniatures vont être refaites', texte});
+  api('/api/base-ecartee/vu', {}).catch(() => {});
 }
 
 function fermerFenetres() {
@@ -1277,7 +1530,7 @@ function montrerAppli() {
   $('#assistant').hidden = true;
   $('#appli').hidden = false;
   synchroniser();
-  if (!$('#visionneuse').open) $('#q').focus({preventScroll: true});
+  if (!$('#visionneuse').open && E.vue === 'photos') $('#q').focus({preventScroll: true});
 }
 
 const R = {
@@ -1288,7 +1541,9 @@ const R = {
 const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
 const infosPhotos = new Map();
 
+/** Adresse d'une recherche ou d'une photo ; sur l'écran « Doublons » : #doublons, ou #doublons&photo=… */
 function adresse(q, photo) {
+  if (E.vue === 'doublons') return photo ? `#doublons&photo=${photo}` : '#doublons';
   const p = new URLSearchParams();
   if (q) p.set('q', q);
   if (photo) p.set('photo', String(photo));
@@ -1299,13 +1554,18 @@ function lireAdresse() {
   const p = new URLSearchParams(location.hash.slice(1));
   const id = p.get('photo') || '';
   return {q: (p.get('q') || '').trim().replace(/\s+/g, ' ').slice(0, 200), photo: /^[1-9]\d{0,17}$/.test(id) ? +id : null,
-    reglages: p.has('reglages'), moteurs: p.has('moteurs')};
+    reglages: p.has('reglages'), moteurs: p.has('moteurs'), doublons: p.has('doublons')};
 }
 
 function synchroniser() {
   if (E.ecran !== 'appli') return;
   const a = lireAdresse();
-  if (a.q !== R.q) chercher(a.q, null);
+  if (a.doublons) {
+    if (E.vue !== 'doublons') montrerDoublons();
+  } else {
+    if (E.vue !== 'photos') montrerPhotos();
+    if (a.q !== R.q) chercher(a.q, null);
+  }
   const v = $('#visionneuse');
   if (a.photo) {
     if (!v.open || V.id !== a.photo) ouvrirVisionneuse(a.photo, groupeDe(a.photo), false);
@@ -1322,6 +1582,8 @@ window.addEventListener('hashchange', synchroniser);
 
 function chercher(q, historique = 'pousser') {
   q = (q || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  if (E.vue !== 'photos') montrerPhotos();  // une recherche depuis l'écran « Doublons » ramène aux photos
+  if (q !== R.q) viderSelection();          // autre recherche : la sélection ne suit pas ; même liste mise à jour : elle reste
   $('#q').value = q;
   R.q = q;
   R.mode = q ? 'recherche' : 'dates';
@@ -1480,7 +1742,8 @@ function majProches() {
 
 function verifierFin() {
   const proche = (s) => s.getBoundingClientRect().top < window.innerHeight + 2000;
-  if (E.ecran !== 'appli') return;
+  if (E.ecran !== 'appli' || E.vue !== 'photos') return;   // écran caché : rien à charger
+
   if (R.principal && !R.principal.fin && proche($('#sentinelle'))) chargerPrincipal();
   if ($('#moins-sures').open && R.peut && !R.peut.fin && proche($('#sentinelle-peut'))) chargerPeut();
 }
@@ -1505,18 +1768,29 @@ const observateurImages = new IntersectionObserver((entrees) => {
   }
 }, {rootMargin: '1500px 0px 1500px 0px'});
 
+/** Rond de sélection d'une miniature, fabriqué une fois puis cloné (des milliers de cases). */
+const MODELE_COCHE = el('button', {classe: 'coche', type: 'button', role: 'checkbox', 'aria-checked': 'false',
+  tabindex: '-1'}, el('span', {classe: 'rond'}, icone('coche')));
+
+/** Case d'une photo : la miniature (lien vers la visionneuse) et son rond de sélection. La sélection vit dans S.ids :
+ *  une case recréée (défilement, mise à jour) ou une miniature déchargée garde son état. */
 function tuile(p, groupe) {
   infosPhotos.set(p.id, p);
   const libelle = groupe === 'proches' ? `${libellePhoto(p)}, moins probable` : libellePhoto(p);
-  const a = el('a', {classe: 'tuile', href: adresse(R.q, p.id), 'aria-label': libelle,
-    dataset: {id: String(p.id), groupe}});
+  const choisie = S.ids.has(p.id);
+  const a = el('a', {classe: 'tuile', href: adresse(R.q, p.id), 'aria-label': libelle + (choisie ? ', sélectionnée' : ''),
+    draggable: 'false', dataset: {id: String(p.id), groupe}});
   const img = el('img', {alt: '', draggable: 'false'});
   img.dataset.src = `/miniature/${p.id}`;
   img.addEventListener('load', () => img.classList.add('chargee'));
   img.addEventListener('error', () => { if (img.getAttribute('src')) a.classList.add('sans-image'); });
   a.append(img);
+  const coche = MODELE_COCHE.cloneNode(true);
+  coche.setAttribute('aria-checked', String(choisie));
+  coche.setAttribute('aria-label', `Sélectionner : ${libelle.charAt(0).toLowerCase()}${libelle.slice(1)}`);
+  const c = el('div', {classe: 'case' + (choisie ? ' choisie' : ''), dataset: {id: String(p.id), groupe, libelle}}, a, coche);
   observateurImages.observe(a);
-  return a;
+  return c;
 }
 
 function ajouterTuiles(L, photos, grille, groupe) {
@@ -1536,12 +1810,12 @@ function ajouterTuiles(L, photos, grille, groupe) {
 }
 
 /** Filet de sécurité de l'observateur : les nouvelles miniatures déjà près de l'écran se chargent tout de suite. */
-function chargerSiVisibles(tuiles) {
+function chargerSiVisibles(cases) {
   const bas = window.innerHeight + 1500;
-  for (const a of tuiles) {
-    const img = a.firstElementChild;
-    if (!img || img.getAttribute('src') || !a.isConnected) continue;
-    const r = a.getBoundingClientRect();
+  for (const c of cases) {
+    const img = c.querySelector('img');
+    if (!img || img.getAttribute('src') || !c.isConnected) continue;
+    const r = c.getBoundingClientRect();
     if (r.width > 0 && r.bottom > -1500 && r.top < bas) img.src = img.dataset.src;
   }
 }
@@ -1549,17 +1823,28 @@ function chargerSiVisibles(tuiles) {
 function ajouterDates(d) {
   const L = R.principal;
   L.total = d.total;
+  const sections = new Set();
+  let cochees = 0;
   for (const p of d.photos) {
     if (L.vus.has(p.id)) continue;
     const cle = cleMois(p.date);
-    if (cle !== R.mois) {
+    if (cle !== R.mois || !R.grille || !R.grille.isConnected) {
       R.mois = cle;
       R.grille = el('div', {classe: 'grille'});
-      $('#resultats').append(el('section', {classe: 'section-mois', 'aria-label': titreMois(cle)},
-        el('h2', {classe: 'mois', texte: titreMois(cle)}), R.grille));
+      const titre = titreMois(cle);
+      $('#resultats').append(el('section', {classe: 'section-mois', 'aria-label': titre, dataset: {mois: cle}},
+        el('div', {classe: 'mois-tete'}, el('h2', {classe: 'mois', texte: titre}),
+          el('button', {classe: 'coche-mois', type: 'button', role: 'checkbox', 'aria-checked': 'false',
+            'aria-label': `Sélectionner les photos de ${titre.charAt(0).toLowerCase()}${titre.slice(1)}`},
+          el('span', {classe: 'rond'}, icone('coche')))), R.grille));
     }
+    // Mois coché en entier : ses photos qui arrivent avec le défilement le sont aussi.
+    if (S.mois.has(cle) && !S.ids.has(p.id)) { S.ids.add(p.id); cochees += 1; }
     ajouterTuiles(L, [p], R.grille, 'principal');
+    sections.add(R.grille.parentElement);
   }
+  for (const s of sections) majMois(s);
+  if (cochees) { majBarre(); notifierSelection(); }
   L.suivant = d.suivant;
   L.fin = !d.photos.length || d.suivant >= d.total;
   majCompte();
@@ -1658,9 +1943,11 @@ function afficherErreur(err) {
 
 function majAppli(e, avant) {
   majBandeau(e);
-  if (R.mode === null) return;
+  if (e.copie && e.copie.etat === 'en_cours' && C.suivie === null) suivreCopie(e.copie);   // page rouverte en cours de copie
+  if (E.vue === 'doublons') majDoublons(e);
+  if (R.mode === null || E.vue !== 'photos') return;      // écran des photos caché : il se mettra à jour en revenant
   if (e.generation !== R.generation && R.generation !== null) {
-    const auCalme = window.scrollY < 400 && !document.querySelector('dialog[open]');
+    const auCalme = window.scrollY < 400 && !document.querySelector('dialog[open]') && !S.ids.size && !S.occupe;
     const peu = R.principal.ids.length < N_PAGE && R.peut.ids.length === 0 && !R.prochesDemandees;
     if (auCalme && peu && Date.now() - R.depuis > 6000) {
       rafraichir();
@@ -1718,11 +2005,18 @@ function majBandeau(e) {
 
 // ============================================================ visionneuse
 const V = {id: null, groupe: null, pousse: false, jeton: 0};
+// Groupe « doublons:<id> » : la visionneuse passe d'une photo à l'autre du même groupe de doublons.
+const estDoublons = (groupe) => typeof groupe === 'string' && groupe.startsWith('doublons:');
 const listeGroupe = (groupe) => (groupe === 'principal' ? R.principal : groupe === 'peut' ? R.peut
-  : groupe === 'proches' ? R.proches : null);
+  : groupe === 'proches' ? R.proches : estDoublons(groupe) ? listeDoublons(groupe.slice(9)) : null);
 const listeDe = (groupe) => { const L = listeGroupe(groupe); return L ? L.ids : null; };
-const chargeurDe = (groupe) => (groupe === 'peut' ? chargerPeut : groupe === 'proches' ? chargerProches : chargerPrincipal);
+const chargeurDe = (groupe) => (estDoublons(groupe) ? async () => {} : groupe === 'peut' ? chargerPeut
+  : groupe === 'proches' ? chargerProches : chargerPrincipal);
 function groupeDe(id) {
+  if (E.vue === 'doublons') {
+    const g = D.groupes.find((x) => x.photos.some((p) => p.id === id));
+    return g ? `doublons:${g.id}` : null;
+  }
   if (R.principal && R.principal.vus.has(id)) return 'principal';
   if (R.peut && R.peut.vus.has(id)) return 'peut';
   if (R.proches && R.proches.vus.has(id)) return 'proches';
@@ -1824,8 +2118,835 @@ function fermerVisionneuse(historique = true) {
   if (historique) {
     if (V.pousse) { V.pousse = false; history.back(); } else history.replaceState(null, '', adresse(R.q));
   }
-  const t = id && document.querySelector(`a.tuile[data-id="${id}"]`);
+  const zone = E.vue === 'doublons' ? $('#ecran-doublons') : $('#principal');
+  const t = id && zone.querySelector(`.case[data-id="${id}"] a.tuile`);
   if (t) t.focus();
+}
+
+// ============================================================ sélection
+// La sélection est un ensemble d'identifiants (S.ids), indépendant de l'affichage : le défilement infini, les miniatures
+// déchargées au loin et les cases recréées par une mise à jour la retrouvent telle quelle.
+const S = {ids: new Set(), ancre: null, mois: new Set(), occupe: false, ignorerClic: false};
+const ecouteursSelection = new Set();
+
+/** Identifiants propres : nombres entiers positifs, sans doublon, dans l'ordre. */
+const versIds = (ids) => [...new Set([].concat(ids === undefined || ids === null ? [] : ids)
+  .map(Number).filter((x) => Number.isSafeInteger(x) && x > 0))];
+const photosTexte = (n) => (n > 1 ? `${nombre.format(n)} photos` : `${n} photo`);
+const texteChoisi = () => { const s = window.getSelection(); return !!s && !s.isCollapsed && String(s).trim() !== ''; };
+
+function majCase(c) {
+  const on = S.ids.has(+c.dataset.id);
+  c.classList.toggle('choisie', on);
+  const coche = c.querySelector('.coche'), a = c.querySelector('a.tuile');
+  if (coche) coche.setAttribute('aria-checked', String(on));
+  if (a && c.dataset.libelle) a.setAttribute('aria-label', c.dataset.libelle + (on ? (c.dataset.suffixe || ', sélectionnée') : ''));
+}
+
+function majMois(section) {
+  const b = section && section.querySelector('.coche-mois');
+  if (!b) return;
+  const cases = section.querySelectorAll('.case');
+  let n = 0;
+  for (const c of cases) if (S.ids.has(+c.dataset.id)) n += 1;
+  b.setAttribute('aria-checked', n === 0 ? 'false' : n === cases.length ? 'true' : 'mixed');
+}
+
+function majBarre() {
+  const n = S.ids.size;
+  // L'écran « Doublons » a sa propre barre (« Supprimer les copies cochées ») : l'en-tête y reste.
+  $('#appli').classList.toggle('en-selection', n > 0 && E.vue !== 'doublons');
+  $('#sel-compte').textContent = n > 1 ? `${nombre.format(n)} sélectionnées` : n === 1 ? '1 sélectionnée' : '';
+  for (const b of document.querySelectorAll('.sel-actions .bouton, .v-actions .bouton')) b.disabled = S.occupe;
+  const d = $('#d-supprimer');
+  d.disabled = S.occupe || d.dataset.vide === '1';
+}
+
+function notifierSelection() {
+  const ids = [...S.ids];
+  for (const f of ecouteursSelection) {
+    try { f(ids); } catch (err) { /* un écouteur en panne ne gêne pas les autres */ }
+  }
+  document.dispatchEvent(new CustomEvent('myphotos:selection', {detail: {ids}}));
+}
+
+/** Coche (valeur vraie), décoche (fausse) ou inverse (undefined) ces photos ; cases, mois et barre suivent. */
+function changerSelection(ids, valeur) {
+  const changes = new Set();
+  for (const id of versIds(ids)) {
+    const avant = S.ids.has(id), apres = valeur === undefined ? !avant : !!valeur;
+    if (avant === apres) continue;
+    if (apres) S.ids.add(id); else S.ids.delete(id);
+    changes.add(id);
+  }
+  if (!changes.size) return 0;
+  const cases = changes.size > 40 ? document.querySelectorAll('.case')
+    : [...changes].flatMap((id) => [...document.querySelectorAll(`.case[data-id="${id}"]`)]);
+  const sections = new Set();
+  for (const c of cases) {
+    const id = +c.dataset.id;
+    if (!changes.has(id)) continue;
+    majCase(c);
+    const s = c.closest('.section-mois');
+    if (s) {
+      sections.add(s);
+      if (!S.ids.has(id)) S.mois.delete(s.dataset.mois);
+    }
+  }
+  for (const s of sections) majMois(s);
+  if (!S.ids.size) { S.mois.clear(); S.ancre = null; }
+  majBarre();
+  notifierSelection();
+  return changes.size;
+}
+
+function basculer(id) {
+  changerSelection([id]);
+  S.ancre = id;
+}
+
+function viderSelection() {
+  if (!S.ids.size) return;
+  const ancre = S.ancre, dansBarre = $('#barre-selection').contains(document.activeElement);
+  changerSelection([...S.ids], false);
+  if (dansBarre) {                            // la barre disparaît : le focus revient à la dernière photo cochée
+    const t = ancre && document.querySelector(`.case[data-id="${ancre}"] a.tuile`);
+    (t || $('#q')).focus({preventScroll: true});
+  }
+}
+
+/** Photos affichées, dans l'ordre de la page : les résultats, « Moins sûres » si la section est ouverte, « Moins
+ *  probables » si elles sont montrées. */
+function idsAffiches() {
+  if (E.vue === 'doublons') return idsDoublonsAffiches();
+  const ids = [];
+  if (R.principal) ids.push(...R.principal.ids);
+  const ms = $('#moins-sures');
+  if (R.peut && !ms.hidden && ms.open) ids.push(...R.peut.ids);
+  if (R.proches && R.prochesDemandees && !$('#proches').hidden) ids.push(...R.proches.ids);
+  return ids;
+}
+
+function toutSelectionner() {
+  changerSelection(idsAffiches(), true);
+}
+
+/** Maj+clic : de la dernière photo cliquée (l'ancre) à celle-ci, dans l'ordre de la page ; toutes sont cochées. */
+function selectionnerPlage(id) {
+  const ordre = idsAffiches();
+  const j = ordre.indexOf(id), i = S.ancre === null ? -1 : ordre.indexOf(S.ancre);
+  if (i < 0 || j < 0) { basculer(id); return; }
+  changerSelection(ordre.slice(Math.min(i, j), Math.max(i, j) + 1), true);
+}
+
+/** Rond d'un intertitre de mois : coche tout le mois (et ses photos qui arriveront en défilant), ou le décoche. */
+function basculerMois(section) {
+  if (!section) return;
+  const ids = [...section.querySelectorAll('.case')].map((c) => +c.dataset.id);
+  if (!ids.length) return;
+  if (ids.every((id) => S.ids.has(id))) {
+    S.mois.delete(section.dataset.mois);
+    changerSelection(ids, false);
+  } else {
+    changerSelection(ids, true);
+    S.mois.add(section.dataset.mois);
+    S.ancre = ids[ids.length - 1];
+  }
+}
+
+// ---------------- actions : copier, copier dans un dossier, mettre à la Corbeille
+function occuper(v) {
+  S.occupe = v;
+  majBarre();
+}
+
+function tropDePhotos(ids) {
+  if (ids.length <= LIMITE_SELECTION) return false;
+  annoncer(`Pour copier des photos, choisissez-en ${nombre.format(LIMITE_SELECTION)} au plus à la fois.`, 'erreur');
+  return true;
+}
+
+/** Raisons des refus, regroupées : « Ce disque n'a pas de Corbeille… (3 photos) ». */
+function raisonsGroupees(refusees, total) {
+  const n = new Map();
+  for (const r of refusees) n.set(r.raison, (n.get(r.raison) || 0) + 1);
+  const lignes = [...n].map(([raison, k]) => (n.size > 1 || k > 1 ? `${raison} (${photosTexte(k)})` : raison));
+  const reste = (total || refusees.length) - refusees.length;
+  if (reste > 0) lignes.push(`Et ${photosTexte(reste)} de plus.`);
+  return lignes;
+}
+
+/** Copier : les fichiers vont dans le presse-papiers de Windows ; Ctrl+V les colle dans un dossier, un e-mail… */
+async function copierPhotos(ids) {
+  ids = versIds(ids);
+  if (!ids.length || S.occupe || tropDePhotos(ids)) return null;
+  occuper(true);
+  try {
+    const r = await api('/api/copier', {ids});
+    const n = r.copiees, refus = r.nb_refusees || 0;
+    let t = `${n > 1 ? `${nombre.format(n)} photos copiées` : 'Photo copiée'}. Collez-${n > 1 ? 'les' : 'la'} où vous voulez avec Ctrl+V : dans un dossier, un e-mail, un document…`;
+    if (refus) t += ` ${refus > 1 ? `${nombre.format(refus)} photos n’ont pas pu être copiées` : 'Une photo n’a pas pu être copiée'} : ${raisonsGroupees(r.refusees, refus)[0]}`;
+    annoncer(t, refus ? 'erreur' : 'info');
+    return r;
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    return null;
+  } finally {
+    occuper(false);
+  }
+}
+
+/** Copier dans un dossier : MyPhotos ouvre la fenêtre « Choisir un dossier » de Windows, puis copie sans rien écraser. */
+async function copierPhotosVers(ids) {
+  ids = versIds(ids);
+  if (!ids.length || S.occupe || tropDePhotos(ids)) return null;
+  occuper(true);
+  annoncer('Une fenêtre s’ouvre pour choisir où copier les photos.');
+  try {
+    const r = await api('/api/copier-vers', {ids});
+    if (!r.annule) suivreCopie(r.copie);
+    return r;
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    return null;
+  } finally {
+    occuper(false);
+  }
+}
+
+const C = {suivie: null};
+const attendreMs = (ms) => new Promise((resoudre) => setTimeout(resoudre, ms));
+
+function montrerOperation(texte, pourcent, boutons = []) {
+  $('#operation').hidden = false;
+  $('#operation-texte').textContent = texte;
+  const barre = $('#operation-barre');
+  barre.hidden = pourcent === undefined;
+  if (pourcent === null) barre.removeAttribute('value');
+  else if (pourcent !== undefined) barre.value = Math.max(0, Math.min(100, pourcent));
+  const zone = $('#operation-boutons'), cle = boutons.map((b) => b.texte || '×').join('|');
+  if (zone.dataset.cle === cle) return;
+  zone.dataset.cle = cle;
+  zone.replaceChildren(...boutons.map((b) => (b.texte
+    ? el('button', {classe: 'bouton petit', type: 'button', onclick: b.faire}, b.texte)
+    : el('button', {classe: 'bouton-icone', type: 'button', 'aria-label': 'Fermer ce message', onclick: cacherOperation},
+      icone('croix')))));
+}
+
+function cacherOperation() {
+  $('#operation').hidden = true;
+  $('#operation-boutons').dataset.cle = '';
+}
+
+/** Copie vers un dossier en cours : avancement sous l'en-tête, puis compte rendu (« Ouvrir le dossier », détails). */
+async function suivreCopie(c) {
+  if (!c || C.suivie !== null) return;
+  C.suivie = c.numero;
+  try {
+    while (c && c.etat === 'en_cours' && E.ecran !== 'arrete') {
+      montrerOperation(`Copie vers « ${c.dossier} » : ${nombre.format(c.fait)} sur ${photosTexte(c.total)}…`,
+        c.pourcent, [{texte: 'Annuler', faire: annulerCopie}]);
+      await attendreMs(SUIVI_COPIE_MS);
+      try {
+        const d = await api('/api/copie');
+        if (d && d.numero === C.suivie) c = d;
+      } catch (err) {
+        await attendreMs(1500);
+      }
+    }
+    if (c && c.etat !== 'en_cours') finCopie(c);
+  } finally {
+    C.suivie = null;
+  }
+}
+
+function finCopie(c) {
+  const n = c.copiees, accord = n > 1 ? 's' : '';
+  const morceaux = [];
+  if (c.etat === 'fini') {
+    morceaux.push(n ? `${photosTexte(n)} copiée${accord} dans « ${c.dossier} ».` : 'Aucune photo n’a été copiée.');
+  } else if (c.etat === 'annule') {
+    morceaux.push(`Copie annulée : ${nombre.format(n)} sur ${photosTexte(c.total)} copiée${accord}.`);
+  } else {
+    morceaux.push(`${c.message || 'La copie s’est arrêtée.'} ${nombre.format(n)} sur ${photosTexte(c.total)} copiée${accord}.`);
+  }
+  if (c.nb_renommees) {
+    morceaux.push(`${c.nb_renommees > 1 ? `${nombre.format(c.nb_renommees)} ont pris` : 'Une a pris'} un autre nom pour ne rien écraser (par exemple « ${c.renommees[0].nom} »).`);
+  }
+  if (c.nb_refusees) {
+    morceaux.push(`${c.nb_refusees > 1 ? `${nombre.format(c.nb_refusees)} photos n’ont pas pu être copiées` : 'Une photo n’a pas pu être copiée'}.`);
+  }
+  const texte = morceaux.join(' ');
+  const boutons = [];
+  if (n) {
+    boutons.push({texte: 'Ouvrir le dossier', faire: () => api('/api/copie/montrer', {})
+      .then(() => annoncer('Le dossier s’ouvre dans l’Explorateur…')).catch((err) => annoncer(err.message, 'erreur'))});
+  }
+  if (c.nb_refusees) {
+    boutons.push({texte: 'Détails', faire: () => informer({titre: `${photosTexte(c.nb_refusees)} non copiée${c.nb_refusees > 1 ? 's' : ''}`,
+      liste: raisonsGroupees(c.refusees, c.nb_refusees)})});
+  }
+  boutons.push({});
+  montrerOperation(texte, c.etat === 'fini' ? 100 : undefined, boutons);   // bandeau « status » : lu à voix haute aussi
+}
+
+async function annulerCopie() {
+  try { await api('/api/copie/annuler', {}); } catch (err) { annoncer(err.message, 'erreur'); }
+}
+
+/** Mettre à la Corbeille de Windows, jamais ailleurs, après confirmation (sauf {confirmer: false}). Par paquets de
+ *  LIMITE_SELECTION photos. Les photos parties disparaissent de la page ; le compte rendu dit pourquoi les autres
+ *  sont restées. Renvoie {supprimees, refusees, nb_refusees, octets_liberes}, ou null si rien n'a été fait. */
+async function supprimerPhotos(ids, {confirmer: demander = true} = {}) {
+  ids = versIds(ids);
+  if (!ids.length || S.occupe) return null;
+  const n = ids.length, plusieurs = n > 1;
+  if (demander) {
+    const ok = await confirmer({titre: plusieurs ? `Mettre ${nombre.format(n)} photos à la Corbeille ?` : 'Mettre cette photo à la Corbeille ?',
+      danger: true, oui: 'Mettre à la Corbeille', texte: [
+        plusieurs ? 'Elles seront retirées de vos dossiers et de MyPhotos, et placées dans la Corbeille de Windows.'
+          : 'Elle sera retirée de son dossier et de MyPhotos, et placée dans la Corbeille de Windows.',
+        `Tant que la Corbeille n’est pas vidée, vous pouvez ${plusieurs ? 'les' : 'la'} y retrouver et ${plusieurs ? 'les' : 'la'} restaurer.`]});
+    if (!ok) return null;
+  }
+  occuper(true);
+  const bilan = {supprimees: [], refusees: [], nb_refusees: 0, octets_liberes: 0};
+  try {
+    for (let i = 0; i < n; i += LIMITE_SELECTION) {
+      annoncer(n > LIMITE_SELECTION ? `Mise à la Corbeille… ${nombre.format(i)} sur ${photosTexte(n)}` : 'Mise à la Corbeille…');
+      const r = await api('/api/supprimer', {ids: ids.slice(i, i + LIMITE_SELECTION), confirme: true});
+      bilan.supprimees.push(...r.supprimees);
+      bilan.refusees.push(...r.refusees);
+      bilan.nb_refusees += r.nb_refusees || r.refusees.length;
+      bilan.octets_liberes += r.octets_liberes || 0;
+      // Ce changement vient de nous : pas de « De nouvelles photos sont prêtes » pour lui, maintenant ni plus tard.
+      if (Number.isInteger(r.generation)) {
+        if (R.generation !== null) R.generation = r.generation;
+        if (E.serveur) E.serveur.generation = r.generation;
+      }
+    }
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    occuper(false);
+  }
+  if (bilan.supprimees.length) retirerPhotos(bilan.supprimees);
+  rapportSuppression(bilan);
+  document.dispatchEvent(new CustomEvent('myphotos:supprimees', {detail: bilan}));
+  return bilan;
+}
+
+function rapportSuppression(b) {
+  const n = b.supprimees.length, k = b.nb_refusees;
+  if (!n && !k) return;
+  const fait = n ? `${n > 1 ? `${nombre.format(n)} photos mises` : 'Photo mise'} à la Corbeille${b.octets_liberes >= 1048576 ? ` (${taille(b.octets_liberes)})` : ''}.` : '';
+  if (!k) { annoncer(fait); return; }
+  informer({titre: k > 1 ? `${nombre.format(k)} photos n’ont pas été supprimées` : 'Une photo n’a pas été supprimée',
+    texte: [fait, k > 1 ? 'Elles restent à leur place, dans vos dossiers et dans MyPhotos :' : 'Elle reste à sa place, dans son dossier et dans MyPhotos :'],
+    liste: raisonsGroupees(b.refusees, k)});
+}
+
+/** Photos parties à la Corbeille : leurs cases disparaissent, les listes et les comptes suivent, et la suite du
+ *  défilement reprend au bon endroit (les pages suivantes se décalent d'autant). */
+function retirerPhotos(ids) {
+  const partis = new Set(versIds(ids));
+  if (!partis.size) return;
+  const sections = new Set();
+  for (const c of [...document.querySelectorAll('.case')]) {
+    if (!partis.has(+c.dataset.id)) continue;
+    const a = c.querySelector('a.tuile');
+    if (a) observateurImages.unobserve(a);
+    const s = c.closest('.section-mois');
+    if (s) sections.add(s);
+    c.remove();
+  }
+  for (const s of sections) {
+    if (s.querySelector('.case')) majMois(s); else s.remove();
+  }
+  const retirees = {};
+  for (const g of ['principal', 'peut', 'proches']) {
+    const L = listeGroupe(g);
+    retirees[g] = 0;
+    if (!L) continue;
+    const avant = L.ids.length;
+    L.ids = L.ids.filter((x) => !partis.has(x));
+    retirees[g] = avant - L.ids.length;
+    L.total = Math.max(0, L.total - retirees[g]);
+  }
+  // « Moins sûres » suit les résultats sûrs dans le même classement : son décalage compte les deux.
+  if (R.principal) R.principal.suivant = Math.max(0, R.principal.suivant - retirees.principal);
+  if (R.peut) R.peut.suivant = Math.max(0, R.peut.suivant - retirees.principal - retirees.peut);
+  if (R.proches) {
+    R.proches.suivant = Math.max(0, R.proches.suivant - retirees.proches);
+    R.totalProches = Math.max(0, R.totalProches - retirees.proches);
+  }
+  for (const id of partis) infosPhotos.delete(id);
+  changerSelection([...partis], false);
+  if (R.mode !== null) majCompte();
+  requestAnimationFrame(verifierFin);
+}
+
+async function supprimerDepuisVisionneuse() {
+  const id = V.id;
+  if (!id) return;
+  const i = (listeDe(V.groupe) || []).indexOf(id);
+  const b = await supprimerPhotos([id]);
+  if (!b || !b.supprimees.includes(id) || V.id !== id) return;
+  const liste = listeDe(V.groupe) || [];
+  const suivante = i < 0 ? undefined : (i < liste.length ? liste[i] : liste[i - 1]);
+  if (suivante !== undefined && $('#visionneuse').open) {
+    montrerPhoto(suivante);
+    history.replaceState({photo: suivante}, '', adresse(R.q, suivante));
+  } else {
+    fermerVisionneuse();
+  }
+}
+
+/** Petite API pour les autres écrans (« Doublons ») : cocher une liste d'identifiants, vider, lire, lancer les actions.
+ *  Les actions prennent une liste explicite, ou la sélection en cours si on n'en donne pas. Événements du document :
+ *  « myphotos:selection » {ids} à chaque changement, « myphotos:supprimees » {supprimees, refusees…} après une mise à la
+ *  Corbeille. Les cases .case[data-id] de la page suivent la sélection d'elles-mêmes. */
+window.MyPhotosSelection = Object.freeze({
+  limite: () => LIMITE_SELECTION,
+  lire: () => [...S.ids],
+  nombre: () => S.ids.size,
+  contient: (id) => S.ids.has(+id),
+  cocher: (ids, valeur = true) => changerSelection(ids, valeur !== false),
+  decocher: (ids) => changerSelection(ids, false),
+  basculer: (id) => basculer(+id),
+  vider: () => viderSelection(),
+  toutCocher: () => toutSelectionner(),
+  copier: (ids) => copierPhotos(ids === undefined ? [...S.ids] : ids),
+  copierVers: (ids) => copierPhotosVers(ids === undefined ? [...S.ids] : ids),
+  supprimer: (ids, options) => supprimerPhotos(ids === undefined ? [...S.ids] : ids, options),
+  ecouter: (f) => { ecouteursSelection.add(f); return () => ecouteursSelection.delete(f); },
+});
+
+// ============================================================ doublons
+// Écran « Doublons » (#doublons). MyPhotos cherche les doublons de son côté (POST /api/doublons/lancer) ; la page suit
+// l'avancement dans /api/etat, puis lit les groupes (GET /api/doublons). Les copies proposées sont cochées d'office
+// avec la sélection (MyPhotosSelection), jamais les rafales ; les photos ne partent qu'après un clic et une
+// confirmation, par la route de la Corbeille, et jamais tous les exemplaires d'une même photo.
+const Sel = window.MyPhotosSelection;
+const TYPES_DOUBLONS = [
+  {type: 'identiques', titre: 'Copies identiques',
+    note: 'Le même fichier, enregistré plusieurs fois. Les copies sont cochées ; la photo à garder ne l’est pas.'},
+  {type: 'retouchees', titre: 'Copies retouchées',
+    note: 'La même photo, réduite, recadrée, éclaircie ou envoyée par une messagerie. MyPhotos propose de garder la plus grande.'},
+  {type: 'proches', titre: 'Photos très proches (rafales)',
+    note: 'Plusieurs photos prises au même moment, ou presque. Rien n’est coché : cochez vous-même celles dont vous ne voulez pas.'},
+];
+const SUFFIXE_DOUBLON = ', cochée pour la Corbeille';
+const D = {
+  numero: 0,              // numéro du résultat affiché (0 : aucun)
+  groupes: [],            // groupes affichés, après les suppressions faites depuis
+  parId: new Map(),       // identifiant -> photo (taille, garder…)
+  role: new Map(),        // identifiant -> à garder (vrai) ou proposée à la Corbeille (faux)
+  vus: new Map(),         // identifiant -> rôle pour lequel la case a été cochée ou non d'office
+  coches: new Set(),      // cases cochées, retenues quand on quitte l'écran
+  elements: new Map(),    // clé d'un groupe -> sa carte (réutilisée d'un affichage à l'autre)
+  sections: new Map(),    // type -> section
+  etat: null,             // dernier état de la recherche (comme /api/etat.doublons)
+  examinees: 0, chargement: false, encore: false, relance: 0, ouvert: false,
+};
+
+function poids(octets) {
+  if (!octets) return '0 Ko';
+  if (octets < 1048576) return `${nombre.format(Math.max(1, Math.round(octets / 1024)))} Ko`;
+  const mo = octets / 1048576;
+  if (mo < 1000) return `${mo.toLocaleString('fr-FR', {maximumFractionDigits: mo < 10 ? 1 : 0})} Mo`;
+  return `${(mo / 1024).toLocaleString('fr-FR', {maximumFractionDigits: 1})} Go`;
+}
+const definition = (p) => (p.largeur && p.hauteur ? `${p.largeur} × ${p.hauteur}` : 'Définition inconnue');
+function dateHeure(iso) {
+  const d = lireDate(iso);
+  if (!d) return 'Date inconnue';
+  const heure = d.h !== null && !(d.h === 0 && d.mn === 0) ? ` à ${d.h} h ${String(d.mn).padStart(2, '0')}` : '';
+  return `${dateCourte(iso)}${heure}`;
+}
+/** « À garder : la plus grande (…) » : l'étiquette « À garder » le dit déjà, la raison suit seule. */
+const raisonCourte = (p) => majuscule((p.raison || '').replace(/^À garder : /, ''));
+
+const idsDoublonsAffiches = () => D.groupes.filter((g) => g.type !== 'proches' || D.ouvert)
+  .flatMap((g) => g.photos.map((p) => p.id));
+const cochesDoublons = () => Sel.lire().filter((id) => D.parId.has(id));
+function listeDoublons(gid) {
+  const g = D.groupes.find((x) => x.id === gid);
+  return g ? {ids: g.photos.map((p) => p.id), total: g.photos.length, fin: true} : null;
+}
+
+function montrerDoublons() {
+  E.vue = 'doublons';
+  $('#principal').hidden = true;
+  $('#ecran-doublons').hidden = false;
+  $('#ouvrir-doublons').setAttribute('aria-current', 'page');
+  Sel.vider();                                  // la sélection de l'écran des photos ne suit pas
+  Sel.cocher([...D.coches].filter((id) => D.parId.has(id)));
+  majBarre();
+  if (E.serveur && E.serveur.doublons) D.etat = E.serveur.doublons;
+  rendreEtatDoublons();
+  majResumeDoublons();
+  if (E.serveur) majDoublons(E.serveur);
+  chargerDoublons();
+  window.scrollTo(0, 0);
+  if (!$('#visionneuse').open) $('#d-titre').focus({preventScroll: true});
+}
+
+function montrerPhotos() {
+  D.coches = new Set(cochesDoublons());         // retrouvées en revenant sur l'écran
+  E.vue = 'photos';
+  $('#ecran-doublons').hidden = true;
+  $('#principal').hidden = false;
+  $('#ouvrir-doublons').removeAttribute('aria-current');
+  Sel.vider();
+  majBarre();
+}
+
+/** Appelée à chaque /api/etat sur l'écran « Doublons » : nouveau résultat à lire, relance quand l'index a changé. */
+function majDoublons(e) {
+  const x = e.doublons;
+  if (!x) return;
+  D.etat = x;
+  if (x.numero && x.numero !== D.numero) chargerDoublons();
+  // Photos analysées, supprimées… depuis : MyPhotos relance la recherche (il décide s'il est temps : il ne la relance
+  // pas en pleine analyse plus d'une fois toutes les 30 s, ni après un « Arrêter »).
+  const relancer = !x.en_cours && !x.erreur && !x.arretee && (x.perime || (!x.numero && x.deja));
+  if (relancer && Date.now() - D.relance > 15000) {
+    D.relance = Date.now();
+    api('/api/doublons/lancer', {auto: true}).then((r) => {
+      if (r && r.lance) { D.etat = r; rendreEtatDoublons(); sonder(); }
+    }).catch(() => { /* réessayé plus tard */ });
+  }
+  rendreEtatDoublons();
+}
+
+async function chargerDoublons() {
+  if (D.chargement) { D.encore = true; return; }
+  D.chargement = true;
+  try {
+    const d = await api(`/api/doublons?depuis=${D.numero}`);
+    const {resultat, ...etat} = d;
+    D.etat = etat;
+    if (resultat && resultat.groupes && resultat.numero !== D.numero) appliquerResultat(resultat);
+    rendreEtatDoublons();
+  } catch (err) {
+    if (E.vue === 'doublons') annoncer(err.message, 'erreur');
+  } finally {
+    D.chargement = false;
+    if (D.encore) { D.encore = false; chargerDoublons(); }
+  }
+}
+
+function indexerDoublons() {
+  D.parId = new Map();
+  D.role = new Map();
+  for (const g of D.groupes) {
+    for (const p of g.photos) {
+      D.parId.set(p.id, p);
+      D.role.set(p.id, (D.role.has(p.id) ? D.role.get(p.id) : true) && p.garder);
+      infosPhotos.set(p.id, {id: p.id, date: p.date, largeur: p.largeur, hauteur: p.hauteur});
+    }
+  }
+}
+
+/** Nouveau résultat : les copies proposées sont cochées d'office la première fois qu'on les montre (ou quand leur rôle
+ *  change) ; ce que l'utilisateur a coché ou décoché lui-même reste tel quel. */
+function appliquerResultat(r) {
+  const premier = !D.numero;
+  D.numero = r.numero;
+  D.examinees = r.photos;
+  D.groupes = r.groupes;
+  indexerDoublons();
+  const cocher = [], decocher = [];
+  for (const [id, garder] of D.role) {
+    if (D.vus.get(id) === garder) continue;
+    D.vus.set(id, garder);
+    (garder ? decocher : cocher).push(id);
+  }
+  if (E.vue === 'doublons') {
+    Sel.decocher([...Sel.lire()].filter((id) => !D.parId.has(id)));
+    Sel.decocher(decocher);
+    Sel.cocher(cocher);
+  } else {
+    for (const id of decocher) D.coches.delete(id);
+    for (const id of cocher) D.coches.add(id);
+    for (const id of [...D.coches]) if (!D.parId.has(id)) D.coches.delete(id);
+  }
+  rendreGroupes();
+  majResumeDoublons();
+  if (premier) $('#vivant').textContent = `Recherche des doublons terminée. ${resumeDoublons()}`;
+}
+
+/** Photos mises à la Corbeille (depuis cet écran ou ailleurs) : elles quittent leurs groupes tout de suite. */
+function retirerDesDoublons(ids) {
+  const partis = new Set(versIds(ids));
+  if (!partis.size || !D.groupes.length) return;
+  let change = false;
+  const restants = [];
+  for (const g of D.groupes) {
+    const photos = g.photos.filter((p) => !partis.has(p.id));
+    if (photos.length === g.photos.length) { restants.push(g); continue; }
+    change = true;
+    if (photos.length < 2) continue;
+    if (!photos.some((p) => p.garder)) {     // la photo à garder est partie : la meilleure des autres la remplace
+      photos[0] = {...photos[0], garder: true, meilleure: true, raison: 'À garder : la meilleure des photos qui restent.'};
+      D.vus.set(photos[0].id, true);
+      if (E.vue === 'doublons') Sel.decocher([photos[0].id]);   // ailleurs, la sélection n'est pas celle des doublons
+      else D.coches.delete(photos[0].id);
+    }
+    restants.push({...g, photos, gain_octets: photos.filter((p) => !p.garder).reduce((s, p) => s + p.taille, 0)});
+  }
+  if (!change) return;
+  D.groupes = restants;
+  for (const id of partis) { D.coches.delete(id); D.vus.delete(id); }
+  indexerDoublons();
+  rendreGroupes();
+  majResumeDoublons();
+  rendreEtatDoublons();
+}
+
+const cleGroupe = (g) => `${g.type}:${g.photos.map((p) => `${p.id}${p.garder ? 'g' : 'c'}`).join('.')}`;
+
+function cartePhoto(p, g) {
+  const groupe = `doublons:${g.id}`;
+  const quand = dateCourte(p.date);
+  const libelle = `${p.nom}${quand ? `, photo du ${quand}` : ''}`;
+  const choisie = S.ids.has(p.id);
+  const a = el('a', {classe: 'tuile', href: `#doublons&photo=${p.id}`, draggable: 'false',
+    'aria-label': libelle + (choisie ? SUFFIXE_DOUBLON : ''), dataset: {id: String(p.id), groupe}});
+  const img = el('img', {alt: '', draggable: 'false'});
+  img.dataset.src = `/miniature/${p.id}`;
+  img.addEventListener('load', () => img.classList.add('chargee'));
+  img.addEventListener('error', () => { if (img.getAttribute('src')) a.classList.add('sans-image'); });
+  a.append(img);
+  const coche = MODELE_COCHE.cloneNode(true);
+  coche.setAttribute('aria-checked', String(choisie));
+  coche.setAttribute('aria-label', `Mettre à la Corbeille : ${libelle}`);
+  const c = el('div', {classe: 'case' + (choisie ? ' choisie' : ''),
+    dataset: {id: String(p.id), groupe, libelle, suffixe: SUFFIXE_DOUBLON}}, a, coche);
+  observateurImages.observe(a);
+  return el('div', {classe: 'd-photo'}, c,
+    el('div', {classe: 'd-infos'},
+      el('span', {classe: 'd-etiquette garder'}, icone('coche'), 'À garder'),
+      el('span', {classe: 'd-etiquette jeter'}, icone('croix'), 'À supprimer'),
+      el('p', {classe: 'd-nom', texte: p.nom, title: p.nom}),
+      el('p', {classe: 'd-def', texte: `${definition(p)} · ${poids(p.taille)}`}),
+      el('p', {classe: 'd-date', texte: dateHeure(p.date)}),
+      el('p', {classe: 'd-dossier', texte: p.dossier, title: p.dossier}),
+      el('p', {classe: 'd-raison', texte: raisonCourte(p)})));
+}
+
+function carteGroupe(g, t) {
+  const n = g.photos.length;
+  const titre = g.type === 'identiques' ? `${nombre.format(n)} exemplaires du même fichier`
+    : g.type === 'retouchees' ? `${nombre.format(n)} versions de la même photo` : `Série de ${nombre.format(n)} photos`;
+  return el('article', {classe: 'd-groupe' + (n > 2 ? ' large' : ''),
+    'aria-label': `${t.titre} : ${titre.charAt(0).toLowerCase()}${titre.slice(1)}`, dataset: {cle: cleGroupe(g), id: g.id}},
+  el('div', {classe: 'd-groupe-tete'}, el('span', {classe: 'd-groupe-titre', texte: titre}), el('span', {classe: 'd-gain'})),
+  el('div', {classe: 'd-photos'}, g.photos.map((p) => cartePhoto(p, g))));
+}
+
+function sectionDoublons(t) {
+  let s = D.sections.get(t.type);
+  if (s) return s;
+  const compte = el('span', {classe: 'd-compte'});
+  const h2 = el('h2', {texte: t.titre});
+  const liste = el('div', {classe: 'd-liste'});
+  if (t.type === 'proches') {
+    s = el('details', {classe: 'd-section', dataset: {type: t.type}},
+      el('summary', {}, icone('chevron'), el('span', {classe: 'd-section-tete'}, h2, compte)),
+      el('p', {classe: 'note', texte: t.note}), liste);
+    s.addEventListener('toggle', () => {
+      D.ouvert = s.open;
+      if (!s.open) return;
+      for (const a of s.querySelectorAll('a.tuile')) { observateurImages.unobserve(a); observateurImages.observe(a); }
+      setTimeout(() => chargerSiVisibles([...s.querySelectorAll('.case')].slice(0, 60)), 30);
+    });
+  } else {
+    s = el('section', {classe: 'd-section', 'aria-label': t.titre, dataset: {type: t.type}},
+      el('div', {classe: 'd-section-tete'}, h2, compte), el('p', {classe: 'note', texte: t.note}), liste);
+  }
+  D.sections.set(t.type, s);
+  return s;
+}
+
+/** Affiche les groupes ; les cartes déjà là sont réutilisées telles quelles (miniatures chargées, défilement gardé). */
+function rendreGroupes() {
+  const zone = $('#d-sections');
+  const ancre = [...zone.querySelectorAll('.d-groupe')].find((x) => x.getBoundingClientRect().bottom > 140);
+  const repere = ancre ? {cle: ancre.dataset.cle, haut: ancre.getBoundingClientRect().top} : null;
+  const gardees = new Map(), nouvelles = [], sections = [];
+  for (const t of TYPES_DOUBLONS) {
+    const groupes = D.groupes.filter((g) => g.type === t.type);
+    if (!groupes.length) continue;
+    const s = sectionDoublons(t);
+    const cartes = groupes.map((g) => {
+      const k = cleGroupe(g);
+      let c = D.elements.get(k);
+      if (!c) { c = carteGroupe(g, t); nouvelles.push(c); }
+      gardees.set(k, c);
+      return c;
+    });
+    s.querySelector('.d-liste').replaceChildren(...cartes);
+    const n = groupes.length;
+    s.querySelector('.d-compte').textContent = t.type === 'proches' ? `${pluriel(n, 'série')}` : `${pluriel(n, 'groupe')}`;
+    sections.push(s);
+  }
+  for (const [k, c] of D.elements) {
+    if (!gardees.has(k)) for (const a of c.querySelectorAll('a.tuile')) observateurImages.unobserve(a);
+  }
+  D.elements = gardees;
+  remplacer(zone, sections);
+  if (repere && D.elements.has(repere.cle)) {
+    window.scrollBy(0, D.elements.get(repere.cle).getBoundingClientRect().top - repere.haut);
+  }
+  const cases = nouvelles.flatMap((c) => [...c.querySelectorAll('.case')]).slice(0, 60);
+  setTimeout(() => chargerSiVisibles(cases), 30);
+}
+
+function resumeDoublons() {
+  const copies = D.groupes.filter((g) => g.type !== 'proches');
+  const proposees = new Map();
+  for (const g of copies) for (const p of g.photos) if (!p.garder) proposees.set(p.id, p.taille);
+  const octets = [...proposees.values()].reduce((s, t) => s + t, 0);
+  const series = D.groupes.length - copies.length;
+  const morceaux = [proposees.size ? `${pluriel(proposees.size, 'copie')} en trop (${poids(octets)})` : 'Aucune copie en trop'];
+  if (series) morceaux.push(`${pluriel(series, 'série')} de photos très proches`);
+  return morceaux.join(' · ') + '.';
+}
+
+/** Haut de l'écran : bouton « Chercher les doublons », avancement, ou résumé du résultat affiché. */
+function rendreEtatDoublons() {
+  if (E.vue !== 'doublons') return;
+  const x = D.etat || {}, zone = $('#d-etat');
+  const s = E.serveur || {}, a = s.analyse;
+  const analyse = !!(a && a.active);
+  const pct = Math.max(0, Math.min(100, 100 * (x.avancement || 0)));
+  // Un résultat arrive (ou la recherche va être relancée d'elle-même) : rien à proposer d'ici là.
+  const bientot = !D.numero && !x.en_cours && !x.erreur
+    && ((x.numero && x.numero !== D.numero) || (x.deja && !x.arretee));
+  let sig, faire;
+  if (x.en_cours && !D.numero) {
+    sig = 'calcul';
+    faire = () => [el('div', {classe: 'd-calcul'})];
+  } else if (bientot) {
+    sig = 'bientot';
+    faire = () => [el('p', {classe: 'attente'}, el('span', {classe: 'roue', 'aria-hidden': 'true'}), 'Recherche des doublons…')];
+  } else if (!D.numero) {
+    sig = `accueil|${x.erreur || ''}|${analyse}`;
+    faire = () => [el('div', {classe: 'd-accueil'},
+      el('h2', {texte: 'Trouvez vos photos en double'}),
+      el('p', {texte: 'MyPhotos compare vos photos entre elles. Cela prend de quelques secondes à quelques minutes ; vous pouvez continuer à chercher vos photos pendant ce temps.'}),
+      x.erreur ? el('p', {classe: 'alerte erreur', role: 'alert', texte: x.erreur}) : null,
+      el('button', {classe: 'bouton principal grand', type: 'button', onclick: lancerDoublons}, icone('loupe'),
+        x.erreur ? 'Réessayer' : 'Chercher les doublons'),
+      analyse ? el('p', {classe: 'note', texte: 'L’analyse de vos photos n’est pas finie : MyPhotos cherchera parmi celles qui sont prêtes. Relancez la recherche quand l’analyse sera terminée.'}) : null)];
+  } else {
+    const vide = !D.groupes.length;
+    sig = `resultat|${x.en_cours}|${x.erreur || ''}|${vide}|${resumeDoublons()}|${analyse}|${!!x.perime}|${D.examinees}`;
+    faire = () => [
+      vide ? el('div', {classe: 'vide'}, icone('coche'), el('h2', {texte: 'Aucun doublon'}),
+        el('p', {texte: `MyPhotos n’a trouvé aucune photo en double parmi vos ${pluriel(D.examinees, 'photo')}.`}))
+        : el('p', {classe: 'd-ligne'}, el('strong', {texte: resumeDoublons()})),
+      el('p', {classe: 'd-ligne'}, x.en_cours
+        ? el('span', {classe: 'd-maj'}, el('span', {classe: 'roue', 'aria-hidden': 'true'}), el('span', {classe: 'd-maj-texte'}))
+        : el('button', {classe: 'bouton petit', type: 'button', onclick: lancerDoublons}, icone('loupe'), 'Chercher de nouveau'),
+      vide ? null : el('span', {classe: 'note', texte: `MyPhotos a comparé ${pluriel(D.examinees, 'photo')}.`})),
+      x.erreur ? el('p', {classe: 'alerte erreur', role: 'alert', texte: x.erreur}) : null,
+      analyse ? el('p', {classe: 'note', texte: 'L’analyse de vos photos n’est pas finie : d’autres doublons pourront apparaître.'}) : null,
+    ];
+  }
+  if (zone.dataset.sig !== sig) {
+    zone.dataset.sig = sig;
+    remplacer(zone, faire());
+  }
+  if (sig === 'calcul') {
+    barreProgression(zone.firstElementChild, {titre: 'Recherche des doublons…', pourcent: pct,
+      details: x.message || '', bouton: {texte: 'Arrêter', action: annulerDoublons}});
+  }
+  const maj = zone.querySelector('.d-maj-texte');
+  if (maj) maj.textContent = `Mise à jour de la recherche… ${Math.floor(pct)} %`;
+}
+
+/** Barre du bas : nombre de photos cochées, place qu'elles occupent, « Supprimer les copies cochées (libère …) ». */
+function majResumeDoublons() {
+  if (E.vue !== 'doublons') return;
+  const coches = cochesDoublons();
+  const choisies = new Set(coches);
+  const octets = coches.reduce((s, id) => s + (D.parId.get(id).taille || 0), 0);
+  const n = coches.length;
+  $('#d-barre').hidden = !D.groupes.length;
+  $('#d-resume').textContent = n ? `${n > 1 ? `${nombre.format(n)} photos cochées` : '1 photo cochée'} · ${poids(octets)}`
+    : 'Aucune photo cochée';
+  const b = $('#d-supprimer');
+  b.dataset.vide = n ? '' : '1';
+  b.disabled = !n || S.occupe;
+  b.lastElementChild.textContent = n ? `Supprimer les copies cochées (libère ${poids(octets)})` : 'Supprimer les copies cochées';
+  $('#d-tout').textContent = n ? 'Tout décocher' : 'Cocher les copies proposées';
+  $('#d-tout').hidden = !D.groupes.some((g) => g.type !== 'proches') && !n;
+  for (const g of D.groupes) {
+    const c = D.elements.get(cleGroupe(g));
+    if (!c) continue;
+    const cochees = g.photos.filter((p) => choisies.has(p.id));
+    const toutes = cochees.length === g.photos.length;
+    const texte = toutes ? (g.type === 'proches' ? 'Toute la série est cochée' : 'Toutes cochées : gardez-en au moins une')
+      : cochees.length ? `libère ${poids(cochees.reduce((s, p) => s + p.taille, 0))}` : '';
+    const gain = c.querySelector('.d-gain');
+    if (gain.textContent !== texte) gain.textContent = texte;
+    c.classList.toggle('d-complet', toutes && g.type !== 'proches');
+  }
+}
+Sel.ecouter(() => majResumeDoublons());
+document.addEventListener('myphotos:supprimees', (ev) => retirerDesDoublons((ev.detail || {}).supprimees || []));
+
+async function lancerDoublons() {
+  try {
+    const r = await api('/api/doublons/lancer', {});
+    D.etat = r;
+    rendreEtatDoublons();
+    sonder();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  }
+}
+
+async function annulerDoublons() {
+  try {
+    await api('/api/doublons/annuler', {});
+    sonder();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  }
+}
+
+/** « Supprimer les copies cochées » : jamais tous les exemplaires d'une même photo ; confirmation, puis Corbeille. */
+async function supprimerCopiesCochees() {
+  const ids = cochesDoublons();
+  if (!ids.length || S.occupe) return;
+  const choisies = new Set(ids);
+  const pleins = D.groupes.filter((g) => g.photos.every((p) => choisies.has(p.id)));
+  const copies = pleins.filter((g) => g.type !== 'proches');
+  if (copies.length) {
+    await informer({titre: copies.length > 1 ? `Toutes les photos de ${nombre.format(copies.length)} groupes sont cochées`
+      : 'Toutes les photos d’un groupe sont cochées',
+    texte: ['MyPhotos ne met jamais à la Corbeille tous les exemplaires d’une même photo : il ne vous en resterait aucun.',
+      'Décochez au moins une photo dans chacun de ces groupes (ils sont entourés de rouge), puis recommencez.']});
+    const c = D.elements.get(cleGroupe(copies[0]));
+    if (c) { c.scrollIntoView({block: 'center'}); const t = c.querySelector('a.tuile'); if (t) t.focus({preventScroll: true}); }
+    return;
+  }
+  const octets = ids.reduce((s, id) => s + (D.parId.get(id).taille || 0), 0);
+  const n = ids.length, plusieurs = n > 1;
+  const series = pleins.length;
+  const ok = await confirmer({titre: plusieurs ? `Mettre ${nombre.format(n)} photos à la Corbeille ?` : 'Mettre cette photo à la Corbeille ?',
+    danger: true, oui: 'Mettre à la Corbeille', texte: [
+      plusieurs ? 'Elles seront retirées de vos dossiers et de MyPhotos, et placées dans la Corbeille de Windows. Tant qu’elle n’est pas vidée, vous pouvez les y retrouver et les restaurer.'
+        : 'Elle sera retirée de son dossier et de MyPhotos, et placée dans la Corbeille de Windows. Tant qu’elle n’est pas vidée, vous pouvez l’y retrouver et la restaurer.',
+      `${plusieurs ? 'Elles occupent' : 'Elle occupe'} ${poids(octets)} : cette place sera libérée quand vous viderez la Corbeille.`,
+      series ? `Attention : ${series > 1 ? `${nombre.format(series)} séries de photos très proches sont cochées` : 'une série de photos très proches est cochée'} en entier.` : null,
+    ].filter(Boolean)});
+  if (!ok) return;
+  await Sel.supprimer(ids, {confirmer: false});   // les groupes suivent par « myphotos:supprimees »
 }
 
 // ============================================================ réglages
@@ -1958,7 +3079,10 @@ function brancher() {
   $('#moins-sures').addEventListener('toggle', () => {
     if (!$('#moins-sures').open) return;
     // Les miniatures étaient cachées : on les fait réexaminer maintenant qu'elles sont visibles.
-    for (const a of $('#grille-peut').children) { observateurImages.unobserve(a); observateurImages.observe(a); }
+    for (const c of $('#grille-peut').children) {
+      const a = c.querySelector('a.tuile');
+      if (a) { observateurImages.unobserve(a); observateurImages.observe(a); }
+    }
     setTimeout(() => chargerSiVisibles([...$('#grille-peut').children]), 30);
     requestAnimationFrame(verifierFin);
   });
@@ -1966,32 +3090,140 @@ function brancher() {
   $('#proches-plus').addEventListener('click', () => chargerProches());
   observateurFin.observe($('#sentinelle'));
   observateurFin.observe($('#sentinelle-peut'));
+
+  // Miniatures : un clic ouvre la visionneuse ; dès qu'une photo est cochée, il coche ou décoche (Maj : une plage).
   document.addEventListener('click', (ev) => {
-    const a = ev.target.closest && ev.target.closest('a.tuile');
-    if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+    if (ev.button !== 0 || !ev.target.closest) return;
+    const mois = ev.target.closest('.coche-mois');
+    if (mois) { ev.preventDefault(); basculerMois(mois.closest('.section-mois')); return; }
+    const c = ev.target.closest('.case');
+    if (!c) return;
+    if (S.ignorerClic) { S.ignorerClic = false; ev.preventDefault(); return; }   // fin d'un appui long
+    const id = +c.dataset.id;
+    const plage = ev.shiftKey && S.ids.size > 0;
+    if (ev.target.closest('.coche')) {
+      ev.preventDefault();
+      if (plage) selectionnerPlage(id); else basculer(id);
+      return;
+    }
+    if (!ev.target.closest('a.tuile')) return;
+    // Écran « Doublons » : des cases sont cochées d'office, un clic sur la miniature ouvre quand même la visionneuse.
+    if (!c.closest('#ecran-doublons') && (S.ids.size || ev.shiftKey)) {
+      ev.preventDefault();
+      if (plage) selectionnerPlage(id); else basculer(id);
+      return;
+    }
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;           // nouvel onglet, comme un lien ordinaire
     ev.preventDefault();
-    ouvrirVisionneuse(+a.dataset.id, a.dataset.groupe);
+    ouvrirVisionneuse(id, c.dataset.groupe);
   });
+  // Écran tactile : un appui long sur une miniature la coche, comme dans Google Photos.
+  let appui = null;
+  const finAppui = () => { if (appui) { clearTimeout(appui.minuteur); appui = null; } };
+  document.addEventListener('pointerdown', (ev) => {
+    finAppui();
+    S.ignorerClic = false;
+    if (ev.pointerType !== 'touch' || !ev.target.closest) return;
+    const c = ev.target.closest('.case');
+    if (!c || ev.target.closest('.coche')) return;
+    appui = {x: ev.clientX, y: ev.clientY, minuteur: setTimeout(() => {
+      appui = null;
+      S.ignorerClic = true;
+      basculer(+c.dataset.id);
+      try { if (navigator.vibrate) navigator.vibrate(12); } catch (err) { /* sans vibreur */ }
+    }, APPUI_LONG_MS)};
+  }, {passive: true});
+  document.addEventListener('pointermove', (ev) => {
+    if (appui && Math.hypot(ev.clientX - appui.x, ev.clientY - appui.y) > 12) finAppui();
+  }, {passive: true});
+  document.addEventListener('pointerup', finAppui, {passive: true});
+  document.addEventListener('pointercancel', finAppui, {passive: true});
+  document.addEventListener('contextmenu', (ev) => {
+    if (S.ignorerClic && ev.target.closest && ev.target.closest('.case')) ev.preventDefault();
+  });
+  document.addEventListener('keydown', () => { S.ignorerClic = false; }, true);  // Entrée au clavier : jamais ignorée
+  // Clavier : / (chercher), Échap (annuler la sélection), Ctrl+A (tout ce qui est affiché), Ctrl+C (copier),
+  // Suppr (mettre à la Corbeille, après confirmation), Espace sur une miniature (la cocher ; Maj : une plage).
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === '/' && E.ecran === 'appli' && !document.querySelector('dialog[open]')
-      && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+    if (E.ecran !== 'appli' || document.querySelector('dialog[open]')) return;    // les fenêtres ont leurs touches
+    const actif = document.activeElement;
+    const saisie = !!actif && /^(INPUT|TEXTAREA|SELECT)$/.test(actif.tagName);
+    const ctrl = ev.ctrlKey || ev.metaKey;
+    if (ev.key === '/' && !saisie && !ctrl) {
       ev.preventDefault();
       $('#q').focus();
       $('#q').select();
+      return;
+    }
+    if (saisie || ev.altKey) return;
+    const touche = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    if (E.vue === 'doublons') {
+      // Suppr : « Supprimer les copies cochées » (avec confirmation) ; Espace sur une miniature : la cocher ou non.
+      // Ni Échap ni Ctrl+A : ils défairaient d'un coup les propositions de MyPhotos.
+      if (ev.key === 'Delete' && !ctrl) {
+        ev.preventDefault();
+        supprimerCopiesCochees();
+      } else if (ev.key === ' ' && !ctrl && actif && actif.matches('#ecran-doublons a.tuile')) {
+        ev.preventDefault();
+        basculer(+actif.closest('.case').dataset.id);
+      }
+      return;
+    }
+    if (ev.key === 'Escape' && S.ids.size) {
+      ev.preventDefault();
+      viderSelection();
+    } else if (ctrl && touche === 'a') {
+      ev.preventDefault();
+      toutSelectionner();
+    } else if (ctrl && touche === 'c' && S.ids.size && !texteChoisi()) {
+      ev.preventDefault();
+      copierPhotos([...S.ids]);
+    } else if (ev.key === 'Delete' && !ctrl && S.ids.size) {
+      ev.preventDefault();
+      supprimerPhotos([...S.ids]);
+    } else if (ev.key === ' ' && !ctrl && actif && actif.matches('a.tuile')) {
+      ev.preventDefault();
+      const id = +actif.closest('.case').dataset.id;
+      if (ev.shiftKey && S.ids.size) selectionnerPlage(id); else basculer(id);
     }
   });
   window.addEventListener('scroll', () => { if (E.ecran === 'appli') verifierFin(); }, {passive: true});
+
+  // Barre de la sélection
+  $('#sel-vider').addEventListener('click', viderSelection);
+  $('#sel-copier').addEventListener('click', () => copierPhotos([...S.ids]));
+  $('#sel-copier-vers').addEventListener('click', () => copierPhotosVers([...S.ids]));
+  $('#sel-supprimer').addEventListener('click', () => supprimerPhotos([...S.ids]));
+
+  // Doublons
+  $('#d-supprimer').addEventListener('click', supprimerCopiesCochees);
+  $('#d-tout').addEventListener('click', () => {
+    const coches = cochesDoublons();
+    if (coches.length) Sel.decocher(coches);
+    else Sel.cocher(D.groupes.flatMap((g) => g.photos.filter((p) => !p.garder).map((p) => p.id)));
+  });
 
   // Visionneuse
   const v = $('#visionneuse');
   v.addEventListener('cancel', (ev) => { ev.preventDefault(); fermerVisionneuse(); });
   v.addEventListener('keydown', (ev) => {
+    const ctrl = ev.ctrlKey || ev.metaKey;
     if (ev.key === 'ArrowLeft') { ev.preventDefault(); photoVoisine(-1); }
     else if (ev.key === 'ArrowRight') { ev.preventDefault(); photoVoisine(1); }
+    else if (ctrl && !ev.altKey && (ev.key === 'c' || ev.key === 'C') && V.id && !texteChoisi()) {
+      ev.preventDefault();
+      copierPhotos([V.id]);
+    } else if (ev.key === 'Delete' && !ctrl && V.id) {
+      ev.preventDefault();
+      supprimerDepuisVisionneuse();
+    }
   });
   $('#v-prec').addEventListener('click', () => photoVoisine(-1));
   $('#v-suiv').addEventListener('click', () => photoVoisine(1));
   $('#v-fermer').addEventListener('click', () => fermerVisionneuse());
+  $('#v-copier').addEventListener('click', () => copierPhotos([V.id]));
+  $('#v-copier-vers').addEventListener('click', () => copierPhotosVers([V.id]));
+  $('#v-supprimer').addEventListener('click', supprimerDepuisVisionneuse);
   $('#v-ouvrir').addEventListener('click', async () => {
     try { await api('/api/ouvrir', {id: V.id}); annoncer('La photo s’ouvre dans la visionneuse de Windows…'); }
     catch (err) { annoncer(err.message, 'erreur'); }

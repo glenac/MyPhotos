@@ -955,6 +955,34 @@ class TestFormats(unittest.TestCase):
         self.degrade().save(self.tmp / 'webp.jpg', 'WEBP')                      # format admis, extension fausse
         self.miniature(indexation.preparer(str(self.tmp / 'webp.jpg'), 32))
 
+    def test_ouvrir_image_comme_l_analyse(self):
+        """modele.ouvrir_image (visionneuse, outils) suit les règles de l'analyse, avec son code : mêmes formats, donc
+        jamais Ghostscript pour un « .jpg » qui serait un PostScript, et les gris 16 bits ou flottants ramenés sur 8 bits
+        avec leurs nuances (la visionneuse les montrait tout blancs). La visionneuse (cote=2560) garde sa taille."""
+        from PIL import EpsImagePlugin, UnidentifiedImageError
+        (self.tmp / 'eps.jpg').write_bytes(b'%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 300 200\nshowpage\n%%EOF\n')
+        self.degrade().save(self.tmp / 'tga.jpg', 'TGA')
+        with mock.patch.object(EpsImagePlugin, 'Ghostscript', side_effect=AssertionError('Ghostscript')) as gs:
+            for nom in ('eps.jpg', 'tga.jpg'):
+                with self.assertRaises(UnidentifiedImageError, msg=nom):
+                    modele.ouvrir_image(str(self.tmp / nom))
+        gs.assert_not_called()
+        rampe = np.linspace(0, 65535, 1200)[None, :].repeat(900, 0)
+        Image.fromarray(rampe.astype(np.uint16)).save(self.tmp / 'gris16.tif')
+        Image.fromarray((rampe / 65535).astype(np.float32)).save(self.tmp / 'flottant.tif')
+        for nom in ('gris16.tif', 'flottant.tif'):
+            for cote, taille in ((448, (600, 450)), (2560, (1200, 900))):
+                with self.subTest(nom=nom, cote=cote):
+                    im = modele.ouvrir_image(str(self.tmp / nom), cote=cote)
+                    self.assertEqual((im.mode, im.size), ('RGB', taille))
+                    a = np.asarray(im, np.float32)
+                    self.assertLess(abs(a.mean() - 127.5), 12)
+                    self.assertGreater(a[:, -10:].mean() - a[:, :10].mean(), 200)     # du noir au blanc
+        with open(self.tmp / 'gris16.tif', 'rb') as f:                           # fichier déjà ouvert : idem
+            self.assertGreater(np.asarray(modele.ouvrir_image(f), np.float32).std(), 50)
+        self.degrade().save(self.tmp / 'normale.png')
+        self.assertEqual(modele.ouvrir_image(str(self.tmp / 'normale.png')).size, (300, 200))
+
     def test_grande_image_preparee_a_part(self):
         """Une très grande image non JPEG se décode en entier, et le chemin habituel en faisait trois ou quatre copies :
         3,4 Go pour un PNG de 178 Mpx, et jusqu'à quatre à la fois (4 PNG de 45 Mpx : +3,3 Go mesurés). Elle passe

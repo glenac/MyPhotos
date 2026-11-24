@@ -36,7 +36,7 @@
   .colonnes > section { break-inside: avoid; }
   .note { background: var(--accent-doux); border-left: 4px solid var(--accent); padding: 4px 9px; margin: 6px 0 0; }
   .alerte { background: var(--alerte); border-left: 4px solid var(--alerte-bord); padding: 4px 9px; margin: 6px 0 0; }
-  figure { margin: 4px auto 0; width: 62%; text-align: center; }
+  figure { margin: 4px auto 0; width: 50%; text-align: center; }
   figure img { width: 100%; border: 1px solid var(--trait); border-radius: 6px; display: block; }
   figcaption { color: var(--texte-doux); font-size: 8.5pt; margin-top: 2px; }
   .pied { margin-top: 9px; padding-top: 5px; border-top: 1px solid var(--trait); color: var(--texte-doux); font-size: 8.8pt; }
@@ -55,11 +55,11 @@
   </svg>
   <div>
     <h1>MyPhotos</h1>
-    <p class="sous">Mode d'emploi · version 0.1.0 · novembre 2026</p>
+    <p class="sous">Mode d'emploi · version 0.2.0 · novembre 2026</p>
   </div>
 </header>
 
-<p class="intro">Tapez « chien », et toutes vos photos de chiens apparaissent. MyPhotos fonctionne entièrement sur votre ordinateur : vos photos ne sont envoyées nulle part, et elles ne sont <b>jamais modifiées</b>.</p>
+<p class="intro">Tapez « chien », et toutes vos photos de chiens apparaissent. MyPhotos fonctionne entièrement sur votre ordinateur : vos photos ne sont envoyées nulle part. Elles ne sont <b>jamais modifiées</b>, et elles ne sont supprimées que si vous le demandez, vers la <b>Corbeille de Windows</b>.</p>
 
 <figure>
   <img src="captures/recherche.png" alt="Recherche « chien » dans MyPhotos : cinq photos de chiens">
@@ -71,60 +71,63 @@
 <h2><span class="num">1</span>Installer</h2>
 <ol>
   <li>Téléchargez <b>MyPhotos.exe</b> depuis <b>github.com/glenac/MyPhotos</b>, rubrique <b>Releases</b>.</li>
-  <li>Rangez-le où vous voulez, par exemple sur le Bureau. Il n'y a rien d'autre à installer.</li>
-  <li>Double-cliquez dessus.</li>
+  <li>Rangez-le où vous voulez (rien à installer), puis double-cliquez dessus.</li>
 </ol>
 <div class="alerte">Si Windows affiche « Windows a protégé votre ordinateur » : cliquez sur <b>Informations complémentaires</b>, puis sur <b>Exécuter quand même</b>.</div>
 
 <h2><span class="num">2</span>Premier lancement</h2>
-<p style="margin:0">MyPhotos s'ouvre dans votre navigateur et vous guide en trois étapes :</p>
+<p style="margin:0">MyPhotos s'ouvre dans votre navigateur et vous guide en trois étapes :</p>
 <ol>
-  <li><b>Votre ordinateur</b> : MyPhotos choisit le moteur de reconnaissance « Conseillé pour cet ordinateur ». Cliquez sur <span class="bouton">Télécharger</span>, puis sur <span class="bouton">Continuer</span> : le téléchargement se poursuit pendant ce temps.</li>
-  <li><b>Vos photos</b> : cliquez sur <span class="bouton">Ajouter</span> à côté du dossier <b>Images</b>, ou sur <span class="bouton">Ajouter un dossier…</span> pour en choisir un autre. Puis <span class="bouton">Continuer</span>.</li>
+  <li><b>Votre ordinateur</b> : MyPhotos conseille un moteur de reconnaissance. Cliquez sur <span class="bouton">Télécharger</span>, puis sur <span class="bouton">Continuer</span> sans attendre la fin.</li>
+  <li><b>Vos photos</b> : <span class="bouton">Ajouter</span> à côté du dossier <b>Images</b>, ou <span class="bouton">Ajouter un dossier…</span> pour un autre. <span style="white-space:nowrap">Puis <span class="bouton">Continuer</span>.</span></li>
   <li><b>Analyse</b> : MyPhotos regarde chaque photo une fois. Cliquez sur <span class="bouton">Commencer à chercher</span> sans attendre la fin.</li>
 </ol>
-<div class="note">Internet ne sert qu'une fois, pour télécharger le moteur (de 750 Mo à 2,1 Go). L'analyse prend de quelques minutes à quelques heures, selon le nombre de photos et l'ordinateur.</div>
+<div class="note">Internet ne sert qu'une fois, pour télécharger le moteur (de 750 Mo à 2,1 Go).</div>
 
 <h2><span class="num">3</span>Chercher</h2>
 <ul>
-  <li>Tapez ce que vous cherchez dans la barre « Que cherchez-vous ? », puis appuyez sur Entrée ou cliquez sur <span class="bouton">Chercher</span>. Par exemple : plage, neige, gâteau d'anniversaire, coucher de soleil.</li>
-  <li>Une petite phrase marche aussi : « chien sur la plage ».</li>
-  <li>Les photos les plus sûres viennent d'abord. Plus bas, <b>Moins sûres</b> montre celles qui correspondent peut-être.</li>
-  <li>Sans rien taper, toutes vos photos s'affichent, des plus récentes aux plus anciennes.</li>
+  <li>Tapez ce que vous cherchez, par exemple « plage » ou « chien sur la plage », puis appuyez sur Entrée. Sans rien taper, toutes vos photos s'affichent.</li>
+  <li>Les plus sûres viennent d'abord, puis <b>Moins sûres</b>. Peu de résultats ? <span class="bouton">Voir les photos les plus proches</span>.</li>
+</ul>
+
+<h2><span class="num">4</span>La visionneuse</h2>
+<ul>
+  <li>Cliquez sur une photo pour l'agrandir ; ← et → passent à la suivante, Échap ferme.</li>
+  <li>Ses boutons agissent sur cette photo : <span class="bouton">Copier</span>, <span class="bouton">Supprimer</span>, <span class="bouton">Afficher dans le dossier</span>…</li>
 </ul>
 </section>
 
 <section>
-<h2><span class="num">4</span>La visionneuse</h2>
+<h2><span class="num">5</span>Choisir, copier, supprimer</h2>
 <ul>
-  <li>Cliquez sur une photo pour l'agrandir.</li>
-  <li>Les flèches, ou les touches ← et → du clavier, passent à la photo précédente ou suivante.</li>
-  <li><span class="bouton">Ouvrir avec la visionneuse Windows</span> ouvre la photo dans le logiciel habituel de Windows.</li>
-  <li><span class="bouton">Afficher dans le dossier</span> montre où se trouve le fichier.</li>
-  <li><span class="bouton">Fermer</span>, ou la touche Échap, ramène aux résultats.</li>
+  <li>Survolez une photo et cliquez sur le rond en haut à gauche pour la cocher (écran tactile : appui long). Ensuite, un clic coche ou décoche ; Maj+clic coche toute une suite.</li>
+  <li>La barre du haut propose <span class="bouton">Copier</span> (puis Ctrl+V où vous voulez), <span class="bouton">Copier dans un dossier…</span> et <span class="bouton">Supprimer</span> : après confirmation, les photos vont dans la Corbeille de Windows, d'où vous pouvez les restaurer.</li>
 </ul>
 
-<h2><span class="num">5</span>Ajouter un dossier</h2>
+<h2><span class="num">6</span>Les doublons</h2>
 <ol>
-  <li>Cliquez sur <span class="bouton">Réglages</span>, en haut à droite.</li>
-  <li>Dans <b>Vos dossiers de photos</b>, cliquez sur <span class="bouton">Ajouter un dossier…</span>, choisissez le dossier dans la fenêtre qui s'ouvre et validez. MyPhotos analyse aussitôt ses photos.</li>
+  <li>Cliquez sur <span class="bouton">Doublons</span>, en haut, puis sur <span class="bouton">Chercher les doublons</span>.</li>
+  <li>MyPhotos montre les copies identiques, les copies retouchées (réduites, envoyées par WhatsApp…) et les rafales. Dans chaque groupe, la photo <b>À garder</b> n'est pas cochée, les autres le sont (jamais dans les rafales).</li>
+  <li>Vérifiez, puis <span class="bouton">Supprimer les copies cochées</span> et confirmez.</li>
 </ol>
+<div class="note">Rien n'est supprimé sans votre clic, et une photo de chaque groupe est toujours gardée.</div>
+
+<h2><span class="num">7</span>Réglages</h2>
 <ul>
-  <li><span class="bouton">Retirer</span> enlève un dossier de MyPhotos sans supprimer aucune photo.</li>
-  <li>Les nouvelles photos de vos dossiers sont repérées toutes seules, à chaque démarrage puis toutes les heures. <span class="bouton">Chercher les nouvelles photos maintenant</span> le fait tout de suite.</li>
+  <li><span class="bouton">Ajouter un dossier…</span>, ou <span class="bouton">Retirer</span> un dossier (aucune photo n'est supprimée).</li>
+  <li>Les nouvelles photos sont repérées toutes seules ; <span class="bouton">Chercher les nouvelles photos maintenant</span> le fait tout de suite.</li>
 </ul>
 
 <h2>En cas de souci</h2>
 <ul>
-  <li><b>« MyPhotos est arrêté », ou la page ne répond plus</b> : MyPhotos s'arrête tout seul quelques minutes après la fermeture de sa page. Double-cliquez de nouveau sur MyPhotos.exe.</li>
-  <li><b>Le téléchargement échoue</b> : vérifiez la connexion à Internet, puis cliquez sur <span class="bouton">Réessayer</span> ; il reprend où il en était.</li>
-  <li><b>Une photo reste introuvable</b> : essayez un autre mot ou une petite phrase, regardez dans <b>Moins sûres</b>, et vérifiez dans le bandeau du haut que l'analyse est terminée.</li>
-  <li><b>L'ordinateur est lent pendant l'analyse</b> : cliquez sur <span class="bouton">Pause</span> dans le bandeau, puis sur <span class="bouton">Reprendre</span> plus tard.</li>
-  <li><b>Pour arrêter MyPhotos</b> : <span class="bouton">Réglages</span>, puis <span class="bouton">Arrêter MyPhotos</span>.</li>
+  <li><b>La page ne répond plus</b> : double-cliquez de nouveau sur MyPhotos.exe (il s'arrête seul après la fermeture de sa page).</li>
+  <li><b>Le téléchargement échoue</b> : vérifiez Internet, puis <span class="bouton">Réessayer</span>.</li>
+  <li><b>Une photo reste introuvable</b> : essayez un autre mot, regardez <b>Moins sûres</b>, attendez la fin de l'analyse.</li>
+  <li><b>L'ordinateur est lent</b> : <span class="bouton">Pause</span> dans le bandeau, puis <span class="bouton">Reprendre</span>.</li>
 </ul>
 </section>
 </div>
 
-<p class="pied">Ce que MyPhotos retient (index, miniatures, moteur) reste sur votre ordinateur, dans le dossier <code>%LOCALAPPDATA%\MyPhotos</code>. Pour le désinstaller : arrêtez-le, puis supprimez MyPhotos.exe et ce dossier. Vos photos, elles, ne sont jamais modifiées, déplacées ni supprimées.</p>
+<p class="pied">Ce que MyPhotos retient (index, miniatures, moteur) reste dans le dossier <code>%LOCALAPPDATA%\MyPhotos</code>. Pour le désinstaller : <span class="bouton">Réglages</span>, <span class="bouton">Arrêter MyPhotos</span>, puis supprimez MyPhotos.exe et ce dossier. Vos photos ne sont jamais modifiées ; elles ne sont supprimées que si vous le demandez, vers la Corbeille de Windows.</p>
 </body>
 </html>

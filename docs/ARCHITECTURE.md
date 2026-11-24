@@ -1,6 +1,6 @@
 # Architecture de MyPhotos
 
-Ce document décrit le fonctionnement interne de MyPhotos 0.1.0 : les modules, le chemin d'une photo depuis l'analyse du PC jusqu'à la recherche, et les choix techniques avec les mesures qui les justifient. Toutes les mesures datent du 23/11/2026 ; sauf mention contraire, elles ont été faites sur un Ryzen 5 5600X (6 cœurs) avec une Radeon RX 6600 XT (8 Go) et 32 Go de mémoire vive.
+Ce document décrit le fonctionnement interne de MyPhotos 0.2.0 : les modules, le chemin d'une photo depuis l'analyse du PC jusqu'à la recherche et aux doublons, et les choix techniques avec les mesures qui les justifient. Les mesures datent des 23 et 24/11/2026 ; sauf mention contraire, elles ont été faites sur un Ryzen 5 5600X (6 cœurs) avec une Radeon RX 6600 XT (8 Go) et 32 Go de mémoire vive.
 
 ## Vue d'ensemble
 
@@ -13,6 +13,8 @@ flowchart LR
     I --> B[("base.py<br/>index.db, miniatures.db")]
     B --> R["recherche.py<br/>texte → vecteur → scores"]
     R --> S["serveur.py<br/>API JSON sur 127.0.0.1"]
+    B --> D["doublons.py<br/>copies, retouches, rafales"]
+    D --> S
     S <--> P["page/index.html<br/>dans le navigateur"]
 ```
 
@@ -24,9 +26,10 @@ flowchart LR
 | `myphotos/indexation.py` | inventaire des dossiers suivis, analyse des photos en arrière-plan |
 | `myphotos/base.py` | index SQLite, miniatures |
 | `myphotos/recherche.py` | recherche par mots, probabilité calibrée, seuils |
-| `myphotos/serveur.py` | serveur HTTP local, API, assistant de premier lancement, téléchargements, réglages, arrêt |
+| `myphotos/doublons.py` | doublons : copies identiques, copies retouchées, rafales ; empreintes et vérifications gardées dans `index.db` |
+| `myphotos/serveur.py` | serveur HTTP local, API, assistant de premier lancement, téléchargements, réglages, copie, Corbeille, recherche des doublons en arrière-plan, arrêt |
 | `myphotos/__main__.py`, `lancer.py` | points d'entrée (`python -m myphotos`, MyPhotos.exe) |
-| `page/index.html` | toute l'interface : assistant, recherche, visionneuse, réglages ; HTML, CSS et JavaScript dans un seul fichier, sans ressource externe |
+| `page/index.html` | toute l'interface : assistant, recherche, sélection, visionneuse, écran « Doublons », réglages ; HTML, CSS et JavaScript dans un seul fichier, sans ressource externe |
 
 ## Le flux : matériel → moteur → analyse → recherche
 
@@ -94,7 +97,7 @@ Le cosinus devient une **probabilité calibrée** par le modèle lui-même : `s
 | Précis | 0,0005 | 0,00015 |
 | Très précis | 0,0006 | 0,00015 |
 
-Les photos sûres sont triées par score, puis viennent les moins sûres. Sans requête, la page affiche toutes les photos par date de prise de vue décroissante.
+Les photos sûres sont triées par score, puis viennent les moins sûres. Quand il y en a peu (moins de 10 sûres), la page propose « Voir les photos les plus proches » : la suite du classement, sous les seuils, par pages de 60 (`proches=1`). Sans requête, la page affiche toutes les photos par date de prise de vue décroissante.
 
 ### 6. Serveur et page (`serveur.py`, `page/index.html`)
 
@@ -102,13 +105,57 @@ Le serveur HTTP de la bibliothèque standard, en fils parallèles, écoute uniqu
 
 La fenêtre « Choisissez un dossier de photos » est celle de Windows, ouverte par tkinter dans un fil qui lui est réservé et ramenée au premier plan. « Ouvrir avec la visionneuse Windows » confie la photo à l'application associée ; « Afficher dans le dossier » sélectionne le fichier dans l'Explorateur.
 
+**Sélection, copie, Corbeille.** La sélection de la page est un ensemble d'identifiants, indépendant de l'affichage (défilement infini, miniatures déchargées) ; une petite API JavaScript (`window.MyPhotosSelection`) la partage avec l'écran « Doublons ». Les actions portent sur 2 000 photos au plus par requête :
+
+- **Copier** met les fichiers dans le presse-papiers de Windows (format `CF_HDROP`, effet « copie »), par `ctypes`, dans un fil dédié, avec jusqu'à 5 s de réessais si un autre programme le tient ouvert ;
+- **Copier dans un dossier…** demande la destination par la fenêtre de Windows, ouverte par le serveur et non par la page, vérifie la place libre, puis copie en arrière-plan sous un nom provisoire renommé à la fin : jamais d'écrasement (« nom (2).jpg »), dates gardées, annulable, jamais de fichier à moitié écrit. La fenêtre a pu rester ouverte plusieurs minutes : chaque photo est donc vérifiée de nouveau juste avant d'être ouverte, son dossier tenu ouvert ; un dossier dont le nom finit par un point ou une espace est refusé comme destination (Windows le confondrait avec un autre) ;
+- **Supprimer** passe par `SHFileOperationW` avec `FOF_ALLOWUNDO` : la Corbeille de Windows, jamais une suppression définitive. Avant : disque fixe exigé, Corbeille active et assez grande pour la photo (`SHQueryRecycleBinW`, registre), fichier inchangé depuis l'analyse (taille et date), aucun lien symbolique ni jonction entre le dossier suivi et le fichier ; `FOF_WANTNUKEWARNING` sert de dernier filet. Le dossier de chaque photo est tenu ouvert, sans partage de suppression, de sa vérification jusqu'après l'appel à Windows, et son emplacement réel (`GetFinalPathNameByHandleW`) doit être celui que dit son chemin : ni lui ni un dossier au-dessus ne peut être remplacé par une jonction entre les deux (NTFS refuse de renommer un dossier au-dessus d'une poignée ouverte). Un chemin que Windows lirait autrement n'est jamais transmis : sans le préfixe `\\?\`, « Vacances. » devient « Vacances », un autre dossier ; MyPhotos prend alors le nom court (8.3) ou refuse. Les photos parties sont ensuite oubliées de l'index et des miniatures.
+
+**Doublons.** La recherche des doublons (`doublons.py`, ci-dessous) tourne dans son propre fil (`myphotos-doublons`), lancé par `POST /api/doublons/lancer` ; un seul calcul à la fois. Elle n'utilise que la base et numpy : ni le moteur de reconnaissance, ni le verrou de la carte graphique, ni aucun verrou de l'application ; la recherche de photos et l'analyse continuent pendant ce temps. Le dernier résultat reste en mémoire avec la génération de l'index (`meta.generation`, qui change à chaque écriture de l'analyse ou suppression) au moment du calcul : quand elle a changé, l'état le dit « périmé » et la page relance le calcul d'elle-même (`auto`), au plus une fois toutes les 30 s pendant l'analyse, jamais après un « Arrêter » de l'utilisateur. En attendant, `GET /api/doublons` retire de chaque groupe les photos parties entre-temps (Corbeille, dossier retiré ou débranché), supprime les groupes de moins de deux photos et, si la photo à garder est partie, désigne la meilleure des autres. Les groupes ne donnent que des identifiants et ce qu'il faut afficher (nom, dossier, taille, définition, date) ; la suppression passe par la route de la Corbeille, avec ses vérifications. La page refuse de mettre à la Corbeille toutes les photos d'un groupe de copies.
+
+**Routes de l'API.**
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| GET | `/api/etat` | état général, interrogé toutes les 2 s : moteur, téléchargement, analyse, photos, copie en cours, `doublons` (avancement, numéro du dernier résultat, périmé ou non) |
+| GET | `/api/materiel`, `/api/dossiers` | description du PC et conseil ; dossiers suivis et proposés |
+| GET | `/api/photos`, `/api/recherche?q=…` | photos par date ; recherche (`proches=1` : les photos les plus proches) |
+| GET | `/api/photo/<id>`, `/miniature/<id>`, `/photo/<id>` | fiche, miniature, photo d'origine |
+| GET | `/api/copie` | avancement de la copie vers un dossier |
+| GET | `/api/doublons?depuis=<n>` | avancement et dernier résultat ; les groupes sont omis si la page a déjà le résultat `n` |
+| POST | `/api/moteur/telecharger`, `/api/moteur/annuler`, `/api/moteur/choisir` | téléchargement et choix du moteur |
+| POST | `/api/dossiers/choisir`, `/api/dossiers/ajouter`, `/api/dossiers/retirer` | dossiers suivis |
+| POST | `/api/analyse/pause`, `/api/analyse/reprendre`, `/api/analyse/relancer` | analyse |
+| POST | `/api/ouvrir`, `/api/montrer` | ouvrir une photo, la montrer dans l'Explorateur (`{id}`) |
+| POST | `/api/copier`, `/api/copier-vers` | presse-papiers, copie vers un dossier (`{ids}`) |
+| POST | `/api/copie/annuler`, `/api/copie/montrer` | annuler la copie, ouvrir son dossier |
+| POST | `/api/supprimer` | Corbeille (`{ids, confirme: true}`) |
+| POST | `/api/doublons/lancer`, `/api/doublons/annuler` | recherche des doublons (`{auto: true}` : relance demandée par la page) |
+| POST | `/api/base-ecartee/vu`, `/api/assistant`, `/api/quitter` | avertissement lu, étape de l'assistant, arrêt |
+
 **Sécurité.** N'importe quel site ouvert dans le navigateur peut viser `127.0.0.1` ; d'où :
 
 - en-tête `Host` obligatoire (`127.0.0.1:PORT` ou `localhost:PORT`), contre le « DNS rebinding » ;
 - requêtes POST acceptées seulement avec l'en-tête `X-MyPhotos: 1`, qu'un autre site ne peut pas poser sans autorisation CORS (jamais donnée), un corps JSON de 64 Ko au plus et une origine identique à celle du serveur quand elle est présente ;
-- lectures de données (`/api/`, `/miniature/`, `/photo/`) refusées quand `Sec-Fetch-Site` désigne un autre site ;
+- requêtes GET refusées quand `Sec-Fetch-Site` désigne un autre site, sauf l'ouverture de la page dans un onglet (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`) : un autre site ne lit rien, ne charge pas la page en douce (fetch « no-cors », cadre) et ne garde donc pas MyPhotos éveillé ;
+- requêtes malformées (plus de 20 paramètres, JSON trop imbriqué, hôte illisible) refusées simplement, sans trace d'erreur dans le journal ; erreurs du protocole (méthode inconnue, demande préalable CORS) en JSON, avec les mêmes en-têtes ; le journal ne contient jamais ce que l'utilisateur cherche ;
 - politique de sécurité du contenu stricte (nonce, aucune ressource externe), `nosniff`, `no-referrer`, `no-store` sur l'API ;
-- photos servies, ouvertes ou montrées uniquement par un identifiant présent dans l'index, et seulement si leur extension est celle d'une image : aucun chemin de fichier n'est lu dans l'URL.
+- photos servies, ouvertes, montrées, copiées ou mises à la Corbeille uniquement par un identifiant présent dans l'index, et seulement si leur extension est celle d'une image : aucun chemin de fichier n'est lu dans l'URL ni dans le corps d'une requête (la destination d'une copie vient de la fenêtre « Choisir un dossier », ouverte par le serveur) ;
+- chemins confiés à Windows (Explorateur, presse-papiers, Corbeille, « Ouvrir ») : jamais un chemin qu'il comprendrait autrement ; dossiers tenus ouverts pendant une mise à la Corbeille ou l'ouverture d'une photo à copier (voir « Supprimer » ci-dessus).
+
+### 7. Doublons (`doublons.py`)
+
+Trois niveaux de groupes : **copies identiques** (même contenu de fichier), **copies retouchées** (la même photo réduite, recompressée, légèrement recadrée ou redressée, convertie, sans EXIF, avec une bordure, plus claire ou plus sombre) et **photos très proches** (rafales : plusieurs prises du même instant). Les photos ne sont pas relues, sauf pour comparer octet par octet deux fichiers de même taille :
+
+1. **Empreinte** : une empreinte perceptuelle de 64 bits (pHash) par miniature, et le contraste de l'image, gardés dans `index.db` (table `doublons_empreintes`) et refaits seulement si la photo change ;
+2. **Identiques** : SHA-256 des fichiers de même taille en octets, seulement si leurs miniatures se ressemblent (quand elles en ont : une photo pas encore analysée n'est comparée qu'ainsi) ;
+3. **Paires candidates**, par produits de matrices par blocs : empreintes à au plus 12 bits l'une de l'autre, ou vecteurs du moteur voisins (cosinus d'au moins 0,86) avec des empreintes à au plus 26 bits et des dates de prise de vue compatibles (30 min) ; au plus les 12 plus ressemblantes de chaque photo ;
+4. **Vérification** de chaque paire sur les deux miniatures à 128 px : recherche grossière, puis méthode de Lucas et Kanade sur 3 niveaux (échelle, rotation, décalage, lumière). « Retouchée » si l'une tient tout entière dans l'autre et qu'aucun bloc (8 × 8) ne diffère ; « proche » si elles se superposent en grande partie (corrélation d'au moins 0,93 sur 60 % de la surface) ou si les vecteurs sont très voisins (cosinus d'au moins 0,96). Chaque vérification est gardée (table `doublons_paires`) ;
+5. **Regroupement** : identiques, puis retouchées (de proche en proche), puis séries de proches autour de la meilleure photo, sans chaîne sans fin.
+
+La photo à garder est la plus grande ; à définition égale, celle qui n'est pas une copie évidente (« copie », « copy », WhatsApp, « (2) »…), puis le fichier le plus lourd, puis la prise de vue la plus ancienne. Les autres sont proposées à la Corbeille, sauf dans les rafales. Les photos illisibles ou d'un dossier injoignable sont écartées (jamais proposer la seule copie joignable) ; les images presque unies ne sont comparées qu'à l'identique.
+
+Les seuils ont été mesurés sur 340 images publiques de Wikimedia Commons et leurs retouches (`outils/calibrer_doublons.py`) : 0 photo différente réunie comme retouche sur 1,4 million de paires, 99,6 % des retouches trouvées. Premier calcul : 41 s pour 10 000 photos et 4 min 13 s pour 50 000, sur une photothèque riche en rafales (la vérification des paires domine) ; relance : 1,2 s et 15 s. Détails et limites : [outils/DOUBLONS.md](../outils/DOUBLONS.md).
 
 ## Choix techniques et mesures
 
@@ -164,24 +211,30 @@ MyPhotos.exe est construit par `construction/construire.py` avec PyInstaller : 
 
 | Fichier | Contenu |
 |---|---|
-| `index.db` | dossiers suivis, fiches des photos, vecteurs, réglages |
+| `index.db` | dossiers suivis, fiches des photos, vecteurs, réglages ; empreintes et vérifications des doublons (tables `doublons_*`) |
 | `miniatures.db` | miniatures de 360 px |
 | `modele/<clé>/` | fichiers des moteurs téléchargés |
 | `journal.log` | journal de fonctionnement (rotation automatique) |
 
-Emplacement : `%LOCALAPPDATA%\MyPhotos` pour MyPhotos.exe, `donnees\` depuis les sources, ou le dossier indiqué par `MYPHOTOS_DOSSIER`. Rien n'est jamais écrit à côté des photos.
+Emplacement : `%LOCALAPPDATA%\MyPhotos` pour MyPhotos.exe, `donnees\` depuis les sources, ou le dossier indiqué par `MYPHOTOS_DOSSIER`. Rien n'est jamais écrit à côté des photos, sauf les copies demandées (« Copier dans un dossier… »).
 
 ## Essais
 
-86 essais, lancés par `.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur` :
+191 essais, lancés par `.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons` :
 
-- `tests/test_coeur.py` (36) : index, analyse et recherche, avec un moteur factice déterministe et des images générées par Pillow ;
-- `tests/test_materiel.py` (27) : description de machines types, règles de conseil, robustesse quand une information manque ;
-- `tests/test_serveur.py` (23) : vrai serveur dans un sous-processus, sur un port d'essai, interrogé par de vraies requêtes HTTP : sécurité, réponses de l'API, instance unique, actions Windows simulées, choix d'un dossier, et un essai de bout en bout sur des images publiques.
+- `tests/test_coeur.py` (48) : index, analyse et recherche, avec un moteur factice déterministe et des images générées par Pillow ;
+- `tests/test_materiel.py` (30) : description de machines types, règles de conseil, robustesse quand une information manque ;
+- `tests/test_serveur.py` (69) : vrai serveur dans un sous-processus, sur un port d'essai, interrogé par de vraies requêtes HTTP : sécurité (dont un autre site qui ne doit ni lire, ni charger la page en douce, ni garder MyPhotos éveillé ; requêtes malformées sans trace dans le journal ; dossier « Vacances. » ; jonction posée pendant une copie ou juste avant une mise à la Corbeille), réponses de l'API, instance unique, actions Windows simulées, choix d'un dossier, sélection (presse-papiers, copie, Corbeille simulés), doublons (routes, protections, calcul en arrière-plan sans moteur ni verrou, relance, suppression depuis un groupe), et un essai de bout en bout sur des images publiques ;
+- `tests/test_verifier_publication.py` (30) : le garde-fou de publication ;
+- `tests/test_doublons.py` (14) : les trois niveaux de doublons, le choix de la photo à garder, la reprise sans recalcul, l'annulation, sur des images générées.
+
+Les vrais appels à Windows (presse-papiers, Corbeille) ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`).
 
 Outils :
 
 - `outils/evaluation.py` et `outils/EVALUATION.md` : réglage et mesure des seuils ;
 - `outils/banc_essai.py` : vitesse et fidélité des variantes d'un moteur ;
+- `outils/calibrer_doublons.py` et `outils/DOUBLONS.md` : réglage et mesure des seuils des doublons ;
+- `outils/verifier_publication.py` : aucune donnée personnelle dans le dépôt ;
 - `construction/essai_exe.py` : vérification de l'exécutable construit (DirectML, processeur, téléchargement).
 Aucun essai n'utilise de photo personnelle : images générées, ou images publiques de Wikimedia Commons.
