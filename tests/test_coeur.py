@@ -6,6 +6,7 @@ Images générées par Pillow dans un dossier temporaire (jamais de vraies photo
 import io
 import logging
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -22,6 +23,7 @@ import numpy as np                                     # noqa: E402
 from PIL import Image, ImageDraw                       # noqa: E402
 
 import images_essai as ie                              # noqa: E402
+from myphotos import base as base_mod                  # noqa: E402
 from myphotos import indexation, modele, recherche  # noqa: E402
 from myphotos.base import (Base, DossierRefuse, casse_reelle, chemin_affiche, chemin_systeme,  # noqa: E402
                               cle_chemin, dedans, normaliser_chemin)
@@ -1378,6 +1380,105 @@ class TestExamen(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- 0.4.0 : disque changé, dossier presque vide
+
+class TestDisqueChange(EssaiAvecImages):
+    """Deux disques qui échangent leur lettre : un autre disque à la place d'un dossier suivi (autre numéro de volume)
+    le rend inaccessible, ses photos sont gardées ; revenu, rien n'est refait. Le numéro de volume du dossier suivi est
+    simulé (on ne branche pas de disque pendant un essai) ; les fichiers, la base et l'inventaire sont réels."""
+
+    def setUp(self):
+        super().setUp()
+        self.disque = self.tmp / 'F'
+        ie.jpeg(self.disque / 'a.jpg', (200, 150), ie.ROUGE)
+        ie.jpeg(self.disque / 'sous' / 'b.jpg', (200, 150), ie.BLEU)
+        self.numero = 0xA1
+        vrai = base_mod.identite_volume
+
+        def simule(chemin):
+            if cle_chemin(str(chemin)) != cle_chemin(str(self.disque)):
+                return vrai(chemin)
+            return self.numero if os.path.isdir(self.disque) else None
+        for module in (base_mod, indexation):
+            c = mock.patch.object(module, 'identite_volume', simule)
+            c.start()
+            self.addCleanup(c.stop)
+
+    def test_autre_disque_sur_la_meme_lettre(self):
+        d = self.base.ajouter_dossier(self.disque)
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)          # retenu dès l'ajout
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        self.assertEqual(len(avant), 2)
+        # Le disque A est débranché ; le disque B prend sa lettre, avec d'autres photos.
+        os.rename(self.disque, self.tmp / 'disque-A')
+        ie.jpeg(self.disque / 'c.jpg', (200, 150), ie.VERT)
+        self.numero = 0xB2
+        n = ix.relancer()
+        self.assertTrue(ix.attendre(60))
+        b = ix.etat()['bilan']
+        self.assertEqual((b['numero'], b['retirees'], b['nouvelles'], b['injoignables']),
+                         (n, 0, 0, [str(self.disque)]))
+        self.assertEqual(self.ids(), avant)                                 # gardées, et rien du disque B
+        self.assertFalse(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)
+        # Le disque A revient à sa lettre : tout est là, rien n'est refait.
+        shutil.rmtree(self.disque)
+        os.rename(self.tmp / 'disque-A', self.disque)
+        self.numero = 0xA1
+        self.relancer(ix)
+        self.assertTrue(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.ids(), avant)
+        self.assertEqual(f.images, 2)
+
+    def test_disque_recopie_adopte(self):
+        """Les mêmes photos sur un nouveau disque (recopié, cloné, partage remonté) : son numéro est adopté, rien n'est
+        retiré ni refait ; seule une vraie nouvelle photo est analysée."""
+        d = self.base.ajouter_dossier(self.disque)
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        os.rename(self.disque, self.tmp / 'ancien-disque')
+        shutil.copytree(self.tmp / 'ancien-disque', self.disque)            # dates de modification gardées
+        ie.jpeg(self.disque / 'neuve.jpg', (200, 150), ie.VERT)
+        self.numero = 0xC3
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['nouvelles'], b['injoignables']), (0, 1, []))
+        self.assertTrue(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xC3)
+        self.assertEqual({k: v for k, v in self.ids().items() if k in avant}, avant)
+        self.assertEqual(f.images, 3)
+
+    def test_base_0_3_0_sans_numero(self):
+        """Base 0.3.0 (sans la colonne volume) : rouverte sans rien perdre ni changer user_version ; le numéro est
+        appris au tour suivant. La 0.3.0 ne lit que les colonnes qu'elle connaît : la colonne ajoutée ne la gêne pas."""
+        d = self.base.ajouter_dossier(self.disque)
+        ix, _ = self.indexer(dossier=False)
+        ix.arreter()
+        avant = self.base.compter()
+        self.base.fermer()
+        c = sqlite3.connect(self.tmp / 'donnees' / 'index.db')
+        c.execute('ALTER TABLE dossiers DROP COLUMN volume')
+        c.commit()
+        c.close()
+        self.base = Base(self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db')
+        self.indexeurs = []
+        self.assertEqual(self.base.compter(), avant)
+        self.assertIsNone(self.base.dossier(d['id'])['volume'])
+        self.assertEqual(self.base._cnx().execute('PRAGMA user_version').fetchone()[0], 1)
+        ix, f = self.indexer(dossier=False)
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)
+        self.assertEqual(f.images, 0)
+        # Ce que la 0.3.0 écrit (dossier ajouté sans la colonne) : numéro inconnu, appris au tour suivant.
+        autre = self.tmp / 'autre'
+        ie.jpeg(autre / 'x.jpg', (200, 150))
+        with self.base._transaction() as c:
+            nid = c.execute("INSERT INTO dossiers(chemin, ajoute, disponible) VALUES (?, '2026-11-24T12:00:00', 1)",
+                            (str(autre),)).lastrowid
+        self.assertIsNone(self.base.dossier(nid)['volume'])
+        self.relancer(ix)
+        self.assertEqual(self.base.dossier(nid)['volume'], base_mod.identite_volume(str(autre)))
+        self.assertEqual(self.base.dossier(nid)['photos'], 1)
+
 
 class TestDossierPresqueVide(EssaiAvecImages):
     """Un dossier suivi qui ne contient plus que desktop.ini (dossier Images que OneDrive n'a pas encore rempli, ou

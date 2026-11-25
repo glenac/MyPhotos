@@ -84,8 +84,8 @@ from pathlib import Path
 from . import config, fenetre, materiel, modele, raccourci
 from . import doublons as _doublons
 from . import recherche as _recherche
-from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, maintenant,
-                   normaliser_chemin)
+from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, identite_volume,
+                   maintenant, normaliser_chemin)
 from .indexation import _BALISES_LIENS, Indexeur, Parcours, dossier_vide, examiner_dossier
 from .recherche import Recherche
 
@@ -2331,7 +2331,8 @@ class Application:
         - 'deplacee' : c'est son sous-dossier qui a disparu, renommé, déplacé ou supprimé : on ne peut pas savoir d'ici
           lequel. Seul un tour du dossier suivi le dira, et il reconnaît une photo déplacée (même taille, même date) :
           elle garde alors son analyse. L'oublier tout de suite la ferait analyser de nouveau sous son nouveau nom ;
-        - None : elle est là, ou on ne peut pas savoir (disque débranché, réseau coupé, dossier vide comme un partage
+        - None : elle est là, ou on ne peut pas savoir (disque débranché, ou remplacé par un autre sur la même lettre :
+          autre numéro de volume que celui retenu pour le dossier suivi ; réseau coupé, dossier vide comme un partage
           monté sans son disque ou un dossier Images qui ne contient plus que desktop.ini, accès refusé).
         Rien n'est oublié ni demandé ici (voir _oublier_si_partie)."""
         dossier = p.get('dossier')
@@ -2349,6 +2350,8 @@ class Application:
                 return None
         except OSError:
             return None
+        if p.get('volume') is not None and identite_volume(dossier) != p['volume']:
+            return None                          # pas le disque de la photo (numéro inconnu, base 0.3.0 : comme avant)
         parent = os.path.dirname(p['chemin'])
         try:
             parent_la = cle_chemin(parent) == cle_chemin(dossier) or os.path.isdir(chemin_systeme(parent))

@@ -1607,6 +1607,20 @@ class TestDossiersEtActualiser(unittest.TestCase):
         finally:
             ix.arreter()
 
+    def test_photo_introuvable_autre_disque(self):
+        """Visionneuse, fichier absent : rien n'est oublié quand un autre disque a pris la lettre de celui du dossier
+        suivi (autre numéro de volume que celui retenu à l'ajout)."""
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ids = self.connaitre(d['id'])
+        self.fichiers['a.jpg'].unlink()
+        with mock.patch.object(self.serveur, 'identite_volume', lambda chemin: 0x1234):
+            self.assertEqual(self.app.verifier_photo(ids['a.jpg'])['etat'], 'injoignable')
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.ouvrir(ids['a.jpg'])
+            self.assertEqual(e.exception.statut, 404)
+        self.assertIsNotNone(self.app.base.photo(ids['a.jpg']))
+        self.assertEqual(self.app.verifier_photo(ids['a.jpg'])['etat'], 'retiree')        # le bon disque
+
     def test_photo_introuvable_desktop_ini(self):
         """Visionneuse, fichier absent : rien n'est oublié quand le dossier suivi ne contient plus que desktop.ini
         (dossier Images que OneDrive n'a pas encore rempli) ; avec un vrai contenu en plus, la photo est retirée."""

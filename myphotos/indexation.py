@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import re
+import stat
 import threading
 import time
 import unicodedata
@@ -24,7 +25,8 @@ import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
 from . import config, modele
-from .base import chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, iso_depuis_ns, maintenant
+from .base import (chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, identite_volume, iso_depuis_ns,
+                   maintenant)
 
 journal = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ COTE_MINIATURE = 360
 QUALITE_MINIATURE = 80
 PAQUET_INVENTAIRE = 500
 ECHECS_AVANT_CONTROLE = 3      # erreurs de lecture d'affilée avant de vérifier que le dossier répond
+ECHANTILLON_VOLUME = 20        # photos connues cherchées quand le disque d'un dossier suivi a changé (memes_photos)
 
 # Formats lus (ceux de config.EXTENSIONS), quel que soit le nom du fichier. Pillow en connaît d'autres, dont EPS, qui
 # lance Ghostscript, un programme extérieur : un « .jpg » qui serait en fait un PostScript ne doit pas y arriver.
@@ -139,6 +142,26 @@ def dossier_vide(chemin):
     Images vidé, ou que OneDrive n'a pas encore rempli, garde son desktop.ini. Lève OSError s'il est injoignable."""
     with os.scandir(chemin_systeme(chemin)) as it:
         return all(_sans_contenu(e) for e in it)
+
+
+def memes_photos(connus, n=ECHANTILLON_VOLUME):
+    """Le volume d'un dossier suivi a changé (autre numéro) : y trouve-t-on ses photos connues ({chemin: (id, taille,
+    modifie)}) ? Vrai si la plupart d'un échantillon de n photos est là, même chemin et même taille : disque recopié ou
+    cloné, partage remonté, numéro lu autrement. Faux pour un autre disque qui a pris la même lettre. Sans photo connue,
+    il n'y a rien à perdre : vrai."""
+    if not connus:
+        return True
+    chemins = sorted(connus)
+    echantillon = chemins[::max(1, len(chemins) // n)][:n]
+    trouvees = 0
+    for ch in echantillon:
+        try:
+            st = os.stat(chemin_systeme(ch))
+        except (OSError, ValueError):
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_size == connus[ch][1]:
+            trouvees += 1
+    return 2 * trouvees > len(echantillon)
 
 
 class Parcours:
@@ -811,10 +834,22 @@ class Indexeur:
         did, racine = d['id'], d['chemin']
         self._changer(dossier_courant=racine, trouvees=0)
         connus = self.base.connus(did)
-        parcours = Parcours(racine, exclus={cle_chemin(x['chemin']) for x in self.base.exclusions(did)})
         bilan = self._bilan_courant if self._bilan_courant is not None else {
             'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'dossiers': 0}
         bilan['dossiers'] += 1
+        # Autre numéro de volume qu'au dernier passage : un autre disque a pris la lettre de celui du dossier (deux
+        # disques USB qui échangent leur lettre). Ses photos ne sont pas supprimées : le dossier est inaccessible, comme
+        # un disque débranché, et rien du disque inconnu n'est ajouté. Sauf si les photos connues sont là (memes_photos :
+        # disque recopié ou cloné, partage remonté) : ce volume est adopté. Numéro inconnu (base 0.3.0) : appris ici.
+        volume = identite_volume(racine)
+        if volume is not None and d.get('volume') is not None and volume != d['volume']:
+            if not memes_photos(connus):
+                journal.info('autre disque à la place de %s : considéré injoignable, ses photos sont gardées', racine)
+                self.base.marquer_dossier(did, disponible=False)
+                bilan['injoignables'].append(racine)
+                return
+            journal.info('%s : nouveau numéro de volume, avec les mêmes photos : adopté', racine)
+        parcours = Parcours(racine, exclus={cle_chemin(x['chemin']) for x in self.base.exclusions(did)})
         ajoutees = 0
         nouveaux, modifies, vus = [], [], set()
         par_empreinte = {}                       # (taille, modifie) -> nouveaux chemins (déplacements)
@@ -888,7 +923,7 @@ class Indexeur:
                 self.base.oublier_photos(oublies)
                 bilan['retirees'] += len(oublies)
         bilan['nouvelles'] += max(0, ajoutees)
-        self.base.marquer_dossier(did, disponible=True, vu=maintenant())
+        self.base.marquer_dossier(did, disponible=True, vu=maintenant(), volume=volume)
 
     # ------------------------------------------------ analyse
 
