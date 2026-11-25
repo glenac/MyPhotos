@@ -26,7 +26,7 @@ from PIL import Image, ImageFile, UnidentifiedImageError
 
 from . import config, modele
 from .base import (chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, identite_volume, iso_depuis_ns,
-                   maintenant)
+                   maintenant, sous_le_dossier)
 
 journal = logging.getLogger(__name__)
 
@@ -830,6 +830,18 @@ class Indexeur:
             self._inventorier(d)
             self._comptes_perimes()
 
+    def _exclus(self, did, racine):
+        """Clés des sous-dossiers exclus d'un dossier suivi. Une exclusion enregistrée par la 0.3.0 à travers une
+        jonction ou par un nom court (8.3) compte aussi pour le vrai dossier (sous_le_dossier), le seul que le parcours
+        voit : elle était sans effet."""
+        cles = set()
+        for x in self.base.exclusions(did):
+            cles.add(cle_chemin(x['chemin']))
+            reel = sous_le_dossier(x['chemin'], racine)
+            if reel:
+                cles.add(cle_chemin(reel))
+        return cles
+
     def _inventorier(self, d):
         did, racine = d['id'], d['chemin']
         self._changer(dossier_courant=racine, trouvees=0)
@@ -849,7 +861,7 @@ class Indexeur:
                 bilan['injoignables'].append(racine)
                 return
             journal.info('%s : nouveau numéro de volume, avec les mêmes photos : adopté', racine)
-        parcours = Parcours(racine, exclus={cle_chemin(x['chemin']) for x in self.base.exclusions(did)})
+        parcours = Parcours(racine, exclus=self._exclus(did, racine))
         ajoutees = 0
         nouveaux, modifies, vus = [], [], set()
         par_empreinte = {}                       # (taille, modifie) -> nouveaux chemins (déplacements)

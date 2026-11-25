@@ -1283,6 +1283,64 @@ class TestExclusions(EssaiAvecImages):
         d = self.base.dossiers()[0]
         self.assertEqual(self.base.ajouter_exclusion(d['id'], str(self.photos / 'vacances'))['photos'], 4)
 
+    @unittest.skipUnless(os.name == 'nt', 'noms courts (8.3) : Windows')
+    def test_nom_court(self):
+        """Exclusion saisie par un nom court (« VACANC~1 ») : c'est le vrai dossier qui est exclu (0.3.0 : le nom court
+        était enregistré tel quel, et l'inventaire, qui ne voit que les noms longs, ne l'excluait jamais)."""
+        long = self.photos / 'Vacances d\u2019été 2021'
+        for i in range(2):
+            ie.jpeg(long / f'v{i}.jpg', (200, 150))
+        court = nom_court(long)
+        if court is None:
+            self.skipTest('noms courts (8.3) désactivés sur ce disque')
+        ix, _ = self.indexer()
+        d = self.base.dossiers()[0]
+        r = self.base.ajouter_exclusion(d['id'], str(self.photos) + '\\' + os.path.basename(court))
+        self.assertEqual((r['chemin'], r['photos']), (str(long), 2))
+        self.relancer(ix)
+        self.assertEqual(self.sous(long), [])
+        # Tout le chemin en noms courts (comme « PROGRA~1 ») : accepté aussi (0.3.0 : « n'est pas dans »).
+        self.base.retirer_exclusion(r['id'])
+        self.assertEqual(self.base.ajouter_exclusion(d['id'], court)['chemin'], str(long))
+
+    @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
+    def test_jonction(self):
+        """Exclusion choisie à travers une jonction : le vrai dossier est exclu (l'inventaire ne suit jamais une jonction,
+        il ne voit que le vrai dossier). Une exclusion enregistrée ainsi par la 0.3.0 devient efficace au tour suivant."""
+        import _winapi
+        vacances = self.photos / 'vacances'
+        raccourci = self.photos / 'Raccourci vers vacances'          # jonction dans le dossier suivi
+        dehors = self.tmp / 'Lien vers photos'                       # jonction hors du dossier suivi, qui y mène
+        _winapi.CreateJunction(str(vacances), str(raccourci))
+        _winapi.CreateJunction(str(self.photos), str(dehors))
+        try:
+            ix, _ = self.indexer()
+            d = self.base.dossiers()[0]
+            r = self.base.ajouter_exclusion(d['id'], str(raccourci))
+            self.assertEqual((r['chemin'], r['photos']), (str(vacances), 4))
+            self.relancer(ix)
+            self.assertEqual(self.sous(vacances), [])
+            # Par la jonction du dehors : 0.3.0 refusait (« n'est pas dans »).
+            self.base.retirer_exclusion(r['id'])
+            self.assertEqual(self.base.ajouter_exclusion(d['id'], str(dehors / 'vacances'))['chemin'], str(vacances))
+            # Exclusion écrite par la 0.3.0, avec le chemin de la jonction : le tour suivant exclut le vrai dossier.
+            for x in self.base.exclusions(d['id']):
+                self.base.retirer_exclusion(x['id'])
+            self.relancer(ix)
+            self.assertEqual(len(self.sous(vacances)), 4)
+            with self.base._transaction() as c:
+                c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
+                          (d['id'], str(raccourci), '2026-11-24T12:00:00'))
+            self.relancer(ix)
+            self.assertEqual(self.sous(vacances), [])
+            self.assertEqual(ix.etat()['bilan']['retirees'], 4)
+        finally:
+            for j in (raccourci, dehors):
+                try:
+                    os.rmdir(j)                                      # la jonction seule, pas ce qu'elle désigne
+                except OSError:
+                    pass
+
 
 class TestActualisation(EssaiAvecImages):
     """Bouton « Actualiser » : un inventaire numéroté, avec son bilan (nouvelles, retirées, dossiers injoignables)."""
@@ -1380,6 +1438,17 @@ class TestExamen(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- 0.4.0 : disque changé, dossier presque vide
+
+def nom_court(chemin):
+    """Nom court (8.3) d'un dossier existant, ou None si ce disque n'en crée pas."""
+    if os.name != 'nt':
+        return None
+    import ctypes
+    tampon = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(chemin), tampon, len(tampon))
+    court = tampon.value if 0 < n < len(tampon) else None
+    return court if court and os.path.basename(court).lower() != os.path.basename(str(chemin)).lower() else None
+
 
 class TestDisqueChange(EssaiAvecImages):
     """Deux disques qui échangent leur lettre : un autre disque à la place d'un dossier suivi (autre numéro de volume)

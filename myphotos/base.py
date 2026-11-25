@@ -187,6 +187,29 @@ def identite_volume(chemin):
     return numero or None
 
 
+def chemin_reel(chemin):
+    """Emplacement réel d'un dossier existant, en chemin habituel : noms longs (pas « PROGRA~1 »), liens et jonctions
+    résolus (os.path.realpath, par GetFinalPathNameByHandleW). None si Windows ne le donne pas."""
+    try:
+        return chemin_affiche(os.path.realpath(chemin_systeme(chemin), strict=True))
+    except (OSError, ValueError):
+        return None
+
+
+def sous_le_dossier(chemin, racine):
+    """Le dossier `chemin` vu depuis le dossier suivi `racine`, quand son emplacement réel est sous celui de `racine` :
+    racine suivie des vrais noms des dossiers en dessous. Sert pour un chemin saisi par un nom court (8.3) ou à travers
+    une jonction, que l'inventaire ne voit jamais (il ne connaît que les noms longs et ne suit aucune jonction). None
+    sinon. Comparaison élément par élément, sans os.path.relpath, qui retirerait le point final de « Vacances. »."""
+    reel, reelle = chemin_reel(chemin), chemin_reel(racine)
+    if not reel or not reelle:
+        return None
+    pc, pr = reel.rstrip(os.sep).split(os.sep), reelle.rstrip(os.sep).split(os.sep)
+    if len(pc) <= len(pr) or [os.path.normcase(x) for x in pc[:len(pr)]] != [os.path.normcase(x) for x in pr]:
+        return None
+    return os.path.join(racine, *pc[len(pr):])
+
+
 def dedans(enfant, parent):
     """Vrai si `enfant` est situé sous `parent` (deux clés de cle_chemin, distinctes)."""
     prefixe = parent if parent.endswith(os.sep) else parent + os.sep
@@ -592,7 +615,9 @@ class Base:
         empreintes des doublons) et l'inventaire ne le parcourt plus. Les fichiers ne sont JAMAIS touchés.
 
         Le chemin se compare comme partout (normaliser_chemin, casse_reelle, cle_chemin : « Vacances. » reste
-        « Vacances. »). Lève DossierRefuse (message clair) s'il n'est pas DANS le dossier suivi, s'il est déjà exclu ou
+        « Vacances. »). Saisi par un nom court (8.3) ou à travers une jonction, il est d'abord ramené au vrai dossier vu
+        depuis le dossier suivi (sous_le_dossier), le seul chemin que l'inventaire connaît : sinon l'exclusion restait
+        sans effet. Lève DossierRefuse (message clair) s'il n'est pas DANS le dossier suivi, s'il est déjà exclu ou
         introuvable. Les exclusions qu'il contient sont remplacées par lui. Renvoie {id, dossier_id, chemin, dossier,
         photos (nombre oublié), remplacees (chemins)}."""
         p = normaliser_chemin(chemin)
@@ -601,6 +626,10 @@ class Base:
         if not os.path.isdir(chemin_systeme(p)):
             raise DossierRefuse(f'Ce dossier est introuvable : « {p} ».')
         p = casse_reelle(p)
+        l = self._cnx().execute('SELECT chemin FROM dossiers WHERE id = ?', (dossier_id,)).fetchone()
+        reel = sous_le_dossier(p, l[0]) if l else None
+        if reel and enregistrable(reel):
+            p = reel
         k = cle_chemin(p)
         with self._transaction() as c:
             l = c.execute('SELECT chemin FROM dossiers WHERE id = ?', (dossier_id,)).fetchone()
