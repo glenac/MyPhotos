@@ -1508,7 +1508,9 @@ class TestFenetreReelle(unittest.TestCase):
             self.assertEqual([x['chemin'].lower() for x in mon_dossier()['exclusions']], [str(captures).lower()])
             ws.evaluer("document.querySelector('#reglages').close(); 1")
 
-            # 4. Photo introuvable : ouverte dans la visionneuse après la suppression de son fichier, elle est retirée.
+            # 4. Photo introuvable : ouverte dans la visionneuse après la suppression de son fichier, rien n'est oublié
+            # sur place (elle a peut-être été rangée ou renommée) : la visionneuse le dit, et le tour du dossier demandé
+            # aussitôt l'oublie.
             statut, liste = O.requete_json(self.PORT, '/api/photos?n=500')
             cible = None
             for p in liste['photos']:
@@ -1522,15 +1524,10 @@ class TestFenetreReelle(unittest.TestCase):
             self.assertTrue(O.attendre(lambda: ws.evaluer(
                 f"!!document.querySelector('.case[data-id=\"{cible}\"] a.tuile')"), 60))
             self.assertTrue(cliquer(f'.case[data-id="{cible}"] a.tuile'))
-            self.assertTrue(O.attendre(lambda: ws.evaluer("document.querySelector('#v-erreur').textContent")
-                                       == serveur.PHOTO_RETIREE, 30))
-            vue = ws.evaluer("({erreur: document.querySelector('#v-erreur').textContent, "
-                             "cache: document.querySelector('#v-erreur').hidden, "
-                             "ouvrir: document.querySelector('#v-ouvrir').disabled, "
-                             f"case: !!document.querySelector('.case[data-id=\"{cible}\"]')}})")
-            self.assertEqual(vue, {'erreur': serveur.PHOTO_RETIREE,
-                                   'cache': False, 'ouvrir': True, 'case': False})
-            self.assertEqual(O.requete_json(self.PORT, f'/api/photo/{cible}')[0], 404)
+            self.assertTrue(O.attendre(lambda: (ws.evaluer("document.querySelector('#v-erreur').textContent") or '')
+                                       .startswith(serveur.PHOTO_DEPLACEE), 30))
+            self.assertFalse(ws.evaluer("document.querySelector('#v-erreur').hidden"))
+            self.assertTrue(O.attendre(lambda: O.requete_json(self.PORT, f'/api/photo/{cible}')[0] == 404, 60))
             ws.capture(str(self.dossier / 'photo-introuvable.png'))
             ws.evaluer("document.querySelector('#v-fermer').click(); 1")
 
