@@ -1,0 +1,52 @@
+# Essais de MyPhotos sur une machine Windows neuve, à chaque envoi sur main et à chaque demande de fusion.
+# Aucun moteur de reconnaissance n'est téléchargé (les essais qui en ont besoin sont sautés), aucune photo :
+# seulement des images générées par les essais. Le garde-fou de publication vérifie ensuite le dépôt.
+name: Essais
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: essais-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  essais:
+    name: Windows, Python 3.14
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Paquets (versions figées de requirements.txt)
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Essais
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+          MYPHOTOS_ESSAI_UI: ${{ runner.temp }}\essai-ui
+          MYPHOTOS_MODELES: ${{ runner.temp }}\modeles-absents
+        run: |
+          New-Item -ItemType Directory -Force $env:MYPHOTOS_ESSAI_UI, $env:MYPHOTOS_MODELES | Out-Null
+          python -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature
+
+      - name: Garde-fou de publication
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: python outils/verifier_publication.py

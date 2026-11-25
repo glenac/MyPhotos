@@ -49,6 +49,16 @@ SANS_FENETRE = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 DONNEES_PAR_PORT = {}                    # port -> données du serveur d'essai (lancer_serveur) : son jeton d'accès
 
 
+def moteur_base_present():
+    """Le vrai moteur « base » est-il dans MODELES (MYPHOTOS_MODELES) ? Sinon, les essais qui le chargent sont sautés
+    (machine neuve, essais automatiques sur GitHub) : jamais de téléchargement par un essai."""
+    from myphotos import modele
+    try:
+        return not modele.manquants('base', modele.fichiers_necessaires('base'), racine=MODELES)
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def jeton_essai(port=PORT):
     """Jeton d'accès du serveur d'essai de ce port (fichier « jeton » de ses données, réécrit à chaque lancement)."""
     dossier = DONNEES_PAR_PORT.get(port)
@@ -855,6 +865,7 @@ class TestReponses(EssaiServeur):
         self.assertEqual(p['mode'], 'dates')
         self.assertEqual(api('/api/photos?n=100000')[0], 200)          # borné, pas refusé
 
+    @unittest.skipUnless(moteur_base_present(), 'moteur « base » absent de MYPHOTOS_MODELES : essai sauté')
     def test_04_moteur_et_recherche(self):
         statut, d = api('/api/moteur/choisir', {'cle': 'base', 'vision': 'fp16'})
         self.assertEqual(statut, 200, d)
@@ -2799,6 +2810,7 @@ class TestDemarrage(unittest.TestCase):
 
     PORT3 = PORT + 2
 
+    @unittest.skipUnless(moteur_base_present(), 'moteur « base » absent de MYPHOTOS_MODELES : essai sauté')
     def test_page_avant_le_moteur(self):
         if not port_libre(self.PORT3):
             self.skipTest(f'port {self.PORT3} déjà pris')
