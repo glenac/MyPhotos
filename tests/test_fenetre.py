@@ -24,6 +24,7 @@ restant, données de WebView2 effacées, position retenue). Le navigateur, le pr
 l'Explorateur sont simulés dans le processus d'essai ; « Choisir un dossier » s'ouvre sur un dossier vide.
 """
 import ctypes
+import ctypes.wintypes
 import json
 import logging
 import os
@@ -342,6 +343,33 @@ class TestReplis(unittest.TestCase):
         liste.assert_called_once_with(123)
         devant.assert_called_once_with(4)
 
+    def test_choix_dossier_au_milieu_d_edge(self):
+        """Repli Edge : « Choisir un dossier » (serveur.ChoixDossier) s'ouvre au milieu de la fenêtre d'Edge qui
+        montre MyPhotos (FenetreEdge.zone) ; Edge absent ou sans fenêtre : None (le milieu de l'écran)."""
+        fenetres = [{'hwnd': 7, 'classe': 'Chrome_WidgetWin_1', 'titre': 'MyPhotos'}]
+
+        def rect(hwnd, r):
+            r._obj.left, r._obj.top, r._obj.right, r._obj.bottom = (hwnd * 10, 20, 830, 640)
+            return True
+        app = types.SimpleNamespace(choix_dossier=serveur.ChoixDossier(ouvrir=mock.Mock()), mode=None)
+        edge = fenetre.FenetreEdge(types.SimpleNamespace(app=app, _fin=threading.Event(),
+                                                         adresse='http://127.0.0.1:65011/?jeton=x'))
+        self.assertIsNone(edge.zone())                                     # pas encore lancé
+        proc = mock.Mock(pid=123)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        with mock.patch.object(fenetre, 'trouver_edge', return_value='msedge.exe'), \
+                mock.patch.object(fenetre.subprocess, 'Popen', return_value=proc), \
+                mock.patch.object(fenetre, 'fenetres_du_processus', return_value=fenetres), \
+                mock.patch.object(fenetre, '_dll', return_value=types.SimpleNamespace(GetWindowRect=rect)):
+            self.assertEqual(edge.lancer(), 'perdue')                     # Edge rendu aussitôt : peu importe ici
+            self.assertEqual(app.choix_dossier.zone, edge.zone)
+            self.assertEqual(app.choix_dossier.zone(), (70, 20, 830, 640))
+            with mock.patch.object(fenetre, 'fenetres_du_processus', return_value=[]):
+                self.assertIsNone(edge.zone())
+            proc.poll.return_value = 0                                    # Edge fermé
+            self.assertIsNone(edge.zone())
+
     def test_arret_demande_ferme_la_fenetre(self):
         srv = FauxServeur()
         app = FausseApp(srv)
@@ -477,6 +505,100 @@ class TestRelance(unittest.TestCase):
         signal.assert_called_once_with(1)
         infos.assert_not_called()
         self.assertFalse(fenetre.autre_compte({'version': '0.2.0'}, moi))
+
+    def test_jeton_refuse(self):
+        """0.4.0 : la MyPhotos déjà lancée refuse notre jeton d'accès (elle tourne pour un autre compte Windows : son
+        jeton est dans SES données) : message, et rien n'est ouvert ; sans page, rien du tout."""
+        etat = {'nom': 'MyPhotos', 'jeton_refuse': True}
+        for demande in ('fenetre', 'navigateur'):
+            page, infos, signal = self.relancer(etat, demande)
+            page.assert_not_called()
+            signal.assert_not_called()
+            infos.assert_called_once_with(fenetre.AUTRE_COMPTE)
+        page, infos, signal = self.relancer(etat, 'sans_page')
+        page.assert_not_called()
+        infos.assert_not_called()
+        signal.assert_not_called()
+
+    def test_main_adresse_de_relance(self):
+        """Relance : la page d'une MyPhotos 0.4.0 (ou plus) s'ouvre par l'adresse d'entrée, avec le jeton lu dans les
+        données ; celle d'une 0.3.0 ou plus ancienne, sans jeton. Une relance ne remplace jamais le jeton."""
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            jeton = serveur.creer_jeton(chemin)
+            adresse = f'http://{config.HOTE}:{config.PORT}/'
+            for etat, attendu in ((dict(self.NOUVELLE, mode='navigateur', acces_par_jeton=True),
+                                   f'{adresse}?jeton={jeton}'),
+                                  (dict(self.NOUVELLE, mode='navigateur'), adresse),
+                                  ({'nom': 'MyPhotos', 'version': '0.2.0'}, adresse)):
+                with mock.patch.object(serveur, 'Serveur', side_effect=OSError('port pris')), \
+                        mock.patch.object(config, 'JETON', chemin), \
+                        mock.patch.object(serveur, 'etat_instance', return_value=etat) as lire, \
+                        mock.patch.object(serveur, 'SANS_PAGE', False), \
+                        mock.patch.object(serveur, 'configurer_journal'), \
+                        mock.patch.object(serveur, 'ouvrir_page') as page, \
+                        mock.patch.object(serveur, 'informer'):
+                    self.assertEqual(serveur.main(['--navigateur']), 0)
+                page.assert_called_once_with(attendu)
+                self.assertEqual(lire.call_args[0][1], jeton)              # /api/etat lu avec le jeton des données
+            self.assertEqual(serveur.lire_jeton(chemin), jeton)
+
+    def test_main_jeton_refuse_puis_reecrit(self):
+        """Relance pendant le démarrage d'une MyPhotos : son jeton a été écrit pendant notre requête (refusée) ; on
+        relit, on réessaie, et sa fenêtre revient au premier plan (pas de faux message « autre compte »)."""
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            ancien = serveur.creer_jeton(chemin)
+            etats = []
+
+            def etat_instance(_port, jeton):
+                etats.append(jeton)
+                if len(etats) == 1:
+                    serveur.creer_jeton(chemin)                            # la MyPhotos qui démarre écrit le sien
+                    return {'nom': 'MyPhotos', 'jeton_refuse': True}
+                return dict(self.NOUVELLE, acces_par_jeton=True)
+            with mock.patch.object(serveur, 'Serveur', side_effect=OSError('port pris')), \
+                    mock.patch.object(config, 'JETON', chemin), \
+                    mock.patch.object(serveur, 'etat_instance', side_effect=etat_instance), \
+                    mock.patch.object(serveur, 'configurer_journal'), \
+                    mock.patch.object(serveur, 'informer') as infos, \
+                    mock.patch.object(serveur.fenetre, 'mode_demande', return_value='fenetre'), \
+                    mock.patch.object(fenetre, 'signaler_premier_plan', return_value=True) as signal, \
+                    mock.patch.object(fenetre, 'RELANCE_VERIF_S', 0), \
+                    mock.patch.object(serveur.time, 'sleep'):
+                self.assertEqual(serveur.main([]), 0)
+            self.assertEqual(etats[0], ancien)
+            self.assertEqual(etats[1], serveur.lire_jeton(chemin))
+            self.assertNotEqual(etats[1], ancien)
+            signal.assert_called_once()
+            infos.assert_not_called()
+
+    def test_main_jeton_et_adresse_d_entree(self):
+        """Port obtenu : un nouveau jeton (256 bits) à chaque lancement, écrit dans les données et donné au serveur ;
+        la fenêtre (et ses replis) reçoit l'adresse d'entrée ; le journal ne le contient pas."""
+        jetons = []
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            for _ in range(2):
+                srv = types.SimpleNamespace(server_address=('127.0.0.1', config.PORT), jeton=None, app=None)
+                with mock.patch.object(serveur, 'Serveur', return_value=srv), \
+                        mock.patch.object(config, 'JETON', chemin), \
+                        mock.patch.object(serveur, 'Application'), \
+                        mock.patch.object(serveur, 'configurer_journal'), \
+                        mock.patch.object(serveur.fenetre, 'mode_demande', return_value='fenetre'), \
+                        mock.patch.object(serveur.fenetre, 'Hote') as hote, \
+                        mock.patch('builtins.print'), \
+                        self.assertLogs('myphotos', 'INFO') as journal:
+                    hote.return_value.executer.return_value = 0
+                    self.assertEqual(serveur.main([]), 0)
+                jeton = serveur.lire_jeton(chemin)
+                self.assertRegex(jeton, r'^[A-Za-z0-9_-]{43}$')
+                self.assertEqual(srv.jeton, jeton)
+                self.assertEqual(hote.call_args[0][2], f'http://{config.HOTE}:{config.PORT}/?jeton={jeton}')
+                self.assertNotIn(jeton, '\n'.join(journal.output))
+                jetons.append(jeton)
+            self.assertNotEqual(jetons[0], jetons[1])
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['jeton'])     # pas de « .part » restant
 
     def test_relance_pendant_un_arret(self):
         """Constat R1 : l'instance signalée s'arrêtait en fait (fenêtre fermée à l'instant) : relancer rend None et
@@ -676,6 +798,58 @@ class TestProcessusEssai(unittest.TestCase):
             p.stdout.close()
 
 
+class TestOutilsFenetre(unittest.TestCase):
+    """tests/outils_fenetre.lancer (essai réel de la fenêtre) : tampons de CreateProcessW comptés en unités UTF-16.
+    Relecture de la 0.3.0 : le bloc d'environnement était dimensionné en caractères (len), si bien qu'un caractère
+    hors du plan de base (émoji : DEUX unités UTF-16) faisait échouer le lancement."""
+
+    EMOJI = 'Vacances \U0001F334 été \U0001F600'
+
+    def test_bloc_environnement_en_unites_utf16(self):
+        import outils_fenetre as O
+        env = {'b': 'é', 'A': self.EMOJI, 'PATH': 'x'}
+        attendu = f'A={self.EMOJI}\0b=é\0PATH=x\0\0'                   # trié sans tenir compte de la casse
+        unites = len(attendu.encode('utf-16-le')) // 2
+        self.assertEqual(unites, len(attendu) + 2)                     # deux émojis : deux unités de plus
+        tampon = O.bloc_environnement(env)
+        self.assertGreaterEqual(len(tampon), unites + 1)
+        self.assertEqual(ctypes.wstring_at(ctypes.addressof(tampon), unites), attendu)
+        self.assertEqual(tampon[unites - 2:unites + 1], '\0\0\0')       # fin du bloc : deux NUL (au moins)
+        # Bloc vide : deux NUL quand même (Windows lit jusqu'au double NUL).
+        vide = O.bloc_environnement({})
+        self.assertEqual(vide[:2], '\0\0')
+        self.assertEqual(O.unites_utf16(self.EMOJI), len(self.EMOJI) + 2)
+        self.assertEqual(O.tampon_utf16(self.EMOJI).value, self.EMOJI)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_lancer_avec_un_emoji(self):
+        """Vrai lancement par outils_fenetre.lancer, sur un bureau invisible, dans un Job Object : la ligne de
+        commande et l'environnement arrivent entiers dans le processus lancé (aucune fenêtre)."""
+        import outils_fenetre as O
+        import processus_essai
+        with tempfile.TemporaryDirectory() as d:
+            sortie = Path(d) / 'sortie.json'
+            code = ('import json, os, sys; open(sys.argv[2], "w", encoding="utf-8").write(json.dumps('
+                    '[sys.argv[1], os.environ.get("MYPHOTOS_ESSAI_EMOJI")]))')
+            env = dict(os.environ, MYPHOTOS_ESSAI_EMOJI=self.EMOJI)
+            nom_bureau = f'MyPhotosEssaiOutils{os.getpid()}'
+            hbureau = O.creer_bureau(nom_bureau)
+            job = processus_essai.Job()
+            hproc = None
+            try:
+                _, hproc = O.lancer([sys.executable, '-c', code, 'argument ' + self.EMOJI, str(sortie)], nom_bureau,
+                                    d, env, job)
+                self.assertTrue(O.attendre_processus(hproc, 60))
+                self.assertEqual(O.code_sortie(hproc), 0)
+                self.assertEqual(json.loads(sortie.read_text(encoding='utf-8')),
+                                 ['argument ' + self.EMOJI, self.EMOJI])
+            finally:
+                job.terminer()
+                job.fermer()
+                O.fermer_handle(hproc)
+                O.fermer_bureau(hbureau)
+
+
 @unittest.skipUnless(os.name == 'nt', 'Windows')
 class TestMutex(unittest.TestCase):
     """Mutex de l'installateur (config.MUTEX) : il existe tant que MyPhotos tourne, et disparaît avec lui. Vrai
@@ -705,6 +879,7 @@ class TestMutex(unittest.TestCase):
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
         donnees = base / f'essai-mutex-{time.strftime("%Y%m%d-%H%M%S")}'
         donnees.mkdir(parents=True)
+        O.donnees_du_port(self.PORT, donnees)            # jeton d'accès lu dans ses données
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
         env.update(MYPHOTOS_PORT=str(self.PORT), MYPHOTOS_DOSSIER=str(donnees), MYPHOTOS_SANS_PAGE='1',
                    MYPHOTOS_MODELES=str(Path(os.environ.get('MYPHOTOS_MODELES') or RACINE / 'donnees' / 'modele')),
@@ -855,6 +1030,121 @@ def _port_libre(port):
         return s.connect_ex(('127.0.0.1', port)) != 0
 
 
+ENFANT_CHOIX = '''\
+"""Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON."""
+import json, os, sys
+sys.path.insert(0, os.environ['MYPHOTOS_ESSAI_RACINE'])
+from myphotos import dialogue
+try:
+    sortie = {'chemin': dialogue.ouvrir_devant(sys.argv[1], sys.argv[2])}
+except Exception as e:
+    sortie = {'erreur': repr(e)}
+with open(os.environ['MYPHOTOS_ESSAI_SORTIE'], 'w', encoding='utf-8') as f:
+    json.dump(sortie, f)
+'''
+
+
+@unittest.skipUnless(os.environ.get('MYPHOTOS_ESSAI_FENETRE') == '1' and os.name == 'nt',
+                     'essai réel de la fenêtre : MYPHOTOS_ESSAI_FENETRE=1 (Windows)')
+class TestChoixDossierReel(unittest.TestCase):
+    """0.4.0 : la vraie fenêtre « Choisir un dossier » des replis (IFileOpenDialog par COM, dialogue.py), sur un
+    bureau Windows INVISIBLE, dans un Job Object : elle appartient à la fenêtre hôte de MyPhotos (invisible,
+    toujours au-dessus), qu'elle bloque ; elle est elle-même au-dessus, au milieu de l'écran ; « Annuler » (la croix)
+    rend None, « Sélectionner un dossier » rend le dossier proposé, au nom accentué avec un émoji. Rien ne reste."""
+
+    TITRE = 'Choisissez un dossier de photos'
+
+    def setUp(self):
+        import outils_fenetre as O
+        self.O = O
+        u32 = O.u32
+        u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        u32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)]
+        u32.GetDlgItem.restype = ctypes.c_void_p
+        u32.GetDlgItem.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
+        self.dossier = base / f'essai-choix-{time.strftime("%Y%m%d-%H%M%S")}'
+        self.propose = self.dossier / 'Été \U0001F334'
+        self.propose.mkdir(parents=True)
+        (self.dossier / 'enfant.py').write_text(ENFANT_CHOIX, encoding='utf-8')
+
+    def rect(self, hwnd):
+        r = ctypes.wintypes.RECT()
+        self.O.u32.GetWindowRect(hwnd, ctypes.byref(r))
+        return r.left, r.top, r.right, r.bottom
+
+    def ouvrir(self, action):
+        """Lance l'enfant, trouve la fenêtre de Windows, fait `action` (WM_CLOSE ou IDOK) ; rend (sortie, constats)."""
+        O = self.O
+        import processus_essai
+        from myphotos import dialogue
+        sortie = self.dossier / f'sortie-{action}.json'
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
+        env.update(MYPHOTOS_ESSAI_RACINE=str(RACINE), MYPHOTOS_ESSAI_SORTIE=str(sortie))
+        nom_bureau = f'MyPhotosChoix{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        fil = O.FilBureau(hbureau)
+        job = processus_essai.Job()
+        hproc = None
+        constats = {}
+        try:
+            _pid, hproc = O.lancer([sys.executable, str(self.dossier / 'enfant.py'), self.TITRE, str(self.propose)],
+                                   nom_bureau, str(self.dossier), env, job)
+            d = O.attendre(lambda: next((f for f in fil.faire(lambda: O.fenetres(set(job.pids())))
+                                         if f['classe'] == '#32770' and f['visible']), None), 30)
+            self.assertTrue(d, 'fenêtre « Choisir un dossier » absente')
+            tout = fil.faire(lambda: O.fenetres(set(job.pids())))
+            hote = next((f for f in tout if f['hwnd'] == d['proprietaire']), None)
+            constats.update(
+                titre=d['titre'], hote=hote and (hote['classe'], hote['titre'], hote['visible'], hote['pid']),
+                pid=d['pid'],
+                dessus=bool(fil.faire(lambda: self.O.u32.GetWindowLongPtrW(d['hwnd'], -20)) & 0x8),
+                hote_style=fil.faire(lambda: self.O.u32.GetWindowLongPtrW(d['proprietaire'], -20)),
+                hote_actif=bool(fil.faire(lambda: O.u32.IsWindowEnabled(d['proprietaire']))),
+                rect=fil.faire(lambda: self.rect(d['hwnd'])))
+            centre = ((constats['rect'][0] + constats['rect'][2]) // 2, (constats['rect'][1] + constats['rect'][3]) // 2)
+            travail = fil.faire(lambda: dialogue.zone_de_travail(*centre))
+            constats['travail'] = travail
+            time.sleep(0.5)
+            if action == 'annuler':
+                fil.faire(lambda: O.u32.PostMessageW(d['hwnd'], O.WM_CLOSE, 0, 0))
+            else:
+                bouton = fil.faire(lambda: O.u32.GetDlgItem(d['hwnd'], 1))
+                fil.faire(lambda: O.u32.PostMessageW(d['hwnd'], 0x0111, 1, bouton))     # WM_COMMAND, IDOK
+            self.assertTrue(O.attendre_processus(hproc, 30), 'la fenêtre ne se ferme pas')
+            constats['code'] = O.code_sortie(hproc)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
+            return json.loads(sortie.read_text(encoding='utf-8')), constats
+        finally:
+            if hproc is not None and O.code_sortie(hproc) is None:
+                job.terminer()                        # filet : les processus de CE job seulement
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
+
+    def verifier_constats(self, c):
+        self.assertEqual(c['titre'], self.TITRE)
+        self.assertEqual(c['hote'], ('Static', 'MyPhotos', True, c['pid']))   # hôte de MyPhotos, même processus
+        self.assertTrue(c['hote_style'] & 0x80000 and c['hote_style'] & 0x8)  # transparente, toujours au-dessus
+        self.assertTrue(c['dessus'])                                         # la fenêtre de Windows aussi
+        self.assertFalse(c['hote_actif'])                                    # modale : l'hôte attend
+        g, h, d, b = c['travail']
+        x1, y1, x2, y2 = c['rect']
+        self.assertTrue(g <= x1 < x2 <= d and h <= y1 < y2 <= b, c)           # entière sur l'écran…
+        self.assertLess(abs((x1 + x2) // 2 - (g + d) // 2), (d - g) // 8, c)   # … et au milieu
+        self.assertLess(abs((y1 + y2) // 2 - (h + b) // 2), (b - h) // 8, c)
+        self.assertEqual(c['code'], 0)
+
+    def test_annuler_puis_choisir(self):
+        sortie, constats = self.ouvrir('annuler')
+        self.assertEqual(sortie, {'chemin': None})
+        self.verifier_constats(constats)
+        sortie, constats = self.ouvrir('choisir')
+        self.assertEqual(sortie, {'chemin': str(self.propose)})              # le dossier proposé, nom intact
+        self.verifier_constats(constats)
+
+
 @unittest.skipUnless(os.environ.get('MYPHOTOS_ESSAI_FENETRE') == '1' and os.name == 'nt',
                      'essai réel de la fenêtre : MYPHOTOS_ESSAI_FENETRE=1 (Windows)')
 class TestFenetreReelle(unittest.TestCase):
@@ -879,6 +1169,7 @@ class TestFenetreReelle(unittest.TestCase):
         cls.dossier = base / f'essai-fenetre-{time.strftime("%Y%m%d-%H%M%S")}'
         cls.donnees = cls.dossier / 'donnees'
         cls.donnees.mkdir(parents=True)
+        O.donnees_du_port(cls.PORT, cls.donnees)          # jeton d'accès lu dans ses données
         cls.trace = cls.dossier / 'trace.jsonl'
         cls.lanceur = cls.dossier / 'lanceur.py'
         cls.lanceur.write_text(LANCEUR, encoding='utf-8')

@@ -21,7 +21,7 @@ Inutile d'avoir rangé, renommé ou étiqueté vos photos : MyPhotos comprend l
 
 ## Vos photos restent chez vous
 
-- **Tout est local.** La reconnaissance et la recherche se font sur votre ordinateur, avec sa carte graphique ou son processeur. MyPhotos s'ouvre dans sa propre fenêtre, qui affiche une page servie par MyPhotos lui-même à une adresse locale (`http://127.0.0.1:7796`), inaccessible depuis Internet comme depuis les autres appareils de votre réseau.
+- **Tout est local.** La reconnaissance et la recherche se font sur votre ordinateur, avec sa carte graphique ou son processeur. MyPhotos s'ouvre dans sa propre fenêtre, qui affiche une page servie par MyPhotos lui-même à une adresse locale (`http://127.0.0.1:7796`), inaccessible depuis Internet comme depuis les autres appareils de votre réseau. Depuis la 0.4.0, cette page demande en plus un secret tiré à chaque lancement : un autre compte Windows du même PC ne peut plus l'afficher, et taper son adresse dans un navigateur affiche seulement « Ouvrez MyPhotos depuis son raccourci ».
 - **Aucun compte**, aucune inscription, aucune publicité, aucune télémétrie : MyPhotos ne collecte rien et n'envoie rien.
 - **Un téléchargement au premier lancement** : le moteur de reconnaissance, depuis Hugging Face. C'est une version figée, dont chaque fichier est contrôlé par son empreinte SHA-256. Ensuite, MyPhotos n'a plus besoin d'Internet.
 - **Les nouvelles versions, si vous le voulez.** Au premier lancement, MyPhotos vous demande s'il doit vous proposer ses nouvelles versions. Si vous acceptez, il demande une fois par jour au site GitHub, où il est publié, le numéro de la dernière version. Rien d'autre n'est envoyé : ni vos photos, ni vos recherches, ni aucun identifiant. Une nouvelle version ne s'installe que si vous cliquez sur **Mettre à jour**, et seulement si elle porte la signature du projet ([Les mises à jour](#les-mises-à-jour)).
@@ -183,6 +183,8 @@ Dans le dossier `%LOCALAPPDATA%\MyPhotos` (copiez ce chemin dans la barre d'adre
 - `miniatures.db` : les miniatures affichées dans les résultats ;
 - `modele\` : le ou les moteurs téléchargés ;
 - `journal.log` : le journal de fonctionnement, utile en cas de problème ;
+- `jeton` : le secret qui protège la page de MyPhotos, tiré de nouveau à chaque lancement (à ne pas partager ; il ne sert plus une fois MyPhotos arrêté) ;
+- `mises-a-jour\` : l'installateur d'une nouvelle version téléchargée par **Mettre à jour**, effacé une fois la nouvelle version installée ;
 - `fenetre.json` : la place et la taille de la fenêtre ; `webview2\` : les fichiers de travail de la fenêtre, effacés à sa fermeture ; `edge\` : ceux d'Edge, seulement si MyPhotos a dû s'ouvrir dans Edge.
 
 MyPhotos n'écrit rien dans vos dossiers de photos, sauf les copies que vous lui demandez (**Copier dans un dossier…**). À chaque lancement, MyPhotos.exe seul se décompresse aussi dans un dossier temporaire (`%TEMP%\_MEI…`), effacé à l'arrêt ; la version installée, déjà décompressée, n'en a pas besoin.
@@ -331,7 +333,7 @@ Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md
 
 - **MyPhotos** : licence MIT, © 2026 glenac. Voir [LICENSE](LICENSE).
 - **Moteur de reconnaissance** : SigLIP 2, © Google, licence Apache-2.0, dans les exports ONNX publiés par onnx-community sur Hugging Face. MyPhotos le télécharge depuis Hugging Face ; il n'est pas inclus dans MyPhotos.exe.
-- **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, pywebview et les DLL WebView2 de Microsoft, pythonnet, Tcl/Tk et le chargeur de PyInstaller, chacun sous sa propre licence. L'installateur est fait avec Inno Setup. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, pywebview et les DLL WebView2 de Microsoft, pythonnet et le chargeur de PyInstaller, chacun sous sa propre licence. L'installateur est fait avec Inno Setup. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **Choix des moteurs** : banc d'essai multilingue du projet Immich (jeu Crossmodal-3600).
 - **Captures d'écran** : photos de Wikimedia Commons versées dans le domaine public (CC0). Voir [docs/captures/CREDITS.md](docs/captures/CREDITS.md).
 

@@ -283,6 +283,7 @@ function CloseHandle(Objet: THandle): BOOL;
     côté (« index.db.abimee-AAAAMMJJ-HHMMSS », avec -wal et -shm : base.py, _ecarter_abimes) ;
   - journal.log et ses copies (journal.log.1, .2 : serveur.JOURNAL_COPIES) ;
   - fenetre.json (et fenetre.json.part pendant son écriture) : taille et place de la fenêtre ;
+  - jeton (et jeton.part pendant son écriture) : jeton d'accès au serveur local, tiré à chaque lancement (0.4.0) ;
   - webview2\ : profil WebView2 de la fenêtre (mode privé : effacé à la fermeture, reste après un plantage) ;
   - edge\ : profil d'Edge en mode application (repli quand WebView2 manque) ;
   - mises-a-jour\ : installateurs téléchargés par la mise à jour proposée et journaux de leur installation
@@ -300,6 +301,7 @@ begin
     or (N = 'miniatures.db-journal') or WildcardMatch(N, 'miniatures.db.abimee-*')
     or (N = 'journal.log') or (N = 'journal.log.1') or (N = 'journal.log.2')
     or (N = 'fenetre.json') or (N = 'fenetre.json.part')
+    or (N = 'jeton') or (N = 'jeton.part')
     or (N = 'webview2') or (N = 'edge') or (N = 'mises-a-jour');
 end;
 

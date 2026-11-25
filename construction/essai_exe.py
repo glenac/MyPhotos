@@ -220,7 +220,7 @@ class Essai:
     def imports(self):
         import importlib
         durees = {}
-        for nom in ('numpy', 'PIL.Image', 'tokenizers', 'onnxruntime', 'tkinter', 'sqlite3', 'http.server',
+        for nom in ('numpy', 'PIL.Image', 'tokenizers', 'onnxruntime', 'sqlite3', 'http.server',
                     'ctypes', 'ssl', 'urllib.request', 'hashlib', 'webbrowser', 'concurrent.futures'):
             t = time.perf_counter()
             importlib.import_module(nom)
@@ -421,24 +421,28 @@ class Essai:
             raise RuntimeError(f'serveur local : {res}')
         return res
 
-    # -- tkinter (Tcl/Tk 9 : scripts rangés dans les DLL) ; fenêtre masquée avant d'être affichée
-    def tkinter(self):
-        import tkinter
-        from tkinter import ttk
-        tcl = tkinter.Tcl()
-        d = {'tcl': tcl.eval('info patchlevel'), 'tcl_library': tcl.eval('info library')}
-        racine = tkinter.Tk()
-        racine.withdraw()
+    # -- « Choisir un dossier » des replis (0.4.0) : fenêtre de Windows (IFileOpenDialog, par COM), créée et réglée
+    #    dans un fil STA SANS être affichée ; tkinter et Tcl/Tk ne sont plus embarqués
+    def dialogue(self):
+        from myphotos import dialogue
+        d = {}
+
+        def fil():
+            try:
+                with dialogue.Sta():
+                    d['options'] = hex(dialogue.verifier('MyPhotos', str(DOSSIER)))
+            except Exception as e:                     # noqa: BLE001 - rapporté dans le journal
+                d['erreur'] = repr(e)
+        t = threading.Thread(target=fil, name='essai-dialogue')
+        t.start()
+        t.join(30)
+        if 'erreur' in d or 'options' not in d:
+            raise RuntimeError(f'fenêtre « Choisir un dossier » : {d}')
         try:
-            d['tk'] = racine.tk.eval('package require Tk')
-            d['tk_library'] = racine.tk.eval('set tk_library')
-            d['ttk_themes'] = list(ttk.Style(racine).theme_names())
-            ico = Path(getattr(sys, '_MEIPASS', DOSSIER.parent)) / 'construction' / 'MyPhotos.ico'
-            if ico.is_file():
-                racine.iconbitmap(default=str(ico))
-                d['icone'] = 'ok'
-        finally:
-            racine.destroy()
+            import tkinter  # noqa: F401
+            d['tkinter'] = 'présent (inattendu)'
+        except ImportError:
+            d['tkinter'] = 'absent'
         return d
 
     # -- fenêtre de MyPhotos : pythonnet (.NET Framework), pywebview et WebView2, chargés sans ouvrir de fenêtre
@@ -497,7 +501,7 @@ def main():
     e.etape('onnxruntime', e.onnxruntime)
     e.etape('sqlite', e.sqlite)
     e.etape('http', e.http)
-    e.etape('tkinter', e.tkinter)
+    e.etape('dialogue', e.dialogue)
     e.etape('fenetre', e.fenetre)
     e.etape('donnees', e.donnees, obligatoire=False)
     if args['reseau']:

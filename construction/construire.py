@@ -39,8 +39,8 @@ La fenêtre de MyPhotos (myphotos/fenetre.py) : pywebview et pythonnet, avec leu
 (Microsoft.Web.WebView2.Core et .WinForms, WebView2Loader.dll pour x64, arm64 et x86, Python.Runtime.dll,
 ClrLoader.dll), réunis par les hooks de pyinstaller-hooks-contrib (webview, clr, clr_loader) et celui de
 pywebview. Les trois WebView2Loader.dll restent : pywebview ajoute leurs trois dossiers au PATH en s'important
-(sans eux, l'exécutable s'arrête au démarrage). tkinter reste aussi : la fenêtre « Choisir un dossier » des
-replis (Edge, navigateur) passe par lui.
+(sans eux, l'exécutable s'arrête au démarrage). Depuis la 0.4.0, tkinter et Tcl/Tk ne sont plus embarqués : la
+fenêtre « Choisir un dossier » des replis (Edge, navigateur) est celle de Windows, par COM (myphotos/dialogue.py).
 
 --paquet ne reconstruit rien : il prépare la publication du dist\\MyPhotos.exe déjà construit (et essayé).
 Il rassemble les textes de licence que demande THIRD_PARTY_NOTICES.md (section « Ce que chaque publication
@@ -115,6 +115,8 @@ EXCLUS = [
     'cffi.pkgconfig', 'cffi.vengine_cpy', 'cffi.vengine_gen',
     # Pillow : AVIF (7,5 Mo, format non lu par MyPhotos), polices, Qt et Tk
     'PIL._avif', 'PIL.AvifImagePlugin', 'PIL._imagingft', 'PIL.ImageQt', 'PIL.ImageTk', 'PIL._imagingtk',
+    # tkinter, Tcl/Tk 9 et libtommath (0.4.0) : « Choisir un dossier » passe par la fenêtre de Windows (COM)
+    'tkinter', '_tkinter',
     # bibliothèque standard : aide, tests, outils de développement
     'pydoc', 'pydoc_data', 'test', 'idlelib', 'turtle', 'turtledemo', 'xmlrpc', 'ensurepip', 'venv', 'lib2to3',
     'distutils', 'setuptools', 'pkg_resources', 'pip',
@@ -125,7 +127,9 @@ EXCLUS = [
 # Fichiers retirés après l'analyse (binaires et données), par leur nom. onnxruntime.dll est l'interface C
 # d'onnxruntime : le module Python (onnxruntime_pybind11_state.pyd) contient déjà tout le moteur et ne la charge pas
 # (20 Mo de gagnés). WebBrowserInterop.x86.dll (MSHTML, 32 bits) et pywebview-android.jar ne servent jamais ici.
-RETIRES = {'onnxruntime.dll', 'webbrowserinterop.x86.dll', 'pywebview-android.jar'}
+RETIRES = {'onnxruntime.dll', 'webbrowserinterop.x86.dll', 'pywebview-android.jar',
+           # Tcl/Tk (0.4.0) : jamais embarqués, même si une dépendance les tirait encore (contrôlé à la fin)
+           '_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll', 'libtommath.dll'}
 # … et par leur dossier : la version 32 bits de ClrLoader.dll.
 RETIRES_DOSSIERS = ['clr_loader\\ffi\\dlls\\x86\\']
 
@@ -138,7 +142,6 @@ OBLIGATOIRES = [
     'tokenizers\\tokenizers.pyd',
     'PIL\\_imaging.cp314-win_amd64.pyd',
     'PIL\\_webp.cp314-win_amd64.pyd',
-    '_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll',
     '_ssl.pyd', 'libssl-3.dll', 'libcrypto-3.dll',      # téléchargement du moteur en HTTPS
     '_sqlite3.pyd', 'sqlite3.dll',
     # fenêtre de MyPhotos : WebView2 (assemblies .NET et chargeur), pythonnet, clr_loader, cffi
@@ -756,8 +759,8 @@ Pillow\\        Pillow {pillow} : LICENSE, qui reprend celles des bibliothèques
 tokenizers\\    tokenizers {tokenizers} (Hugging Face) : LICENSE (Apache-2.0), l'inventaire de ses bibliothèques Rust
                (tokenizers-python.cyclonedx.json, résumé dans COMPOSANTS.txt) et, dans crates\\, les licences
                propres de {crates} d'entre elles
-Python\\        Python {python} : LICENSE.txt, qui reprend aussi les licences de Tcl/Tk, OpenSSL, bzip2, libffi,
-               Zstandard et les conditions du runtime Microsoft Visual C++
+Python\\        Python {python} : LICENSE.txt, qui reprend aussi les licences d'OpenSSL, bzip2, libffi, Zstandard et
+               les conditions du runtime Microsoft Visual C++ (et celles de Tcl/Tk, que MyPhotos n'embarque plus)
 PyInstaller\\   chargeur de PyInstaller {pyinstaller} : COPYING.txt (GPL avec exception pour le chargeur)
 
 La fenêtre de MyPhotos :

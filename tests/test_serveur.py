@@ -15,6 +15,7 @@ dans le dossier » sont essayés dans ce processus, les appels à Windows étant
 import base64
 import http.client
 import json
+import logging
 import os
 import shutil
 import socket
@@ -45,10 +46,27 @@ INCONNU = 987654321
 SANS_FENETRE = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
-def requete(methode, chemin, corps=None, entetes=None, brut=None, hote=HOTE, port=PORT, delai=60):
-    """(statut, en-têtes en minuscules, corps). Host et tous les en-têtes sont exactement ceux donnés."""
+DONNEES_PAR_PORT = {}                    # port -> données du serveur d'essai (lancer_serveur) : son jeton d'accès
+
+
+def jeton_essai(port=PORT):
+    """Jeton d'accès du serveur d'essai de ce port (fichier « jeton » de ses données, réécrit à chaque lancement)."""
+    dossier = DONNEES_PAR_PORT.get(port)
+    try:
+        return (Path(dossier) / 'jeton').read_text(encoding='ascii').strip() if dossier else None
+    except OSError:
+        return None
+
+
+def requete(methode, chemin, corps=None, entetes=None, brut=None, hote=HOTE, port=PORT, delai=60, jeton=True):
+    """(statut, en-têtes en minuscules, corps). Host et tous les en-têtes sont exactement ceux donnés, plus le cookie
+    du jeton d'accès comme la page (jeton=True : celui du serveur d'essai de ce port ; une chaîne : celle-ci ;
+    False : aucun cookie). Un en-tête Cookie donné dans `entetes` remplace celui-ci."""
     c = http.client.HTTPConnection('127.0.0.1', port, timeout=delai)
     e = {'Host': hote}
+    valeur = jeton_essai(port) if jeton is True else jeton
+    if valeur:
+        e['Cookie'] = f'myphotos-{port}={valeur}'
     if corps is not None:
         brut = json.dumps(corps).encode('utf-8')
         e['Content-Type'] = 'application/json'
@@ -95,6 +113,7 @@ def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
     env.pop('MYPHOTOS_TELECHARGEMENT_FACTICE', None)
     env.update(variables)
     Path(donnees).mkdir(parents=True, exist_ok=True)
+    DONNEES_PAR_PORT[port] = Path(donnees)
     sortie = open(Path(donnees) / 'essai-serveur.err', 'ab')
     lancement = ['-c', 'import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
                        's.dossier_images = lambda: None; sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
@@ -370,6 +389,184 @@ class TestSecurite(EssaiServeur):
                     self.assertIn(k, e)
                 self.assertFalse(any(k.startswith('access-control-') for k in e))
         self.vivant()
+
+
+class TestJeton(EssaiServeur):
+    """0.4.0 : jeton d'accès exigé par TOUTE requête (page, API, miniatures, photos, routes inconnues ou à venir),
+    contrôlé à un seul endroit du serveur (Gestionnaire._acces). Problème connu de la 0.3.0 : une personne connectée
+    en même temps sur un autre compte Windows du PC affichait la page de MyPhotos en tapant son adresse locale."""
+
+    REFUS = 'Ouvrez MyPhotos depuis son raccourci.'
+    GET = ('/', '/index.html', '/api/etat', '/api/photos', '/api/recherche?q=chien', '/api/dossiers',
+           '/api/materiel', '/api/copie', '/api/doublons', f'/miniature/{INCONNU}', f'/photo/{INCONNU}',
+           f'/api/photo/{INCONNU}', '/favicon.ico', '/inconnu', '/api/maj', '/api/maj/etat')
+    POST = ('/api/quitter', '/api/analyse/pause', '/api/dossiers/choisir', '/api/supprimer', '/api/assistant',
+            '/api/inconnue', '/api/maj/installer')
+    NAVIGATION = {'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document'}
+
+    def faux_jetons(self):
+        j = jeton_essai()
+        self.assertRegex(j or '', r'^[A-Za-z0-9_-]{43}$')                 # 256 bits, sans caractère à échapper
+        autre = ('A' if j[0] != 'A' else 'B') + j[1:]
+        return (False, '', 'x', autre, j[:-1], j + 'x', j.lower() if j != j.lower() else j.upper(), f'"{autre}"',
+                j + ' ' + j)
+
+    def assert_refus(self, statut, e, corps, chemin):
+        self.assertEqual(statut, 403, chemin)
+        self.assertNotIn('set-cookie', e)
+        self.assertEqual(e['cache-control'], 'no-store')
+        self.assertIn("default-src 'none'", e['content-security-policy'])
+        if chemin.startswith('/api/'):
+            self.assertEqual(json.loads(corps), {'erreur': self.REFUS, 'jeton': 'requis'}, chemin)
+        else:
+            self.assertTrue(e['content-type'].startswith('text/html'), chemin)
+            from myphotos import config
+            texte = corps.decode('utf-8')
+            self.assertIn(self.REFUS, texte)
+            self.assertLess(len(corps), 300)                                # une petite page, rien d'autre
+            for secret in ('<script', 'version', 'compte', 'jeton', config.VERSION, str(DONNEES), 'etat'):
+                self.assertNotIn(secret.lower(), texte.lower())
+
+    def test_sans_jeton_tout_est_refuse(self):
+        for jeton in self.faux_jetons():
+            for chemin in self.GET:
+                with self.subTest(jeton=jeton, chemin=chemin):
+                    self.assert_refus(*requete('GET', chemin, entetes=self.NAVIGATION if chemin == '/' else None,
+                                               jeton=jeton), chemin.split('?')[0])
+            for chemin in self.POST:
+                with self.subTest(jeton=jeton, chemin=chemin):
+                    statut, e, corps = requete('POST', chemin, {'ids': [1], 'confirme': True},
+                                               {'X-MyPhotos': '1', 'Origin': f'http://{HOTE}',
+                                                'Sec-Fetch-Site': 'same-origin'}, jeton=jeton)
+                    self.assert_refus(statut, e, corps, chemin)
+        self.vivant()                                                       # /api/quitter sans jeton : rien
+        # Le bon jeton sous le nom de cookie d'un AUTRE port (une autre MyPhotos) ne vaut rien ici, et inversement
+        # les cookies des autres programmes de 127.0.0.1 ne gênent pas.
+        j = jeton_essai()
+        self.assert_refus(*requete('GET', '/api/etat', entetes={'Cookie': f'myphotos-{PORT + 1}={j}'}), '/api/etat')
+        self.assertEqual(requete('GET', '/api/etat', entetes={
+            'Cookie': f'session=abc; myphotos-{PORT + 1}=x; myphotos-{PORT}={j}; autre="y"'})[0], 200)
+        # Le jeton dans l'adresse n'ouvre rien d'autre que la page (ni l'API, ni les photos).
+        for chemin in ('/api/etat', f'/miniature/{INCONNU}', '/api/photos'):
+            with self.subTest(chemin=chemin):
+                self.assert_refus(*requete('GET', f'{chemin}?jeton={j}', jeton=False), chemin)
+        self.assert_refus(*requete('POST', f'/?jeton={j}', {}, {'X-MyPhotos': '1'}, jeton=False), '/')
+        self.vivant()
+
+    def test_adresse_d_entree(self):
+        """La fenêtre, Edge, le navigateur et la relance ouvrent « /?jeton=… » : cookie HttpOnly, SameSite=Strict,
+        Path=/, sans date (le temps de la séance), puis « / » sans le jeton dans l'adresse."""
+        j = jeton_essai()
+        for page in ('/', '/index.html'):
+            with self.subTest(page=page):
+                statut, e, corps = requete('GET', f'{page}?jeton={j}', entetes=self.NAVIGATION, jeton=False)
+                self.assertEqual((statut, e['location'], corps), (303, '/', b''))
+                self.assertEqual(e['cache-control'], 'no-store')
+                self.assertEqual(e['referrer-policy'], 'no-referrer')
+                morceaux = [m.strip() for m in e['set-cookie'].split(';')]
+                self.assertEqual(morceaux[0], f'myphotos-{PORT}={j}')
+                self.assertEqual(set(morceaux[1:]), {'Path=/', 'HttpOnly', 'SameSite=Strict'})
+                biscuit = morceaux[0].split('=', 1)[1]
+                statut, _, corps = requete('GET', '/', entetes=self.NAVIGATION, jeton=biscuit)
+                self.assertEqual(statut, 200)
+                self.assertIn(b'<title>MyPhotos</title>', corps)
+                self.assertNotIn(j.encode(), corps)                         # jamais dans la page
+        # Mauvais jeton dans l'adresse : la petite page, sans cookie.
+        for faux in self.faux_jetons()[1:]:
+            with self.subTest(faux=faux):
+                self.assert_refus(*requete('GET', '/?' + urllib.parse.urlencode({'jeton': faux}),
+                                           entetes=self.NAVIGATION, jeton=False), '/')
+        # Adresse d'entrée périmée (historique) avec un cookie valable : « / », sans nouveau cookie.
+        statut, e, _ = requete('GET', '/?jeton=perime', entetes=self.NAVIGATION)
+        self.assertEqual((statut, e['location']), (303, '/'))
+        self.assertNotIn('set-cookie', e)
+        # Un autre site peut mener à l'adresse d'entrée, mais sans le jeton il n'obtient que la petite page.
+        self.assert_refus(*requete('GET', '/?jeton=devine', jeton=False, entetes=dict(
+            self.NAVIGATION, **{'Sec-Fetch-Site': 'cross-site'})), '/')
+        self.vivant()
+
+    def test_jamais_dans_le_journal(self):
+        j = jeton_essai()
+        journal = DONNEES / 'journal.log'
+        avant = journal.stat().st_size if journal.exists() else 0
+        requete('GET', f'/?jeton={j}', entetes=self.NAVIGATION, jeton=False)
+        requete('GET', f'/?jeton={j}&' + '&'.join(f'a{i}=1' for i in range(30)), jeton=False)   # refus simple (400)
+        requete('GET', f'/api/recherche?q=chien&jeton={j}')
+        requete('POST', '/api/assistant', entetes={'X-MyPhotos': '1', 'Content-Type': 'application/json'},
+                brut=b'{pas du json')
+        requete('GET', f'/photo/{INCONNU}?jeton={j}', jeton=j)
+        self.vivant()
+        ajout = journal.read_bytes()[avant:].decode('utf-8', 'replace') if journal.exists() else ''
+        self.assertNotIn(j, ajout)
+        self.assertNotIn(j, journal.read_text(encoding='utf-8', errors='replace') if journal.exists() else '')
+
+    def test_simple_connexion_tcp(self):
+        """L'outil local qui regarde si MyPhotos tourne ouvre une connexion au port, sans requête : toujours possible,
+        sans erreur dans le journal."""
+        for _ in range(3):
+            with socket.create_connection(('127.0.0.1', PORT), timeout=5):
+                pass
+        self.vivant()
+        self.assertEqual(api('/api/etat')[0], 200)
+
+    def test_etat_instance(self):
+        """Relance (serveur.etat_instance) : avec le jeton des données, l'état ; sans lui, « jeton_refuse » (MyPhotos
+        d'un autre compte Windows : message, rien n'est ouvert), sans rien de son état."""
+        from myphotos import serveur
+        e = serveur.etat_instance(PORT, jeton_essai())
+        self.assertEqual((e['nom'], e['acces_par_jeton']), ('MyPhotos', True))
+        for faux in ('', 'faux', jeton_essai() + 'x'):
+            self.assertEqual(serveur.etat_instance(PORT, faux), {'nom': 'MyPhotos', 'jeton_refuse': True})
+        with mock.patch.object(serveur.config, 'JETON', DONNEES / 'jeton'):
+            self.assertEqual(serveur.etat_instance(PORT)['acces_par_jeton'], True)   # lu dans les données
+        self.assertIsNone(serveur.etat_instance(PORT + 37, jeton_essai()))          # personne sur ce port
+
+
+class TestJetonFonctions(unittest.TestCase):
+    """Jeton d'accès, sans serveur : fichier écrit d'un coup, relu avec prudence, comparé en temps constant, masqué
+    dans le journal."""
+
+    def test_creer_et_lire(self):
+        from myphotos import serveur
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'sous-dossier' / 'jeton'
+            j = serveur.creer_jeton(chemin)
+            self.assertRegex(j, r'^[A-Za-z0-9_-]{43}$')
+            self.assertEqual(serveur.lire_jeton(chemin), j)
+            self.assertEqual(sorted(p.name for p in chemin.parent.iterdir()), ['jeton'])
+            self.assertNotEqual(serveur.creer_jeton(chemin), j)                 # un nouveau à chaque lancement
+            for abime in (b'', b'court', b'\xff\xfe' + b'a' * 40, b'a' * 40 + b'<script>', b'a b' * 20):
+                chemin.write_bytes(abime)
+                self.assertIsNone(serveur.lire_jeton(chemin), abime)
+            self.assertIsNone(serveur.lire_jeton(Path(d) / 'absent'))
+            # Dossier de données impossible à écrire : MyPhotos marche quand même (seule la relance ne rouvrira rien).
+            with mock.patch.object(Path, 'write_text', side_effect=PermissionError('refusé')):
+                self.assertRegex(serveur.creer_jeton(Path(d) / 'autre'), r'^[A-Za-z0-9_-]{43}$')
+
+    def test_comparaison(self):
+        from myphotos import serveur
+        j = 'a' * 43
+        self.assertTrue(serveur.jeton_egal(j, j))
+        for donne in ('a' * 42, 'a' * 44, 'b' + 'a' * 42, '', None, 12, 'é' * 43, '\udcff' * 43):
+            self.assertFalse(serveur.jeton_egal(donne, j), donne)
+        self.assertFalse(serveur.jeton_egal('', ''))
+        self.assertFalse(serveur.jeton_egal(j, None))
+        self.assertEqual(serveur.adresse_entree(7796, j), f'http://127.0.0.1:7796/?jeton={j}')
+        self.assertEqual(serveur.nom_cookie(7796), 'myphotos-7796')
+
+    def test_journal_masque_le_jeton(self):
+        from myphotos import serveur
+        j = 'Zx9_-' * 9
+        forme = serveur._FormatSansJeton('%(message)s')
+        for message in (f'chargement de http://127.0.0.1:7796/?jeton={j}', f'Cookie: myphotos-7796={j}; autre=1'):
+            r = logging.LogRecord('pywebview', logging.DEBUG, '', 0, message, None, None)
+            self.assertNotIn(j, forme.format(r))
+        try:
+            raise ValueError(f'/?jeton={j}')
+        except ValueError:
+            import sys as _sys
+            r = logging.LogRecord('myphotos', logging.ERROR, '', 0, 'erreur', None, _sys.exc_info())
+        self.assertNotIn(j, forme.format(r))
 
 
 class TestSelectionHttp(EssaiServeur):
@@ -817,6 +1014,49 @@ class TestInstances(unittest.TestCase):
             arreter_essai(proc)
             proc.sortie.close()
         self.assertTrue(port_libre(self.PORT2))
+
+    def test_jeton_neuf_a_chaque_lancement(self):
+        """0.4.0 : un nouveau jeton à chaque lancement (l'ancien ne vaut plus rien) ; des requêtes sans le jeton
+        (programme d'un autre compte Windows qui interroge le port chaque seconde) ne gardent pas MyPhotos éveillé ;
+        une seconde instance ne remplace jamais le jeton de celle qui tourne."""
+        if not port_libre(self.PORT2):
+            self.skipTest(f'port {self.PORT2} déjà pris')
+        donnees = DONNEES / 'essai-jeton'
+        hote = f'127.0.0.1:{self.PORT2}'
+        jetons = []
+        for tour in range(2):
+            proc = lancer_serveur(donnees, self.PORT2, neutre=True, MYPHOTOS_INACTIVITE_S='4')
+            try:
+                attendre_serveur(proc, self.PORT2)
+                jetons.append(jeton_essai(self.PORT2))
+                self.assertEqual(requete('GET', '/api/etat', hote=hote, port=self.PORT2)[0], 200)
+                if tour == 0:
+                    second = lancer_serveur(donnees, self.PORT2, neutre=True)       # voit MyPhotos, s'arrête
+                    try:
+                        self.assertEqual(second.wait(timeout=60), 0)
+                    finally:
+                        arreter_essai(second)
+                        second.sortie.close()
+                    self.assertEqual(jeton_essai(self.PORT2), jetons[0])          # jeton inchangé
+                    self.assertIsNone(proc.poll())
+                else:
+                    self.assertNotEqual(jetons[1], jetons[0])
+                    self.assertEqual(requete('GET', '/api/etat', hote=hote, port=self.PORT2, jeton=jetons[0])[0], 403)
+                debut = time.monotonic()
+                while proc.poll() is None and time.monotonic() - debut < 20:
+                    for chemin, jeton in (('/', False), ('/api/etat', False), ('/api/etat', 'faux'),
+                                          (f'/?jeton={jetons[0] if tour else "faux"}', False)):
+                        try:
+                            requete('GET', chemin, hote=hote, port=self.PORT2, delai=5, jeton=jeton)
+                        except (OSError, http.client.HTTPException):
+                            pass                                   # déjà arrêté, ou en train de s'arrêter
+                    time.sleep(1.0)
+                self.assertIsNotNone(proc.poll(), 'des requêtes sans jeton gardent MyPhotos lancé')
+                self.assertEqual(proc.wait(timeout=60), 0)
+            finally:
+                arreter_essai(proc)
+                proc.sortie.close()
+            self.assertTrue(port_libre(self.PORT2))
 
 
 class TestActionsWindows(unittest.TestCase):
@@ -1975,39 +2215,34 @@ class TestWindowsReel(unittest.TestCase):
 
 
 class TestChoixDossier(unittest.TestCase):
-    """Fenêtre « Choisir un dossier » : fil réservé, une fenêtre à la fois, annuler ne fait rien. tkinter est
-    entièrement simulé : aucune fenêtre n'apparaît sur le bureau pendant les essais."""
+    """Fenêtre « Choisir un dossier » des replis (serveur.ChoixDossier) : un fil COM à elle par demande, une fenêtre à
+    la fois, annuler ne fait rien, une panne donne un message clair. La fenêtre de Windows (dialogue.ouvrir_devant)
+    est simulée : rien n'apparaît sur le bureau pendant ces essais."""
 
     def setUp(self):
         from myphotos import serveur
         self.serveur = serveur
         self.reponses = []
+        self.appels = []
         self.ouverte = threading.Event()
         self.relacher = threading.Event()
-        faux = mock.MagicMock()
 
-        def askdirectory(**options):
-            self.options = options
+        def ouvrir(titre, initial, zone):
+            self.appels.append((titre, initial, zone, threading.current_thread().name))
             self.ouverte.set()
             self.relacher.wait(10)
             r = self.reponses.pop(0)
             if isinstance(r, Exception):
                 raise r
             return r
-        faux.filedialog.askdirectory.side_effect = askdirectory
-        self.modules = mock.patch.dict(sys.modules, {'tkinter': faux, 'tkinter.filedialog': faux.filedialog})
-        self.modules.start()
-        self.premier_plan = mock.patch.object(serveur, '_premier_plan')
-        self.premier_plan.start()
+        self.ouvrir = ouvrir
 
     def tearDown(self):
         self.relacher.set()
-        self.premier_plan.stop()
-        self.modules.stop()
 
     def test_choix_annulation_et_fenetre_unique(self):
-        choix = self.serveur.ChoixDossier()
-        self.reponses = ['E:/Photos', '', OSError('Tk en panne'), 'D:/Vacances']
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
+        self.reponses = ['E:\\Photos', None, '', OSError('COM en panne'), 'D:\\Vacances \U0001F334']
         resultats = []
         fil = threading.Thread(target=lambda: resultats.append(choix.demander(initial='C:\\Images')))
         fil.start()
@@ -2017,13 +2252,48 @@ class TestChoixDossier(unittest.TestCase):
         self.assertEqual(e.exception.statut, 409)
         self.relacher.set()
         fil.join(10)
-        self.assertEqual(resultats, ['E:/Photos'])
-        self.assertEqual(self.options['initialdir'], 'C:\\Images')
-        self.assertTrue(self.options['mustexist'])
+        self.assertEqual(resultats, ['E:\\Photos'])
+        self.assertEqual(self.appels[0][:3], ('Choisissez un dossier de photos', 'C:\\Images', None))
+        self.assertEqual(self.appels[0][3], 'myphotos-choix-dossier')          # son propre fil (COM STA)
         self.assertIsNone(choix.demander())                          # annuler : rien
-        with self.assertRaises(OSError):                             # panne : signalée…
+        self.assertIsNone(choix.demander())
+        with self.assertRaises(self.serveur.Refus) as e:             # panne : message clair (comme dans la fenêtre)…
             choix.demander()
-        self.assertEqual(choix.demander(), 'D:/Vacances')            # … et la fenêtre suivante fonctionne
+        self.assertEqual((e.exception.statut, str(e.exception)),
+                         (503, "La fenêtre de choix d'un dossier n'a pas pu s'ouvrir."))
+        self.assertEqual(choix.demander(titre='Choisissez où copier les photos'), 'D:\\Vacances \U0001F334')
+        self.assertEqual(self.appels[-1][0], 'Choisissez où copier les photos')   # … et la suivante fonctionne
+
+    def test_place_de_la_fenetre_d_edge(self):
+        """Mode « edge » : la fenêtre s'ouvre au milieu de la fenêtre d'Edge (FenetreEdge.zone) ; une zone illisible
+        ne l'empêche pas de s'ouvrir."""
+        self.relacher.set()
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
+        self.reponses = ['E:\\A', 'E:\\B']
+        choix.zone = lambda: (10, 20, 810, 620)
+        self.assertEqual(choix.demander(), 'E:\\A')
+        self.assertEqual(self.appels[-1][2], (10, 20, 810, 620))
+        choix.zone = mock.Mock(side_effect=OSError('fenêtre disparue'))
+        self.assertEqual(choix.demander(), 'E:\\B')
+        self.assertIsNone(self.appels[-1][2])
+
+    def test_delai_depasse(self):
+        """Fenêtre laissée ouverte au-delà du délai : la requête répond « annulé » ; la fenêtre, toujours ouverte, en
+        refuse une seconde jusqu'à sa fermeture."""
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
+        self.reponses = ['E:\\Tard']
+        self.assertIsNone(choix.demander(delai=0.2))
+        with self.assertRaises(self.serveur.Refus):
+            choix.demander()
+        self.relacher.set()
+        self.assertTrue(attendre(lambda: not choix._ouverte.is_set(), 10))
+
+    def test_par_defaut_la_fenetre_de_windows(self):
+        from myphotos import dialogue
+        self.assertIs(self.serveur.ChoixDossier()._ouvrir, dialogue.ouvrir_devant)
+        source = (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8')
+        self.assertNotIn('import tkinter', source)
+        self.assertNotIn('filedialog', source)
 
     def test_annuler_ne_fait_rien(self):
         app = self.serveur.Application.__new__(self.serveur.Application)
@@ -2031,6 +2301,194 @@ class TestChoixDossier(unittest.TestCase):
         app.ajouter_dossier = mock.Mock()
         self.assertEqual(app.choisir_dossier(), {'annule': True})
         app.ajouter_dossier.assert_not_called()
+
+
+class FauxCom:
+    """Couche COM simulée pour dialogue.py : CoCreateInstance, tables virtuelles (_methode), Release,
+    SHCreateItemFromParsingName et CoTaskMemFree. Objets : 1, la fenêtre (IFileOpenDialog) ; 2, le dossier proposé ;
+    3, le dossier choisi (IShellItem)."""
+
+    def __init__(self, show=0, chemin='E:\\Photos', creer=0, dossier_lisible=True, nom=0):
+        from myphotos import dialogue
+        self.d = dialogue
+        self.show, self.chemin, self.creer, self.dossier_lisible, self.nom = show, chemin, creer, dossier_lisible, nom
+        self.journal = []
+        self.liberes = []
+        self.textes_liberes = []
+        self.adresse = None
+        self._garde = []
+
+    @staticmethod
+    def guid(ref):
+        import uuid
+        return str(uuid.UUID(bytes_le=bytes(ref._obj))).upper()
+
+    # ole32
+    def CoCreateInstance(self, clsid, exterieur, contexte, iid, sortie):
+        self.journal.append(('CoCreateInstance', self.guid(clsid), contexte, self.guid(iid)))
+        if self.creer < 0:
+            return self.creer
+        sortie._obj.value = 1
+        return 0
+
+    def CoTaskMemFree(self, texte):
+        self.textes_liberes.append(texte.value)
+
+    # shell32
+    def SHCreateItemFromParsingName(self, chemin, contexte, iid, sortie):
+        self.journal.append(('SHCreateItemFromParsingName', chemin, self.guid(iid)))
+        if not self.dossier_lisible:
+            return 0x80070002 - (1 << 32)                    # HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+        sortie._obj.value = 2
+        return 0
+
+    def dll(self, _nom):
+        return self
+
+    def methode(self, objet, index, *_types):
+        import ctypes
+        o = objet.value
+        d = self.d
+
+        def appel(*valeurs):
+            if index == 2:                                   # Release
+                self.liberes.append(o)
+                return 0
+            if o == 1 and index == d.GET_OPTIONS:
+                valeurs[0]._obj.value = 0x1000               # FOS_FILEMUSTEXIST, comme Windows
+            elif o == 1 and index == d.SET_OPTIONS:
+                self.journal.append(('SetOptions', valeurs[0]))
+            elif o == 1 and index == d.SET_CLIENT_GUID:
+                self.journal.append(('SetClientGuid', self.guid(valeurs[0])))
+            elif o == 1 and index == d.SET_TITLE:
+                self.journal.append(('SetTitle', valeurs[0]))
+            elif o == 1 and index == d.SET_FOLDER:
+                self.journal.append(('SetFolder', valeurs[0].value))
+            elif o == 1 and index == d.SHOW:
+                self.journal.append(('Show', valeurs[0]))
+                return self.show
+            elif o == 1 and index == d.GET_RESULT:
+                valeurs[0]._obj.value = 3
+                self.journal.append(('GetResult',))
+            elif o == 3 and index == d.GET_DISPLAY_NAME:
+                self.journal.append(('GetDisplayName', valeurs[0]))
+                if self.nom < 0:
+                    return self.nom
+                tampon = ctypes.create_unicode_buffer(self.chemin)
+                self._garde.append(tampon)
+                self.adresse = ctypes.addressof(tampon)
+                valeurs[1]._obj.value = self.adresse
+            else:
+                raise AssertionError(f'méthode inattendue : objet {o}, n° {index}')
+            return 0
+        return appel
+
+    def __enter__(self):
+        from myphotos import raccourci
+        self.patchs = [mock.patch.object(self.d, '_methode', self.methode),
+                       mock.patch.object(raccourci, '_methode', self.methode),      # Release (_liberer)
+                       mock.patch.object(self.d, '_ole32', lambda: self),
+                       mock.patch.object(self.d, '_dll', self.dll)]
+        for p in self.patchs:
+            p.start()
+        return self
+
+    def __exit__(self, *_):
+        for p in self.patchs:
+            p.stop()
+
+    def noms(self):
+        return [x[0] for x in self.journal]
+
+
+class TestDialogueCom(unittest.TestCase):
+    """dialogue.choisir_dossier, couche COM simulée (FauxCom) : réglages de la fenêtre de Windows, dossier proposé,
+    propriétaire, annulation, pannes, et chaque objet COM libéré."""
+
+    ANNULE = 0x800704C7 - (1 << 32)                          # HRESULT tel que ctypes le rend (c_long)
+    E_FAIL = 0x80004005 - (1 << 32)
+
+    def setUp(self):
+        from myphotos import dialogue
+        self.d = dialogue
+
+    def test_dossier_choisi(self):
+        with FauxCom(chemin='E:\\Photos d\u2019été \U0001F334') as com:
+            r = self.d.choisir_dossier('Choisissez un dossier de photos', 'C:\\Images', proprietaire=4242)
+        self.assertEqual(r, 'E:\\Photos d\u2019été \U0001F334')
+        self.assertEqual(com.journal[0], ('CoCreateInstance', self.d.CLSID_FILEOPENDIALOG.strip('{}'), 1,
+                                          self.d.IID_IFILEOPENDIALOG.strip('{}')))
+        options = next(x[1] for x in com.journal if x[0] == 'SetOptions')
+        for drapeau in (0x20, 0x40, 0x800, 0x8, 0x2000000, 0x1000):   # dossiers, du disque, existant… et Windows
+            self.assertTrue(options & drapeau, hex(drapeau))
+        self.assertIn(('SetTitle', 'Choisissez un dossier de photos'), com.journal)
+        self.assertIn(('SetClientGuid', self.d.CLIENT.strip('{}')), com.journal)
+        self.assertIn(('SHCreateItemFromParsingName', 'C:\\Images', self.d.IID_ISHELLITEM.strip('{}')), com.journal)
+        self.assertEqual(com.noms()[-4:], ['SetFolder', 'Show', 'GetResult', 'GetDisplayName'])
+        self.assertIn(('SetFolder', 2), com.journal)
+        self.assertIn(('Show', 4242), com.journal)                    # la fenêtre hôte en est la propriétaire
+        self.assertIn(('GetDisplayName', self.d.SIGDN_FILESYSPATH), com.journal)
+        self.assertEqual(sorted(com.liberes), [1, 2, 3])               # chaque objet COM libéré, une fois
+        self.assertEqual(com.textes_liberes, [com.adresse])            # chemin rendu par Windows libéré
+
+    def test_annuler(self):
+        with FauxCom(show=self.ANNULE) as com:
+            self.assertIsNone(self.d.choisir_dossier('T', None))
+        self.assertNotIn('GetResult', com.noms())
+        self.assertNotIn('SHCreateItemFromParsingName', com.noms())    # aucun dossier proposé
+        self.assertEqual(com.liberes, [1])
+
+    def test_pannes(self):
+        with FauxCom(show=self.E_FAIL) as com:
+            with self.assertRaisesRegex(OSError, 'Show : erreur 0x80004005'):
+                self.d.choisir_dossier('T', 'C:\\Images')
+        self.assertEqual(sorted(com.liberes), [1, 2])
+        with FauxCom(creer=self.E_FAIL) as com:
+            with self.assertRaisesRegex(OSError, 'FileOpenDialog'):
+                self.d.choisir_dossier('T', 'C:\\Images')
+        self.assertEqual(com.liberes, [])
+        with FauxCom(nom=self.E_FAIL) as com:
+            with self.assertRaisesRegex(OSError, 'GetDisplayName'):
+                self.d.choisir_dossier('T', None)
+        self.assertEqual(sorted(com.liberes), [1, 3])
+
+    def test_dossier_propose_disparu(self):
+        """Dossier proposé débranché ou supprimé : la fenêtre s'ouvre quand même (là où Windows l'avait laissée)."""
+        with FauxCom(dossier_lisible=False) as com:
+            self.assertEqual(self.d.choisir_dossier('T', 'Z:\\Débranché'), 'E:\\Photos')
+        self.assertNotIn('SetFolder', com.noms())
+        self.assertIn('Show', com.noms())
+
+    def test_position_de_l_hote(self):
+        """La fenêtre de Windows s'ouvre avec son coin sur celui de son hôte, à la moitié de la zone de travail :
+        l'hôte est posé pour qu'elle soit au milieu de la fenêtre de MyPhotos (ou de l'écran), sans sortir de
+        l'écran."""
+        travail = (0, 0, 1920, 1040)
+        self.assertEqual(self.d.position_hote(None, travail), (480, 260))
+        self.assertEqual(self.d.position_hote((1000, 100, 1800, 900), travail), (920, 240))
+        self.assertEqual(self.d.position_hote((0, 0, 200, 200), travail), (0, 0))           # jamais hors de l'écran
+        self.assertEqual(self.d.position_hote((-1920, 0, 0, 1040), (-1920, 0, 0, 1040)), (-1440, 260))
+        self.assertEqual(self.d.position_hote((5, 5, 5, 5), travail), (480, 260))          # zone vide : l'écran
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_vraie_classe_com_sans_afficher(self):
+        """La vraie fenêtre de Windows, créée et réglée SANS être affichée (Show n'est jamais appelé), dans un fil
+        STA : classe, interfaces et ordre des méthodes justes ; options relues."""
+        res = {}
+
+        def fil():
+            try:
+                with self.d.Sta():
+                    res['options'] = self.d.verifier('Essai', tempfile.gettempdir())
+                    res['absent'] = self.d.verifier('Essai', str(Path(tempfile.gettempdir()) / 'absent-myphotos'))
+            except Exception as e:
+                res['erreur'] = e
+        t = threading.Thread(target=fil)
+        t.start()
+        t.join(30)
+        self.assertNotIn('erreur', res)
+        for cle in ('options', 'absent'):
+            self.assertEqual(res[cle] & self.d.OPTIONS, self.d.OPTIONS, hex(res[cle]))
 
 
 class TestOutils(unittest.TestCase):
@@ -2065,9 +2523,12 @@ class TestOutils(unittest.TestCase):
         """Une requête qui bute sur « database is locked » répond en français, sans le message brut."""
         import sqlite3
         from myphotos import serveur
+        import email.message
         g = serveur.Gestionnaire.__new__(serveur.Gestionnaire)
-        g.server = types.SimpleNamespace(hotes={'h'})
-        g.headers = {'Host': 'h'}
+        g.server = types.SimpleNamespace(hotes={'h'}, jeton='j' * 43, server_port=1)
+        g.headers = email.message.Message()
+        g.headers['Host'] = 'h'
+        g.headers['Cookie'] = 'myphotos-1=' + 'j' * 43                 # jeton d'accès (0.4.0)
         g.path = '/api/etat'
         g.close_connection = False
         envoye = []
@@ -2429,6 +2890,127 @@ class TestCarte(unittest.TestCase):
         self.assertEqual((m.materiel, essais), ('processeur', [2, 0, 'processeur']))
         m, essais = self.moteur({0, 1}, carte=1, materiel='processeur')
         self.assertEqual((m.materiel, essais), ('processeur', ['processeur']))
+
+
+@unittest.skipUnless(os.name == 'nt', 'signatures CNG : Windows seulement')
+class TestMiseAJour(unittest.TestCase):
+    """Mise à jour proposée (0.4.0) sur un vrai serveur d'essai : manifeste local signé par une clé d'essai
+    (MYPHOTOS_ESSAI_MANIFESTE, MYPHOTOS_ESSAI_CLE_MAJ, mode FACTICE). Rien n'est téléchargé, rien n'est lancé :
+    l'installation simulée arrête MyPhotos, comme la vraie ; au lancement suivant, la page apprend qu'elle n'a pas
+    abouti (la version n'a pas changé)."""
+
+    PORT4 = PORT + 3
+
+    def setUp(self):
+        if not port_libre(self.PORT4):
+            self.skipTest(f'port {self.PORT4} déjà pris')
+        from myphotos import config, mise_a_jour, signature
+        self.M = mise_a_jour
+        self.config = config
+        self.donnees = DONNEES / 'essai-mise-a-jour'
+        shutil.rmtree(self.donnees, ignore_errors=True)
+        self.donnees.mkdir(parents=True)
+        self.privee, publique = signature.nouvelle_cle()
+        v = mise_a_jour.version_tuple(config.VERSION)
+        self.suivante = f'{v[0]}.{v[1] + 1}.0'
+        self.manifeste = self.donnees.parent / 'essai-mise-a-jour-manifeste.json'
+        self.ecrire_manifeste(self.privee)
+        self.hote = f'127.0.0.1:{self.PORT4}'
+        self.variables = dict(MYPHOTOS_TELECHARGEMENT_FACTICE='1', MYPHOTOS_FACTICE_S='1',
+                              MYPHOTOS_ESSAI_MANIFESTE=str(self.manifeste),
+                              MYPHOTOS_ESSAI_CLE_MAJ=base64.b64encode(publique).decode())
+        self.proc = None
+        self.addCleanup(self.arreter)
+        self.lancer()
+
+    def ecrire_manifeste(self, cle_privee):
+        from myphotos import signature
+        m = {'application': 'MyPhotos', 'version': self.suivante, 'date': '2026-12-01',
+             'installateur': {'nom': self.M.nom_installateur(self.suivante), 'taille': 40_000_000,
+                              'sha256': 'cd' * 32},
+             'nouveautes': ['Une nouveauté.']}
+        texte = json.dumps(m).encode()
+        self.manifeste.write_text(json.dumps({'format': 1, 'manifeste': base64.b64encode(texte).decode(),
+                                              'signature': base64.b64encode(signature.signer(texte, cle_privee))
+                                              .decode()}), encoding='ascii')
+
+    def lancer(self):
+        self.proc = lancer_serveur(self.donnees, self.PORT4, neutre=True, **self.variables)
+        attendre_serveur(self.proc, self.PORT4)
+
+    def arreter(self):
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                try:
+                    self.api('/api/quitter', {})
+                    self.proc.wait(30)
+                except Exception:
+                    pass
+            arreter_essai(self.proc)
+            self.proc.sortie.close()
+            self.proc = None
+
+    def api(self, chemin, corps=None, **kw):
+        return api(chemin, corps, hote=self.hote, port=self.PORT4, **kw)
+
+    def maj(self):
+        statut, e = self.api('/api/etat')
+        self.assertEqual(statut, 200)
+        return e['mise_a_jour']
+
+    def test_parcours(self):
+        m = self.maj()
+        self.assertEqual((m['accord'], m['etat'], m['version'], m['apres']), (None, 'inconnu', None, None))
+        self.assertEqual(self.api('/api/mise-a-jour/reporter', {})[0], 409)          # rien à reporter
+        self.assertEqual(self.api('/api/mise-a-jour/installer', {})[0], 409)         # rien à installer
+        statut, r = self.api('/api/mise-a-jour/reglage', {'oui': True})
+        self.assertEqual((statut, r['accord']), (200, 'oui'))
+        m = attendre(lambda: (lambda x: x if x['etat'] == 'disponible' else None)(self.maj()), 20)
+        self.assertIsNotNone(m, self.maj())
+        self.assertEqual((m['version'], m['nouveautes'], m['possible'], m['reportee']),
+                         (self.suivante, ['Une nouveauté.'], True, False))
+        self.assertTrue(m['notes'].startswith('https://github.com/glenac/MyPhotos/releases/tag/v'))
+        self.assertTrue(self.api('/api/mise-a-jour/reporter', {})[1]['reportee'])
+        # « Mettre à jour » : téléchargement (simulé), installation (simulée), puis MyPhotos s'arrête.
+        statut, r = self.api('/api/mise-a-jour/installer', {})
+        self.assertEqual((statut, r['etat']), (200, 'telechargement'))
+        self.assertTrue(attendre(lambda: self.proc.poll() is not None, 30), 'MyPhotos ne s\'est pas arrêté')
+        self.proc.sortie.close()
+        self.proc = None
+        # Lancement suivant : même version, donc la mise à jour « n'a pas abouti » ; la page le dit une fois.
+        self.lancer()
+        m = self.maj()
+        self.assertEqual((m['accord'], m['apres']), ('oui', {'reussie': False, 'version': self.suivante}))
+        self.assertEqual(self.api('/api/mise-a-jour/vu', {})[0], 200)
+        self.assertIsNone(self.maj()['apres'])
+
+    def test_refus(self):
+        # Sans jeton, sans l'en-tête de la page, ou d'un autre site : refusé avant toute action.
+        self.assertEqual(self.api('/api/mise-a-jour/verifier', {}, jeton=False)[0], 403)
+        statut, _, _ = requete('POST', '/api/mise-a-jour/verifier', {}, {'Origin': f'http://{self.hote}'},
+                               hote=self.hote, port=self.PORT4)
+        self.assertEqual(statut, 403)
+        statut, _, _ = requete('POST', '/api/mise-a-jour/verifier', {}, {'X-MyPhotos': '1',
+                               'Origin': 'http://evil.example', 'Sec-Fetch-Site': 'cross-site'},
+                               hote=self.hote, port=self.PORT4)
+        self.assertEqual(statut, 403)
+        for corps in ({'oui': 'oui'}, {'oui': 1}, {}, {'oui': None}):
+            self.assertEqual(self.api('/api/mise-a-jour/reglage', corps)[0], 400, corps)
+        for chemin in ('/api/mise-a-jour/inconnue', '/api/mise-a-jour/', '/api/mise-a-jour/a/b'):
+            self.assertEqual(self.api(chemin, {})[0], 404, chemin)
+        self.assertIsNone(self.maj()['accord'])                       # aucune réponse enregistrée par ces essais
+
+    def test_manifeste_d_une_autre_cle(self):
+        from myphotos import signature
+        autre, _ = signature.nouvelle_cle()
+        self.ecrire_manifeste(autre)
+        statut, _ = self.api('/api/mise-a-jour/verifier', {})
+        self.assertEqual(statut, 200)
+        m = attendre(lambda: (lambda x: x if x['etat'] not in ('verification', 'inconnu') else None)(self.maj()), 20)
+        self.assertEqual((m['etat'], m['version']), ('erreur', None))
+        self.assertIn('vérifié', m['message'])
+        self.assertEqual(self.api('/api/mise-a-jour/installer', {})[0], 409)
+        self.assertIn('fichier de mise à jour refusé', (self.donnees / 'journal.log').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

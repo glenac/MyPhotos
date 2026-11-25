@@ -106,17 +106,38 @@ def fermer_bureau(h):
         u32.CloseDesktop(h)
 
 
+def unites_utf16(texte):
+    """Longueur de `texte` en unités UTF-16 (les wchar_t de Windows) : un caractère hors du plan de base (émoji,
+    certains idéogrammes…) en occupe DEUX (paire de substitution), alors que len() le compte pour un."""
+    return len(texte.encode('utf-16-le', 'surrogatepass')) // 2
+
+
+def tampon_utf16(texte):
+    """Tampon wchar_t qui contient `texte` en entier, suivi d'un NUL : taille comptée en unités UTF-16."""
+    return ctypes.create_unicode_buffer(texte, unites_utf16(texte) + 1)
+
+
+def bloc_environnement(env):
+    """Bloc d'environnement Unicode de CreateProcessW : « NOM=valeur\\0 » triés par nom sans tenir compte de la
+    casse, puis la fin du bloc : il se termine toujours par deux NUL, même vide.
+
+    Corrigé le 25/11/2026 (relecture de la 0.3.0) : la taille du tampon était len(bloc), comptée en caractères ;
+    une valeur avec un caractère hors du plan de base (dossier ou nom d'utilisateur avec un émoji…) faisait
+    échouer le lancement (ValueError « string too long » de ctypes)."""
+    bloc = ''.join(f'{k}={v}\0' for k, v in sorted(env.items(), key=lambda kv: kv[0].upper()))
+    return tampon_utf16(bloc + '\0')             # + le NUL du tampon : deux NUL au moins à la fin
+
+
 def lancer(arguments, bureau, dossier, env, job):
     """Lance `arguments` sur le bureau « WinSta0\\<bureau> », avec l'environnement `env` (dict), DANS le Job Object
     `job` (processus_essai.Job) : créé suspendu, mis dans le job, puis relancé. Rend (pid, handle)."""
     si = STARTUPINFOW()
     si.cb = ctypes.sizeof(si)
-    nom = ctypes.create_unicode_buffer('WinSta0\\' + bureau)
+    nom = tampon_utf16('WinSta0\\' + bureau)
     si.lpDesktop = ctypes.cast(nom, wintypes.LPWSTR)
     pi = PROCESS_INFORMATION()
-    ligne = ctypes.create_unicode_buffer(subprocess.list2cmdline(arguments))
-    bloc = ''.join(f'{k}={v}\0' for k, v in sorted(env.items(), key=lambda kv: kv[0].upper())) + '\0'
-    tampon = ctypes.create_unicode_buffer(bloc, len(bloc))
+    ligne = tampon_utf16(subprocess.list2cmdline(arguments))      # modifiable, comme CreateProcessW l'exige
+    tampon = bloc_environnement(env)
     ok = k32.CreateProcessW(None, ligne, None, None, False,
                             CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
                             ctypes.cast(tampon, ctypes.c_void_p), dossier, ctypes.byref(si), ctypes.byref(pi))
@@ -250,10 +271,36 @@ def fenetres(pids):
 
 # ---------------------------------------------------------------- HTTP et protocole DevTools
 
+_DONNEES = {}                              # port -> dossier de données de la MyPhotos d'essai
+
+
+def donnees_du_port(port, dossier):
+    """Déclare le dossier de données de la MyPhotos d'essai lancée sur ce port : requete_json y lit son jeton
+    d'accès (fichier « jeton », réécrit à chaque lancement) et le donne dans le cookie, comme la page."""
+    _DONNEES[int(port)] = dossier
+
+
+def cookie(port):
+    """« myphotos-<port>=<jeton> » de la MyPhotos d'essai de ce port, ou None (port non déclaré, pas encore de jeton)."""
+    dossier = _DONNEES.get(int(port))
+    if dossier is None:
+        return None
+    try:
+        with open(os.path.join(dossier, 'jeton'), encoding='ascii') as f:
+            jeton = f.read().strip()
+    except (OSError, ValueError):
+        return None
+    return f'myphotos-{int(port)}={jeton}' if jeton else None
+
+
 def requete_json(port, chemin, corps=None, delai=30):
-    """GET (ou POST JSON comme la page) vers MyPhotos : (statut, réponse)."""
+    """GET (ou POST JSON comme la page) vers MyPhotos : (statut, réponse). Avec le jeton d'accès de ses données
+    (donnees_du_port), comme la page."""
     c = http.client.HTTPConnection('127.0.0.1', port, timeout=delai)
     entetes = {'Host': f'127.0.0.1:{port}'}
+    biscuit = cookie(port)
+    if biscuit:
+        entetes['Cookie'] = biscuit
     brut = None
     if corps is not None:
         brut = json.dumps(corps).encode('utf-8')

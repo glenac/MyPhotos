@@ -40,7 +40,8 @@ Trois modes, dans cet ordre (/api/etat dit lequel : « fenetre », « edge » ou
      bases fermées). Analyse, copie, recherche des doublons ou téléchargement en cours : une question d'abord.
      « Arrêter MyPhotos » (page, Réglages) ferme la fenêtre. Pas d'arrêt pour inactivité tant qu'elle est ouverte.
    - « Choisir un dossier » : fenêtre de Windows ouverte par le fil de la fenêtre MyPhotos, à qui elle appartient
-     (modale) : jamais derrière.
+     (modale) : jamais derrière. Dans les replis (Edge, navigateur) : la même fenêtre de Windows, par COM
+     (dialogue.py, serveur.ChoixDossier), au milieu de la fenêtre d'Edge quand on la connaît (FenetreEdge.zone).
    - Taille, position et état agrandi : DONNEES\\fenetre.json. Un écran disparu ramène la fenêtre sur un écran
      visible (placer()). Processus « par écran v2 » pour le DPI. Icône construction\\MyPhotos.ico ; identifiant
      d'application (AppUserModelID) explicite depuis les sources seulement (sinon les fenêtres de python.exe
@@ -65,6 +66,12 @@ bureau Windows invisible, piloté par le protocole DevTools : MYPHOTOS_DEBUG=1 g
 Une relance depuis un AUTRE compte Windows du même PC (le port 127.0.0.1 est commun à la machine) : /api/etat donne
 l'empreinte du compte (« compte ») ; message, et la page de l'autre compte ne s'ouvre pas. Mutex config.MUTEX tenu
 toute la vie du processus (installateur).
+
+Jeton d'accès (0.4.0, voir serveur.py) : la fenêtre, Edge et le navigateur ouvrent l'adresse d'entrée
+http://127.0.0.1:<port>/?jeton=… (Hote.adresse) ; le serveur pose son cookie et redirige vers « / », seule adresse que
+la fenêtre garde ensuite (navigation() permet les deux : même chemin « / »). Une relance lit le jeton dans les
+données (config.JETON) pour interroger /api/etat et rouvrir la page ; un autre compte n'a pas ce fichier : la MyPhotos
+déjà lancée le refuse (etat « jeton_refuse »), message AUTRE_COMPTE.
 """
 import ctypes
 import json
@@ -239,9 +246,14 @@ def autre_compte(etat, moi=None):
 
 def relancer(etat, adresse, port, demande, ouvrir_page, informer, etat_actuel=None):
     """Seconde instance : MyPhotos répond déjà sur ce port. Rend le code de sortie (0), ou None si l'instance
-    signalée s'arrête en fait (fenêtre fermée à l'instant) : main() attend alors qu'elle libère le port."""
-    if autre_compte(etat):
-        journal.warning('MyPhotos est déjà ouvert par un autre compte de cet ordinateur : rien n\'est ouvert')
+    signalée s'arrête en fait (fenêtre fermée à l'instant) : main() attend alors qu'elle libère le port.
+
+    adresse : celle de sa page, avec le jeton d'accès de ses données pour une 0.4.0 ou plus (serveur.adresse_entree).
+    etat['jeton_refuse'] (serveur.etat_instance) : une MyPhotos 0.4.0 ou plus a refusé notre jeton ; ses données, donc
+    elle-même, sont à un autre compte Windows (ou à d'autres données) : même message que pour un autre compte."""
+    if etat.get('jeton_refuse') or autre_compte(etat):
+        journal.warning('MyPhotos est déjà ouvert par un autre compte de cet ordinateur (ou avec d\'autres données) : '
+                        'rien n\'est ouvert')
         if demande != SANS_PAGE:
             informer(AUTRE_COMPTE)
         return 0
@@ -427,7 +439,7 @@ def _dll(nom):
                        'PostMessageW': ([v, u, wintypes.WPARAM, wintypes.LPARAM], b),
                        'EnumDisplayMonitors': ([v, v, _ENUM_ECRANS, wintypes.LPARAM], b),
                        'GetMonitorInfoW': ([v, ctypes.POINTER(_MONITORINFO)], b),
-                       'GetDpiForWindow': ([v], u),
+                       'GetDpiForWindow': ([v], u), 'GetWindowRect': ([v, ctypes.POINTER(wintypes.RECT)], b),
                        'GetWindowPlacement': ([v, ctypes.POINTER(_WINDOWPLACEMENT)], b),
                        'SetProcessDpiAwarenessContext': ([v], b)},
             'shcore': {'GetDpiForMonitor': ([v, ctypes.c_int, ctypes.POINTER(u), ctypes.POINTER(u)], ctypes.c_long)},
@@ -889,7 +901,7 @@ class Hote:
     def __init__(self, app, serveur, adresse, debug=False):
         self.app = app
         self.serveur = serveur
-        self.adresse = adresse
+        self.adresse = adresse                   # adresse d'entrée, avec le jeton d'accès (serveur.adresse_entree)
         self.port = serveur.server_address[1]
         self.debug = debug
         self.webview = None                      # FenetreWebView2
@@ -1422,6 +1434,9 @@ class FenetreEdge:
             journal.warning('Edge ne démarre pas : repli sur le navigateur par défaut', exc_info=True)
             return 'echec'
         self.hote.app.mode = EDGE
+        choix = getattr(self.hote.app, 'choix_dossier', None)
+        if choix is not None and hasattr(choix, 'zone'):
+            choix.zone = self.zone                   # « Choisir un dossier » s'ouvre au milieu de cette fenêtre
         journal.info('page ouverte dans Edge, en mode application')
         try:
             while True:
@@ -1451,6 +1466,18 @@ class FenetreEdge:
         except subprocess.TimeoutExpired:
             journal.warning('Edge ne se ferme pas : arrêt de son processus')
             p.terminate()                                           # notre processus Edge, par son identifiant
+
+    def zone(self):
+        """(gauche, haut, droite, bas) de la fenêtre d'Edge qui montre MyPhotos, ou None : serveur.ChoixDossier y
+        pose sa fenêtre hôte (la fenêtre d'Edge, d'un autre processus, n'en est jamais la propriétaire)."""
+        p = self.proc
+        if p is None or p.poll() is not None:
+            return None
+        fenetres = fenetres_edge(fenetres_du_processus(p.pid))
+        r = wintypes.RECT()
+        if not fenetres or not _dll('user32').GetWindowRect(fenetres[0]['hwnd'], ctypes.byref(r)):
+            return None
+        return r.left, r.top, r.right, r.bottom
 
     def premier_plan(self):
         p = self.proc

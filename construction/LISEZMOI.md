@@ -218,11 +218,13 @@ conséquence : ils réessaient le lendemain).
 ## Ce qui est embarqué
 
 - Python 3.14, le paquet `myphotos`, `page\` et `construction\MyPhotos.ico`, qui sert d'icône à la
-  fenêtre « Choisir un dossier ».
+  fenêtre de MyPhotos et, dans les replis, à la fenêtre « Choisir un dossier » (barre des tâches).
 - onnxruntime-directml 1.24.4 : le module Python, `DirectML.dll` et `onnxruntime_providers_shared.dll`.
   Les fournisseurs disponibles sont `DmlExecutionProvider` (carte graphique) et `CPUExecutionProvider`.
-- numpy (avec OpenBLAS), Pillow, tokenizers, Tcl/Tk 9 pour tkinter (fenêtre « Choisir un dossier » des
-  replis), OpenSSL pour le téléchargement en HTTPS, et SQLite.
+- numpy (avec OpenBLAS), Pillow, tokenizers, OpenSSL pour le téléchargement en HTTPS, et SQLite. Depuis la
+  0.4.0, ni tkinter ni Tcl/Tk : la fenêtre « Choisir un dossier » des replis (Edge, navigateur) est celle de
+  Windows, ouverte par COM (`myphotos/dialogue.py`) ; `construire.py` les exclut et le contrôle final vérifie
+  que `_tkinter.pyd`, `tcl90.dll`, `tcl9tk90.dll` et `libtommath.dll` sont absents.
 - La fenêtre (0.3.0) : pywebview 6.2.1 (moteurs Windows Forms et Edge Chromium seulement), les DLL WebView2
   1.0.3856.49, pythonnet 3.2.1 (`Python.Runtime.dll`), clr_loader 0.3.1 (`ClrLoader.dll` 64 bits), cffi 2.1.1
   (`_cffi_backend`), pycparser, proxy_tools, bottle et typing_extensions. Le runtime WebView2 et le

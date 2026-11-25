@@ -137,9 +137,18 @@ class TestFenetre(unittest.TestCase):
                     'webview\\lib\\pywebview-android.jar', 'page\\index.html'):
             self.assertEqual(espace['garder']((nom, 'source', 'BINARY')), not construire.retire(nom), nom)
         self.assertIn("'webview.platforms.winforms'", texte)
-        # pywebview a besoin de typing_extensions ; tkinter sert encore aux replis (Edge, navigateur).
-        for necessaire in ('typing_extensions', 'tkinter', '_tkinter', 'webview', 'clr', 'bottle', 'proxy_tools'):
+        # pywebview a besoin de typing_extensions.
+        for necessaire in ('typing_extensions', 'webview', 'clr', 'bottle', 'proxy_tools'):
             self.assertNotIn(necessaire, construire.EXCLUS)
+        # 0.4.0 : tkinter et Tcl/Tk ne sont plus embarqués (« Choisir un dossier » : fenêtre de Windows, par COM) ;
+        # leurs DLL seraient retirées et signalées par le contrôle final si une dépendance les tirait encore.
+        for exclu in ('tkinter', '_tkinter'):
+            self.assertIn(exclu, construire.EXCLUS)
+        for nom in ('_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll', 'libtommath.dll'):
+            self.assertTrue(construire.retire(nom), nom)
+            self.assertFalse(espace['garder']((nom, 'source', 'BINARY')), nom)
+            self.assertNotIn(nom, construire.OBLIGATOIRES)
+        self.assertNotIn('import tkinter', (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8'))
 
 
 class TestLicencesRust(unittest.TestCase):
@@ -509,7 +518,8 @@ class TestInstallateur(unittest.TestCase):
         de l'utilisateur au nom voisin (essai adverse de la 0.3.0 : « Journal.log.txt » partait avec journal.log.*)."""
         est = nom_de_myphotos()
         crees = [config.BASE.name, config.MINIATURES.name, config.JOURNAL.name, 'modele',
-                 fenetre.PLACEMENT, fenetre.PLACEMENT + '.part', fenetre.WEBVIEW2_DOSSIER, fenetre.EDGE_DOSSIER]
+                 fenetre.PLACEMENT, fenetre.PLACEMENT + '.part', fenetre.WEBVIEW2_DOSSIER, fenetre.EDGE_DOSSIER,
+                 config.JETON.name, config.JETON.name + '.part']
         crees += [config.BASE.name + s for s in ('-wal', '-shm', '-journal')]
         crees += [config.MINIATURES.name + s for s in ('-wal', '-shm', '-journal')]
         # Bases abîmées mises de côté (base.py, _ecarter_abimes), journaux WAL compris.
@@ -527,7 +537,7 @@ class TestInstallateur(unittest.TestCase):
         for nom in ('a-garder.txt', 'Images', 'photos', 'index.dbx', 'index', 'desktop.ini', 'webview2.txt',
                     'fenetre', 'journal', 'modeles', 'MyPhotos.exe', 'edge2', 'Journal.log.txt',
                     f'journal.log.{copies + 1}', 'index.db.sauvegarde', 'index.db-copie', 'miniatures.db.old',
-                    'fenetre.json.bak'):
+                    'fenetre.json.bak', 'jeton.txt', 'jetons'):
             self.assertFalse(est(nom), nom)
 
     def test_installdelete_seulement_dans_un_dossier_de_myphotos(self):
@@ -593,6 +603,7 @@ class TestInstallateur(unittest.TestCase):
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
         donnees = base / f'essai-noms-{time.strftime("%Y%m%d-%H%M%S")}'
         donnees.mkdir(parents=True)
+        O.donnees_du_port(port, donnees)                 # jeton d'accès lu dans ses données
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
         env.update(MYPHOTOS_PORT=str(port), MYPHOTOS_DOSSIER=str(donnees), MYPHOTOS_SANS_PAGE='1',
                    PYTHONIOENCODING='utf-8')            # sans MYPHOTOS_MODELES : modele\ dans les données
@@ -840,6 +851,7 @@ class TestInstallateurReel(unittest.TestCase):
         self.assertFalse((self.inst / '_internal' / 'ancien.txt').exists())
         self.assertFalse((self.inst / 'licences' / 'ancienne-licence.txt').exists())
         self.assertEqual(Path(_cle_desinstallation()), self.inst)
+        self._mise_a_jour_lancee_par_myphotos(k32)
 
         # Désinstallation silencieuse : données gardées. Contenu réaliste : moteur, profils WebView2 et Edge, base
         # abîmée mise de côté ; et des fichiers de l'utilisateur aux noms voisins.
@@ -858,6 +870,11 @@ class TestInstallateurReel(unittest.TestCase):
         (donnees / 'edge' / 'Default' / 'Extensions').mkdir(parents=True)
         (donnees / 'edge' / 'Local State').write_text('{}', encoding='utf-8')
         (donnees / 'edge' / 'Default' / 'Extensions' / '128.png').write_bytes(b'x')
+        # 0.4.0 : jeton d'accès, et installateur téléchargé par la mise à jour proposée avec son journal.
+        (donnees / 'jeton').write_text('x', encoding='ascii')
+        (donnees / 'mises-a-jour').mkdir()
+        for n in ('MyPhotos-9.9.9-installation.exe', 'MyPhotos-9.9.10-installation.exe.part', 'installation-9.9.9.log'):
+            (donnees / 'mises-a-jour' / n).write_bytes(b'x')
         tout = sorted(p.name for p in donnees.iterdir())
         self.assertEqual(self.desinstaller(donnees), 0)
         self.assertIsNone(_cle_desinstallation())
@@ -869,6 +886,27 @@ class TestInstallateurReel(unittest.TestCase):
         self.assertEqual(self.installer(), 0)
         self.assertEqual(self.desinstaller(self.temp, '/SUPPRIMERDONNEES'), 0)
         self.assertTrue((self.temp / 'index.db').exists())
+
+        # Le même dossier protégé écrit autrement (0.4.0) : par une jonction vers son parent, et par son nom court
+        # 8.3 quand le disque en donne un. Il est reconnu par son identité : rien n'est supprimé.
+        jonction = self.d.parent / f'lien-{self.d.name}'
+        r = subprocess.run(['cmd', '/c', 'mklink', '/J', str(jonction), str(self.temp.parent)], capture_output=True,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        try:
+            autres = [jonction / self.temp.name]
+            court = ctypes.create_unicode_buffer(32768)
+            n = ctypes.windll.kernel32.GetShortPathNameW(str(self.temp), court, len(court))
+            if n and court.value.lower() != str(self.temp).lower():
+                autres.append(Path(court.value))
+            for chemin in autres:
+                self.assertTrue((chemin / 'index.db').exists(), chemin)
+                self.assertEqual(self.installer(), 0)
+                self.assertEqual(self.desinstaller(chemin, '/SUPPRIMERDONNEES'), 0)
+                self.assertTrue((self.temp / 'index.db').exists(), chemin)
+        finally:
+            os.rmdir(jonction)                   # la jonction seule ; sa cible reste
+        self.assertTrue(self.temp.is_dir())
 
         # /SUPPRIMERDONNEES : seuls les éléments de MyPhotos partent ; le reste, et donc le dossier, restent.
         self.assertEqual(self.installer(), 0)
@@ -888,14 +926,85 @@ class TestInstallateurReel(unittest.TestCase):
         (partage / 'Edge' / 'vacances.jpg').write_bytes(b'\xff\xd8\xff')
         (partage / 'WebView2').mkdir()
         (partage / 'WebView2' / 'notes.txt').write_text('x', encoding='utf-8')
+        (partage / 'mises-a-jour').mkdir()                                        # 0.4.0
+        (partage / 'mises-a-jour' / 'MyPhotos-9.9.9-installation.exe').write_bytes(b'x')
+        (partage / 'mises-a-jour' / 'facture.pdf').write_bytes(b'%PDF')
         (partage / 'index.db').write_text('x', encoding='utf-8')
         self.assertEqual(self.installer(), 0)
         self.assertEqual(self.desinstaller(partage, '/SUPPRIMERDONNEES'), 0)
         self.assertEqual(sorted(p.relative_to(partage).as_posix() for p in partage.rglob('*') if p.is_file()),
-                         ['Edge/vacances.jpg', 'WebView2/notes.txt', 'modele/Mannequin/IMG_0001.JPG',
+                         ['Edge/vacances.jpg', 'WebView2/notes.txt', 'mises-a-jour/MyPhotos-9.9.9-installation.exe',
+                          'mises-a-jour/facture.pdf', 'modele/Mannequin/IMG_0001.JPG',
                           'modele/base/onnx/vision_model_fp16.onnx'])
         self.assertIsNone(_cle_desinstallation())
 
+
+    def _mise_a_jour_lancee_par_myphotos(self, k32):
+        """/MISEAJOUR (0.4.0, myphotos/mise_a_jour.py) : MyPhotos tient encore son mutex quand l'installateur démarre ;
+        l'installateur attend qu'il se ferme (ici : mutex relâché au bout de 3 s), installe, puis rouvre MyPhotos.
+        Celui-ci est le vrai MyPhotos.exe installé, sans page (MYPHOTOS_SANS_PAGE), sur un port et des données
+        d'essai : il doit répondre, avec sa version, puis il est arrêté par /api/quitter (avec son jeton)."""
+        import http.client
+        import json
+        import threading
+        port = int(os.environ.get('MYPHOTOS_ESSAI_PORT_MAJ') or 7948)
+        self.assertTrue(port_libre(port), f'port {port} déjà pris (MYPHOTOS_ESSAI_PORT_MAJ)')
+        donnees = self.d / 'donnees-maj'
+        journal = self.d / 'maj.log'
+        h = k32.CreateMutexW(None, False, MUTEX_ESSAI)
+        relache = threading.Timer(3.0, lambda: k32.CloseHandle(h))
+        resultat = {}
+
+        def installer():
+            try:
+                resultat['code'] = self.executer(
+                    [self.installeur, '/SP-', '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/MISEAJOUR',
+                     f'/LOG={journal}'], MYPHOTOS_DOSSIER=donnees, MYPHOTOS_PORT=port, MYPHOTOS_SANS_PAGE='1')
+            except BaseException as e:               # rapporté par le fil principal
+                resultat['erreur'] = e
+
+        def requete(methode, chemin, jeton, corps=None):
+            c = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+            e = {'Host': f'127.0.0.1:{port}', 'Cookie': f'myphotos-{port}={jeton}'}
+            if corps is not None:
+                e.update({'Content-Type': 'application/json', 'X-MyPhotos': '1', 'Origin': f'http://127.0.0.1:{port}',
+                          'Sec-Fetch-Site': 'same-origin'})
+            try:
+                c.request(methode, chemin, body=None if corps is None else json.dumps(corps).encode(), headers=e)
+                r = c.getresponse()
+                return r.status, json.loads(r.read() or b'null')
+            finally:
+                c.close()
+
+        debut = time.monotonic()
+        relache.start()
+        fil = threading.Thread(target=installer, name='essai-installation-maj')
+        fil.start()
+        etat, jeton = None, None
+        try:
+            while etat is None and time.monotonic() - debut < 150 and (fil.is_alive() or time.monotonic() - debut < 5):
+                try:
+                    jeton = (donnees / 'jeton').read_text(encoding='ascii').strip()
+                    statut, d = requete('GET', '/api/etat', jeton)
+                    if statut == 200:
+                        etat = d
+                except (OSError, ValueError):
+                    pass
+                time.sleep(0.5)
+        finally:
+            if etat is not None:
+                requete('POST', '/api/quitter', jeton, {})
+            fil.join(180)
+            relache.join()
+        self.assertNotIn('erreur', resultat, resultat.get('erreur'))
+        self.assertEqual(resultat.get('code'), 0)
+        self.assertIsNotNone(etat, 'MyPhotos n\'a pas été rouvert après la mise à jour')
+        self.assertEqual(etat['version'], config.VERSION)
+        texte = journal.read_text(encoding='utf-8', errors='replace')
+        attente = re.search(r'Mise . jour lanc.e par MyPhotos : (\d+) ms', texte)
+        self.assertIsNotNone(attente, texte[-3000:])
+        self.assertGreaterEqual(int(attente.group(1)), 2500)                 # il a bien attendu la fermeture
+        self.assertEqual(Path(_cle_desinstallation()), self.inst)
 
 if __name__ == '__main__':
     unittest.main()
