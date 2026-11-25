@@ -1566,6 +1566,27 @@ class TestDossiersEtActualiser(unittest.TestCase):
                 self.photos.rmdir()
             os.replace(self.tmp / 'debranche', self.photos)
 
+    def test_photo_introuvable_desktop_ini(self):
+        """Visionneuse, fichier absent : rien n'est oublié quand le dossier suivi ne contient plus que desktop.ini
+        (dossier Images que OneDrive n'a pas encore rempli) ; avec un vrai contenu en plus, la photo est retirée."""
+        import images_essai as ie
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ids = self.connaitre(d['id'])
+        # Le dossier suivi ne contient plus que desktop.ini (caché et système, comme Windows le pose).
+        ailleurs = self.tmp / 'ailleurs'
+        ailleurs.mkdir()
+        for x in list(self.photos.iterdir()):
+            os.replace(x, ailleurs / x.name)
+        ini = self.photos / 'desktop.ini'
+        ini.write_text('[.ShellClassInfo]\r\n', encoding='utf-8')
+        ie.attribut(ini, ie.CACHE | ie.SYSTEME)
+        for nom in ('a.jpg', 'Vacances/b.jpg'):
+            self.assertEqual(self.app.verifier_photo(ids[nom])['etat'], 'injoignable', nom)
+            self.assertIsNotNone(self.app.base.photo(ids[nom]))
+        # Le même dossier avec un vrai contenu en plus : la photo supprimée est bien retirée.
+        (self.photos / 'notes.txt').write_text('liste de courses', encoding='utf-8')
+        self.assertEqual(self.app.verifier_photo(ids['a.jpg'])['etat'], 'retiree')
+
 
 class TestDoublons(unittest.TestCase):
     """Recherche des doublons branchée dans l'application (dans ce processus) : photos générées par Pillow (jamais de

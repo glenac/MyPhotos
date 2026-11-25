@@ -67,6 +67,9 @@ NOMS_IGNORES = {'$recycle.bin', 'system volume information', 'recycler', 'recycl
 # À la racine d'un disque seulement : Windows et les programmes, pleins d'images qui ne sont pas des photos.
 NOMS_SYSTEME_RACINE = {'windows', 'windows.old', 'program files', 'program files (x86)', 'programdata',
                        'perflogs', 'recovery', 'msocache', 'intel', 'amd', 'nvidia', 'drivers', 'boot', 'efi'}
+# Ce que Windows (ou un Mac) range de lui-même dans un dossier, sans que ce soit du contenu : un dossier qui ne contient
+# que cela est vide (voir dossier_vide).
+NOMS_SANS_CONTENU = {'desktop.ini', 'thumbs.db', 'ehthumbs.db', 'ehthumbs_vista.db', '.ds_store'}
 
 
 # Sous-dossiers que l'assistant propose de laisser de côté (décochés d'office) : captures d'écran et fonds d'écran.
@@ -120,6 +123,24 @@ def _racine_de_disque(chemin):
     return bool(lecteur) and reste in ('', '\\', '/')
 
 
+def _sans_contenu(e):
+    """Élément d'un dossier qui ne compte pas comme du contenu : desktop.ini, Thumbs.db… (NOMS_SANS_CONTENU), ou élément
+    caché ou système (« System Volume Information », corbeille), que l'inventaire ne regarde jamais."""
+    if e.name.lower() in NOMS_SANS_CONTENU:
+        return True
+    try:
+        return bool(getattr(e.stat(follow_symlinks=False), 'st_file_attributes', 0) & (_CACHE | _SYSTEME))
+    except OSError:
+        return False
+
+
+def dossier_vide(chemin):
+    """Vrai si le dossier ne contient rien, ou seulement ce que Windows y range de lui-même (_sans_contenu) : un dossier
+    Images vidé, ou que OneDrive n'a pas encore rempli, garde son desktop.ini. Lève OSError s'il est injoignable."""
+    with os.scandir(chemin_systeme(chemin)) as it:
+        return all(_sans_contenu(e) for e in it)
+
+
 class Parcours:
     """Liste les images sous un dossier : itération -> (chemin, taille, modifie_ns).
 
@@ -136,7 +157,7 @@ class Parcours:
         # Sous-dossiers exclus (clés de cle_chemin) : jamais parcourus.
         self.exclus = frozenset(exclus)
         self.echecs = []           # clés (cle_chemin) des sous-dossiers illisibles, terminées par os.sep
-        self.vide = False          # le dossier ne contient strictement rien
+        self.vide = False          # le dossier ne contient rien, ou seulement desktop.ini et autres (dossier_vide)
         self.courant = racine      # dossier en cours de lecture (pour l'affichage)
         self.sautes = 0            # fichiers et dossiers au nom impossible à enregistrer
 
@@ -159,7 +180,7 @@ class Parcours:
                 self.echecs.append(k if k.endswith(os.sep) else k + os.sep)
                 continue
             if premier:
-                self.vide, premier = not entrees, False
+                self.vide, premier = all(_sans_contenu(e) for e in entrees), False
             self.courant = chemin_affiche(d)
             racine_disque = _racine_de_disque(d)
             for e in entrees:
@@ -841,7 +862,9 @@ class Indexeur:
             bilan['nouvelles'] += ajoutees
             return                               # arrêt demandé : rien n'est déclaré disparu
         if parcours.vide and connus:
-            # Un partage réseau monté sans son disque paraît vide : prudence, on garde tout.
+            # Un partage réseau monté sans son disque paraît vide ; un dossier Images que OneDrive n'a pas encore rempli
+            # ne contient que desktop.ini : prudence, on garde tout. (Des photos supprimées d'un dossier qui garde un
+            # autre contenu, même un simple document ou un sous-dossier, sont bien retirées.)
             journal.info('dossier vide alors que des photos y étaient connues, considéré injoignable : %s', racine)
             self.base.marquer_dossier(did, disponible=False)
             bilan['injoignables'].append(racine)

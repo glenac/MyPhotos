@@ -86,7 +86,7 @@ from . import doublons as _doublons
 from . import recherche as _recherche
 from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, maintenant,
                    normaliser_chemin)
-from .indexation import _BALISES_LIENS, Indexeur, Parcours, examiner_dossier
+from .indexation import _BALISES_LIENS, Indexeur, Parcours, dossier_vide, examiner_dossier
 from .recherche import Recherche
 
 NOM = 'MyPhotos'
@@ -2321,7 +2321,8 @@ class Application:
     def photo_partie(p):
         """Vrai si le fichier de cette photo n'existe plus ALORS QUE son dossier suivi répond : elle a vraiment été
         supprimée ou déplacée hors de MyPhotos. Faux si elle est là, ou si on ne peut pas savoir (disque débranché,
-        réseau coupé, dossier vide comme un partage monté sans son disque, accès refusé) : rien n'est alors oublié."""
+        réseau coupé, dossier vide comme un partage monté sans son disque ou un dossier Images qui ne contient plus que
+        desktop.ini, accès refusé) : rien n'est alors oublié."""
         dossier = p.get('dossier')
         if not dossier:
             return False
@@ -2333,8 +2334,7 @@ class Application:
         except (OSError, ValueError):
             return False                         # accès refusé, réseau, disque pas prêt… : on ne sait pas
         try:
-            with os.scandir(chemin_systeme(dossier)) as it:
-                return next(it, None) is not None
+            return not dossier_vide(dossier)
         except OSError:
             return False
 

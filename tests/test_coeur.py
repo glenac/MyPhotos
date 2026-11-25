@@ -1375,3 +1375,61 @@ class TestExamen(unittest.TestCase):
         self.assertEqual(ex['total'], 256)
         with self.assertRaises(OSError):
             indexation.examiner_dossier(str(self.tmp / 'absent'))
+
+
+# ---------------------------------------------------------------- 0.4.0 : disque changé, dossier presque vide
+
+class TestDossierPresqueVide(EssaiAvecImages):
+    """Un dossier suivi qui ne contient plus que desktop.ini (dossier Images que OneDrive n'a pas encore rempli, ou
+    vidé) ou d'autres fichiers que Windows y range est traité comme un dossier vide : inaccessible, ses photos sont
+    gardées. Des photos vraiment supprimées d'un dossier qui a encore du contenu sont retirées, comme avant."""
+
+    def setUp(self):
+        super().setUp()
+        self.images = self.tmp / 'Images'
+        ie.jpeg(self.images / 'a.jpg', (200, 150), ie.ROUGE)
+        ie.jpeg(self.images / 'Pellicule' / 'b.jpg', (200, 150), ie.BLEU)
+        self.ini = self.images / 'desktop.ini'
+        self.ini.write_text('[.ShellClassInfo]\r\nLocalizedResourceName=@%SystemRoot%\\system32\\shell32.dll,-21779\r\n',
+                            encoding='utf-8')
+        ie.attribut(self.ini, ie.CACHE | ie.SYSTEME)
+        self.d = self.base.ajouter_dossier(self.images)
+        self.ailleurs = self.tmp / 'ailleurs'
+        self.ailleurs.mkdir()
+
+    def vider(self):
+        for nom in ('a.jpg', 'Pellicule'):
+            os.replace(self.images / nom, self.ailleurs / nom)
+
+    def test_seulement_desktop_ini(self):
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        self.vider()
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables']), (0, [str(self.images)]))
+        self.assertEqual(self.ids(), avant)
+        self.assertFalse(self.base.dossier(self.d['id'])['disponible'])
+        # desktop.ini sans ses attributs (recopié d'ailleurs) et Thumbs.db : pareil.
+        ie.attribut(self.ini, 0x80)                                         # FILE_ATTRIBUTE_NORMAL
+        (self.images / 'Thumbs.db').write_bytes(b'\0' * 16)
+        self.relancer(ix)
+        self.assertEqual(self.ids(), avant)
+        # Les photos reviennent (OneDrive a fini) : tout est là, rien n'est refait.
+        for nom in ('a.jpg', 'Pellicule'):
+            os.replace(self.ailleurs / nom, self.images / nom)
+        self.relancer(ix)
+        self.assertTrue(self.base.dossier(self.d['id'])['disponible'])
+        self.assertEqual(self.ids(), avant)
+        self.assertEqual(f.images, 2)
+
+    def test_photos_vraiment_supprimees(self):
+        """Toutes les photos supprimées, mais le dossier garde du contenu (un document) : elles sont retirées."""
+        (self.images / 'notes.txt').write_text('liste de courses', encoding='utf-8')
+        ix, _ = self.indexer(dossier=False)
+        self.vider()
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables']), (2, []))
+        self.assertEqual(self.base.compter()['total'], 0)
+        self.assertTrue(self.base.dossier(self.d['id'])['disponible'])
