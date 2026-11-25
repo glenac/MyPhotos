@@ -119,7 +119,7 @@ def controles_prealables(version, essai):
     cle_signature.verifier_correspondance(cle_signature.lire_cle_privee())
     if not essai:
         lancer('gh', 'auth', 'status')
-    print(f'OK : main = origin/main ({lancer("git", "rev-parse", "--short", "HEAD")}), {etiquette} libre, '
+    print(f'OK : main ({lancer("git", "rev-parse", "--short", "HEAD")}), {etiquette} libre, '
           f'nouveautés et notes présentes, clé de signature conforme ({config.VERSION})')
     return notes
 
