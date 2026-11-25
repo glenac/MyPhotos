@@ -1138,6 +1138,19 @@ class TestPage(unittest.TestCase):
         self.assertIn("E.serveur.mode === 'fenetre' || E.serveur.mode === 'edge'", page)   # enFenetre : dépôts refusés
         self.assertIn("ev.preventDefault();\n      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';", page)
 
+    def test_nombre_coche_lisible_en_grand_texte(self):
+        """0.4.1 : à 420 px de large en « Très grande », le nombre de photos cochées était tronqué (« 2 sélec… ») : sur
+        un écran étroit, en grand texte, les boutons de la sélection passent sous lui (mesuré dans Edge : le nombre tient
+        en entier pour les trois tailles, voir docs/ARCHITECTURE.md)."""
+        import re
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        m = re.search(r'@media \(max-width: (\d+)px\) \{\s*:root\[data-taille="grande"\] \.barre-selection, '
+                      r':root\[data-taille="tres-grande"\] \.barre-selection \{\s*grid-template-columns: auto '
+                      r'minmax\(0, 1fr\);\s*\}\s*:root\[data-taille="grande"\] \.sel-actions, '
+                      r':root\[data-taille="tres-grande"\] \.sel-actions \{\s*grid-column: 1 / -1;', page)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(int(m.group(1)), 420)
+
     def test_plus_de_branches_mortes_de_la_copie(self):
         """0.4.1 : depuis la 0.4.0, le serveur ne répond plus 410 et ne renvoie plus « retirees » (Copier, Copier dans
         un dossier, Ouvrir, Afficher dans le dossier : une photo introuvable est un refus 404 ou 409) ; la page n'en

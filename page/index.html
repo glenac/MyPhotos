@@ -677,6 +677,20 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   .v-actions .bouton { flex: 1 1 calc(50% - 5px); white-space: normal; }
   .v-infos { padding: 10px 14px 14px; }
 }
+/* Grand texte sur un écran étroit : les boutons de la sélection passent sous le nombre de photos cochées, qui reste
+   lisible en entier (0.4.1 ; avant, à 420 px en « Très grande » : « 2 sélec… »). */
+@media (max-width: 640px) {
+  :root[data-taille="grande"] .barre-selection, :root[data-taille="tres-grande"] .barre-selection {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  :root[data-taille="grande"] .sel-actions, :root[data-taille="tres-grande"] .sel-actions {
+    grid-column: 1 / -1; justify-content: flex-start;
+  }
+}
+@media (max-width: 460px) {                 /* (taille normale : « 1 234 sélectionnées » ne tiendrait pas non plus) */
+  .barre-selection { grid-template-columns: auto minmax(0, 1fr); }
+  .sel-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
 /* Grand texte : l'en-tête passe sur deux lignes, et les boutons de la sélection gardent leurs icônes seules, plus tôt
    (les largeurs des requêtes de média ne suivent pas la taille du texte). */
 @media (max-width: 1100px) {
