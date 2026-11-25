@@ -1138,6 +1138,33 @@ class TestPage(unittest.TestCase):
         self.assertIn("E.serveur.mode === 'fenetre' || E.serveur.mode === 'edge'", page)   # enFenetre : dépôts refusés
         self.assertIn("ev.preventDefault();\n      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';", page)
 
+    def test_nombre_coche_lisible_en_grand_texte(self):
+        """0.4.1 : à 420 px de large en « Très grande », le nombre de photos cochées était tronqué (« 2 sélec… ») : sur
+        un écran étroit, en grand texte, les boutons de la sélection passent sous lui (mesuré dans Edge : le nombre tient
+        en entier pour les trois tailles, voir docs/ARCHITECTURE.md)."""
+        import re
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        m = re.search(r'@media \(max-width: (\d+)px\) \{\s*:root\[data-taille="grande"\] \.barre-selection, '
+                      r':root\[data-taille="tres-grande"\] \.barre-selection \{\s*grid-template-columns: auto '
+                      r'minmax\(0, 1fr\);\s*\}\s*:root\[data-taille="grande"\] \.sel-actions, '
+                      r':root\[data-taille="tres-grande"\] \.sel-actions \{\s*grid-column: 1 / -1;', page)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(int(m.group(1)), 420)
+
+    def test_plus_de_branches_mortes_de_la_copie(self):
+        """0.4.1 : depuis la 0.4.0, le serveur ne répond plus 410 et ne renvoie plus « retirees » (Copier, Copier dans
+        un dossier, Ouvrir, Afficher dans le dossier : une photo introuvable est un refus 404 ou 409) ; la page n'en
+        garde plus trace."""
+        import re
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        self.assertIsNone(re.search(r'statut\s*===?\s*410', page))
+        self.assertNotIn('r.retirees', page)
+        source = (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8')
+        self.assertIsNone(re.search(r'\b410\b', source))
+        copie = source[source.index('    def _a_copier(self, ids):'):source.index('    def creer_raccourcis(self):')]
+        self.assertIn('def copier_vers(self, ids):', copie)
+        self.assertNotIn('retirees', copie)
+
     def test_recherche_ne_garde_pas_les_anciennes_cases(self):
         """Constat R4 : avant de vider les grilles, chaque recherche désabonne leurs cases de l'observateur des
         miniatures (sinon ~31 nœuds et 5 écouteurs restent en mémoire à chaque recherche, toute la séance ; mesuré
@@ -1175,6 +1202,7 @@ import myphotos.serveur as s
 s.dossiers_proposes = lambda: []
 s.dossier_images = lambda: os.environ.get('MYPHOTOS_ESSAI_VIDE')      # dossier vide : jamais les vraies Images
 s.mettre_au_presse_papiers = lambda *a, **k: note('presse_papiers')
+s.mettre_texte_au_presse_papiers = lambda *a, **k: note('presse_papiers_texte')
 s.mettre_a_la_corbeille = corbeille
 s.montrer_dans_dossier = lambda *a, **k: note('explorateur', *a)
 os.startfile = lambda *a, **k: note('startfile', *a)
@@ -1205,12 +1233,34 @@ def _port_libre(port):
 
 ENFANT_CHOIX = '''\
 """Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON. Avec un 3e argument
-(délai en secondes) : deux demandes de serveur.ChoixDossier, laissées sans réponse au-delà de ce délai."""
-import json, os, sys, time
+(délai en secondes) : deux demandes de serveur.ChoixDossier, laissées sans réponse au-delà de ce délai. Avec
+« poignees N » : N demandes fermées au bout d'une demi-seconde, et le nombre de handles du processus après chacune."""
+import ctypes, gc, json, os, sys, time
 sys.path.insert(0, os.environ['MYPHOTOS_ESSAI_RACINE'])
 from myphotos import dialogue, serveur
 try:
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 4 and sys.argv[3] == 'poignees':
+        from myphotos.raccourci import _methode
+        k32, u32 = ctypes.WinDLL('kernel32'), ctypes.WinDLL('user32')
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        k32.GetProcessHandleCount.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        u32.GetGuiResources.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        sortie = {'poignees': [], 'user': [], 'chemins': [], 'comptes_com': []}
+
+        def liberer(*objets):                       # Release rend le compte de références restant : 0 attendu
+            for o in objets:
+                if o and o.value:
+                    sortie['comptes_com'].append(_methode(o, 2)())
+        dialogue._liberer = liberer
+        choix = serveur.ChoixDossier()
+        for _ in range(int(sys.argv[4])):
+            sortie['chemins'].append(choix.demander(initial=sys.argv[2], delai=0.5, titre=sys.argv[1]))
+            gc.collect()
+            n = ctypes.c_uint32()
+            k32.GetProcessHandleCount(k32.GetCurrentProcess(), ctypes.byref(n))
+            sortie['poignees'].append(n.value)
+            sortie['user'].append(u32.GetGuiResources(k32.GetCurrentProcess(), 1))
+    elif len(sys.argv) > 3:
         choix = serveur.ChoixDossier()
         sortie = {'demandes': []}
         for _ in range(2):
@@ -1353,6 +1403,45 @@ class TestChoixDossierReel(unittest.TestCase):
             self.assertEqual([x['chemin'] for x in d['demandes']], [None, None], d)
             for x in d['demandes']:
                 self.assertTrue(3 <= x['duree_s'] < 3 + 6, d)                   # délai, puis fermeture (5 s au plus)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
+        finally:
+            if hproc is not None and O.code_sortie(hproc) is None:
+                job.terminer()
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
+
+    def test_handles_rien_de_notre_fait(self):
+        """0.4.1 : handles gardés à chaque ouverture (environ 7, vus en 0.4.0). Mesuré le 25/11/2026 (Windows 11, 25
+        à 60 ouvertures) : les 3 premières prennent ~800 handles (DLL du shell, leurs fils) ; ensuite, quand la fenêtre
+        s'ouvre dans un vrai dossier (le dossier proposé : SetFolder), Windows en garde 5 à 6 par ouverture fermée
+        aussitôt, 12 à 15 si elle reste ouverte une demi-seconde ; sans dossier proposé, ~2, rendus par paquets. Les
+        mêmes chiffres dans un fil neuf ou dans le même fil, avec ou sans fenêtre hôte, sans SetClientGuid, en
+        laissant tourner les messages après la fermeture : c'est Windows (caches du dossier parcouru), pas MyPhotos.
+        L'essai vérifie ce qui est de notre fait : chaque objet COM libéré jusqu'au bout (compte de références 0),
+        la fenêtre hôte détruite (objets USER stables), et rien de plus grossier que les chiffres mesurés."""
+        O = self.O
+        import processus_essai
+        sortie = self.dossier / 'sortie-poignees.json'
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
+        env.update(MYPHOTOS_ESSAI_RACINE=str(RACINE), MYPHOTOS_ESSAI_SORTIE=str(sortie))
+        nom_bureau = f'MyPhotosPoignees{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        job = processus_essai.Job()
+        hproc = None
+        try:
+            _pid, hproc = O.lancer([sys.executable, str(self.dossier / 'enfant.py'), self.TITRE, str(self.propose),
+                                    'poignees', '40'], nom_bureau, str(self.dossier), env, job)
+            self.assertTrue(O.attendre_processus(hproc, 240), 'trop long')
+            self.assertEqual(O.code_sortie(hproc), 0)
+            d = json.loads(sortie.read_text(encoding='utf-8'))
+            self.assertEqual(d.get('chemins'), [None] * 40, d)
+            self.assertGreaterEqual(len(d['comptes_com']), 80)                 # la fenêtre et le dossier proposé…
+            self.assertEqual(set(d['comptes_com']), {0}, d['comptes_com'])     # … libérés jusqu'au bout
+            u = d['user'][9:]
+            self.assertLessEqual(max(u) - min(u), 10, d['user'])              # fenêtres hôtes détruites
+            h = d['poignees'][9:]
+            self.assertLess((h[-1] - h[0]) / (len(h) - 1), 25, d['poignees'])
             self.assertTrue(job.attendre_vide(10), O.du_job(job))
         finally:
             if hproc is not None and O.code_sortie(hproc) is None:

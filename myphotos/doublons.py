@@ -3,7 +3,8 @@
 Trois niveaux de groupes :
 - « identiques » : même contenu de fichier (SHA-256, calculé seulement pour les photos de même taille en octets) ;
 - « retouchees » : la même photo redimensionnée, recompressée (envoi WhatsApp…), légèrement recadrée ou redressée,
-  convertie (PNG), sans EXIF, avec une bordure, un peu plus claire ou plus sombre ;
+  convertie (PNG), sans EXIF, avec une bordure, un peu plus claire ou plus sombre, et depuis la 0.4.1 tournée d'un
+  quart de tour, d'un demi-tour, ou retournée en miroir ;
 - « proches » : rafales, plusieurs prises du même instant. On veut souvent les garder : rien n'y est coché d'office.
 
 Méthode, sans relire les photos (sauf le SHA-256 des fichiers de même taille) :
@@ -20,6 +21,13 @@ Méthode, sans relire les photos (sauf le SHA-256 des fichiers de même taille) 
    doublons_paires) ; deux photos déjà réunies comme retouches ne sont pas comparées ;
 4. regroupement : les identiques d'abord ; leurs copies écartées, les retouchées (de proche en proche) ; puis les
    proches, autour de la meilleure photo de chaque série (pas de chaîne sans fin).
+
+Copies tournées ou en miroir (0.4.1) : chaque miniature reçoit aussi une empreinte « orientée », celle de l'image
+tournée et retournée dans une position de référence choisie d'après ses grandes masses de lumière (le plus contrasté
+de gauche-droite ou de haut-bas en largeur, le côté clair à gauche et en haut). Une copie tournée ou en miroir a la
+même empreinte orientée ; quand le choix est indécis (image presque symétrique), les deux choix sont gardés. Deux
+empreintes orientées voisines donnent l'orientation qui pose l'une sur l'autre, et la vérification se fait sur la
+miniature ainsi tournée, avec les mêmes exigences que pour une retouche (table doublons_tournees).
 
 Les seuils viennent de outils/calibrer_doublons.py (images publiques) ; chiffres et choix dans outils/DOUBLONS.md.
 """
@@ -105,8 +113,16 @@ NCC_LK_MIN = 0.7                           # idem, une fois superposées au mieu
 
 BLOC_VECTEURS = 2048                       # produits de vecteurs par blocs de 2048 × 8192
 BLOC_COLONNES = 8192
-BLOC_EMPREINTES = 2048                     # distances de Hamming, de même
+BLOC_EMPREINTES = 1024                     # distances de Hamming : blocs de 1024 × 1024, qui tiennent dans le cache
+                                           # du processeur (100 000 photos : 5,5 s au lieu de 19 s en 2048 × 8192)
 LOT_ECRITURE = 500
+
+# Copies tournées ou en miroir (0.4.1, mesures dans outils/DOUBLONS.md).
+CHERCHER_TOURNEES = True                   # (outils/calibrer_doublons.py le coupe pour mesurer « avant »)
+MARGE_ORIENTATION = 0.04                   # choix d'orientation indécis (écart < 4 % du relief de l'empreinte) :
+                                           # les deux choix sont gardés (1,3 empreinte orientée par photo)
+COSINUS_TOURNEE = 0.55                     # vecteurs d'une copie tournée ou en miroir : 0,62 au moins (demi-tour),
+                                           # mesuré sur 340 images publiques ; en dessous, pas vérifiées
 FILS_EMPREINTES = 4
 
 _MASQUE64 = (1 << 64) - 1
@@ -141,6 +157,14 @@ _SCHEMA = (
         b      INTEGER NOT NULL,
         mesure TEXT NOT NULL,
         PRIMARY KEY (a, b)) WITHOUT ROWID""",
+    # 0.4.1 : vérifications avec la miniature de b tournée ou retournée (orientation t, 1 à 7 : voir orienter()).
+    # Table à part : une 0.4.0 ne la lit pas, et ses mesures de doublons_paires gardent leur sens.
+    """CREATE TABLE IF NOT EXISTS doublons_tournees (
+        a      INTEGER NOT NULL,
+        b      INTEGER NOT NULL,
+        t      INTEGER NOT NULL,
+        mesure TEXT NOT NULL,
+        PRIMARY KEY (a, b, t)) WITHOUT ROWID""",
 )
 
 
@@ -217,13 +241,95 @@ def _gris(jpeg, cote):
     return im
 
 
+def orienter(a, t):
+    """L'une des 8 orientations d'une image (tableau 2D) : t & 4 transposée (miroir sur la diagonale), puis t & 1
+    miroir gauche-droite, puis t & 2 miroir haut-bas. 0 : telle quelle ; 1 : miroir ; 6 et 5 : quarts de tour ; 3 :
+    demi-tour."""
+    if t & 4:
+        a = a.T
+    if t & 1:
+        a = a[:, ::-1]
+    if t & 2:
+        a = a[::-1, :]
+    return np.ascontiguousarray(a)
+
+
+def _relatives():
+    """_RELATIVE[ta][tb] = t tel que, si orienter(A, ta) et orienter(B, tb) se ressemblent, A ressemble à
+    orienter(B, t). Calculé une fois sur un petit tableau dont les 8 orientations sont toutes différentes."""
+    x = np.arange(9).reshape(3, 3)
+    formes = [orienter(x, t) for t in range(8)]
+
+    def remettre(a, t):                       # l'inverse de orienter(a, t)
+        if t & 2:
+            a = a[::-1, :]
+        if t & 1:
+            a = a[:, ::-1]
+        if t & 4:
+            a = a.T
+        return a
+    return tuple(tuple(next(t for t in range(8) if np.array_equal(formes[t], remettre(orienter(x, tb), ta)))
+                       for tb in range(8)) for ta in range(8))
+
+
+_RELATIVE = _relatives()
+_SIGNES = np.array([(-1.0) ** k for k in range(8)], dtype=np.float32)
+
+
+def _bits_empreinte(d):
+    """Coefficients (64) -> empreinte : 8 octets, un bit par coefficient au-dessus de la médiane (sans le premier)."""
+    d = d.ravel()
+    return np.packbits(d > np.median(d[1:]), bitorder='little').tobytes()
+
+
+def _cles_orientees(D):
+    """Empreintes orientées d'une image, d'après ses coefficients D (8 × 8, transformée en cosinus) : [(t, 8 octets)].
+
+    Position de référence : la direction la plus contrastée (gauche-droite ou haut-bas) en largeur, puis le côté clair
+    à gauche, puis en haut. Une copie tournée ou retournée arrive à la même position, et donc à la même empreinte (les
+    coefficients d'une image retournée sont ceux de l'original, transposés ou au signe près : rien n'est recalculé). Un
+    choix indécis (écart sous MARGE_ORIENTATION) garde les deux possibilités : 1 à 8 empreintes."""
+    marge = MARGE_ORIENTATION * (float(np.sqrt(np.square(D.ravel()[1:]).sum())) or 1.0)
+    sortie = []
+
+    def choisir(D, t, etape):
+        if etape == 3:
+            sortie.append((t, _bits_empreinte(D)))
+            return
+        ecart = (abs(D[1, 0]) - abs(D[0, 1]), -D[0, 1], -D[1, 0])[etape]     # > 0 : tourner (ou retourner)
+        for oui in (ecart > 0, ecart <= 0)[:1 if abs(ecart) >= marge else 2]:
+            if not oui:
+                choisir(D, t, etape + 1)
+            elif etape == 0:
+                choisir(D.T, t | 4, 1)
+            elif etape == 1:
+                choisir(D * _SIGNES[None, :], t | 1, 2)
+            else:
+                choisir(D * _SIGNES[:, None], t | 2, 3)
+    choisir(D, 0, 0)
+    return sortie
+
+
+def lire_cles(blob):
+    """Empreintes orientées enregistrées (9 octets chacune : orientation, puis 64 bits) -> [(t, entier non signé)]."""
+    if not blob:
+        return []
+    return [(blob[k], int.from_bytes(blob[k + 1:k + 9], 'little')) for k in range(0, len(blob) - 8, 9)]
+
+
+def empreinte_complete(jpeg):
+    """(phash, contraste, cles) d'une miniature : pHash 64 bits (entier signé), écart type des gris (0-255) et
+    empreintes orientées (octets : voir lire_cles). Lève une exception si la miniature est illisible."""
+    a = np.asarray(_gris(jpeg, 2 * _N).resize((_N, _N), Image.Resampling.BOX), dtype=np.float32)
+    D = (_DCT @ a @ _DCT.T)[:8, :8]
+    phash = _signe(int.from_bytes(_bits_empreinte(D), 'little'))
+    return phash, round(float(a.std()), 2), b''.join(bytes([t]) + b for t, b in _cles_orientees(D))
+
+
 def empreinte(jpeg):
     """(phash, contraste) d'une miniature : pHash 64 bits (entier signé) et écart type des gris (0-255).
     Lève une exception si la miniature est illisible."""
-    a = np.asarray(_gris(jpeg, 2 * _N).resize((_N, _N), Image.Resampling.BOX), dtype=np.float32)
-    d = (_DCT @ a @ _DCT.T)[:8, :8].ravel()
-    bits = d > np.median(d[1:])
-    return _signe(int.from_bytes(np.packbits(bits, bitorder='little').tobytes(), 'little')), round(float(a.std()), 2)
+    return empreinte_complete(jpeg)[:2]
 
 
 def _flou(a):
@@ -260,9 +366,12 @@ class _Niveau:
         return g
 
 
-def preparer_verification(jpeg):
-    """Miniature -> pyramide [fin (COTE_VERIF px), moitié, quart] pour la vérification."""
+def preparer_verification(jpeg, t=0):
+    """Miniature -> pyramide [fin (COTE_VERIF px), moitié, quart] pour la vérification ; t : la miniature tournée ou
+    retournée (voir orienter())."""
     a = np.asarray(_gris(jpeg, COTE_VERIF), dtype=np.float32)
+    if t:
+        a = orienter(a, t)
     niveaux = [a]
     for _ in range(2):
         h, w = niveaux[-1].shape
@@ -815,10 +924,16 @@ class Doublons:
         try:
             for sql in _SCHEMA:
                 c.execute(sql)
+            # 0.4.1 : empreintes orientées, ajoutées sans rien effacer (calculées au prochain passage, sans refaire les
+            # vérifications déjà gardées) ; une 0.4.0 ignore cette colonne.
+            colonnes = {r[1] for r in c.execute('PRAGMA table_info(doublons_empreintes)')}
+            if 'cles' not in colonnes:
+                c.execute('ALTER TABLE doublons_empreintes ADD COLUMN cles BLOB')
             v = c.execute("SELECT valeur FROM doublons_meta WHERE cle = 'version'").fetchone()
             if v is None or v[0] != VERSION:
                 c.execute('DELETE FROM doublons_empreintes')
                 c.execute('DELETE FROM doublons_paires')
+                c.execute('DELETE FROM doublons_tournees')
                 c.execute("INSERT INTO doublons_meta(cle, valeur) VALUES ('version', ?) "
                           'ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur', (VERSION,))
         except BaseException:
@@ -843,6 +958,7 @@ class Doublons:
         with self._un_calcul:
             self._ecrire('DELETE FROM doublons_empreintes')
             self._ecrire('DELETE FROM doublons_paires')
+            self._ecrire('DELETE FROM doublons_tournees')
             with self._verrou:
                 self._resultat = None
 
@@ -1028,16 +1144,18 @@ class Doublons:
         unies = {i for i in restantes if (empreintes[i]['contraste'] or 0.0) < CONTRASTE_MIN}
         comptes['unies'] = len(unies)
         restantes = [i for i in restantes if i not in unies]
-        a_verifier, directes = self._candidates(restantes, empreintes, photos, comptes)
+        a_verifier, directes, tournees = self._candidates(restantes, empreintes, photos, comptes)
         comptes['paires_directes'] = len(directes)
         self._verifier_arret()
 
         # 3. Vérification sur les miniatures (résultats gardés d'une fois sur l'autre) ; les retouchées se réunissent
-        # au fur et à mesure (deux photos déjà réunies ne sont pas comparées).
-        self._phase('verification', 0, len(a_verifier))
-        mesures, retouches = self._verifications(a_verifier, comptes)
+        # au fur et à mesure (deux photos déjà réunies ne sont pas comparées). Les copies tournées ou en miroir
+        # ensuite : elles ne comptent que comme retouches.
+        self._phase('verification', 0, len(a_verifier) + len(tournees))
+        mesures, mesures_t, retouches = self._verifications(a_verifier, tournees, comptes)
         self._verifier_arret()
         _marquer_cadres(photos, a_verifier, mesures)      # cadre ou bordure ajoutés : définition utile réduite
+        _marquer_cadres(photos, [(a, b, None, None) for a, b, _, _ in tournees], mesures_t)
 
         # 4. Regroupement.
         self._phase('regroupement')
@@ -1097,37 +1215,42 @@ class Doublons:
     def _nettoyer(self):
         """Oublie empreintes et vérifications des photos disparues de la base."""
         self._ecrire('DELETE FROM doublons_empreintes WHERE photo_id NOT IN (SELECT id FROM photos)')
-        self._ecrire('DELETE FROM doublons_paires WHERE a NOT IN (SELECT id FROM photos) '
-                     'OR b NOT IN (SELECT id FROM photos)')
+        for table in ('doublons_paires', 'doublons_tournees'):
+            self._ecrire(f'DELETE FROM {table} WHERE a NOT IN (SELECT id FROM photos) '
+                         'OR b NOT IN (SELECT id FROM photos)')
 
     def _empreintes(self, photos, comptes):
-        """Empreintes à jour de toutes les photos examinées : {id: {phash, contraste, sha256}}. Celles qui manquent
-        ou sont périmées sont calculées sur les miniatures (plusieurs fils) et enregistrées."""
+        """Empreintes à jour de toutes les photos examinées : {id: {phash, contraste, sha256, cles}}. Celles qui
+        manquent ou sont périmées sont calculées sur les miniatures (plusieurs fils) et enregistrées."""
         connues = {}
-        for pid, t, mo, ph, co, prov, sha in self._cnx().execute(
-                'SELECT photo_id, taille, modifie, phash, contraste, provisoire, sha256 FROM doublons_empreintes'):
-            connues[pid] = (t, mo, ph, co, prov, sha)
+        for pid, t, mo, ph, co, prov, sha, cles in self._cnx().execute(
+                'SELECT photo_id, taille, modifie, phash, contraste, provisoire, sha256, cles FROM doublons_empreintes'):
+            connues[pid] = (t, mo, ph, co, prov, sha, cles)
         resultat = {}
         a_faire = []
         perimees = []
+        sans_cles = set()
         for pid, p in photos.items():
             e = connues.get(pid)
             if e is not None and (e[0], e[1]) != (p['taille'], p['modifie']):
                 perimees.append(pid)               # fichier changé : empreinte et SHA à refaire
                 e = None
             if e is not None and not p['miniature']:
-                resultat[pid] = {'phash': None, 'contraste': None, 'sha256': e[5]}   # miniature retirée entre-temps
+                resultat[pid] = {'phash': None, 'contraste': None, 'sha256': e[5], 'cles': None}   # miniature retirée
                 continue
             if e is not None and (e[2] is None or (e[4] and p['analysee'])):
                 a_faire.append(pid)                # miniature apparue, ou refaite par l'analyse
-                resultat[pid] = {'phash': None, 'contraste': None, 'sha256': e[5]}
+                resultat[pid] = {'phash': None, 'contraste': None, 'sha256': e[5], 'cles': None}
                 continue
             if e is None:
-                resultat[pid] = {'phash': None, 'contraste': None, 'sha256': None}
+                resultat[pid] = {'phash': None, 'contraste': None, 'sha256': None, 'cles': None}
                 if p['miniature']:
                     a_faire.append(pid)
                 continue
-            resultat[pid] = {'phash': e[2], 'contraste': e[3], 'sha256': e[5]}
+            resultat[pid] = {'phash': e[2], 'contraste': e[3], 'sha256': e[5], 'cles': e[6]}
+            if e[6] is None and CHERCHER_TOURNEES:
+                a_faire.append(pid)                # empreinte d'une 0.4.0 : seules les empreintes orientées manquent
+                sans_cles.add(pid)
         if perimees:
             for i in range(0, len(perimees), LOT_ECRITURE):
                 lot = perimees[i:i + LOT_ECRITURE]
@@ -1136,23 +1259,26 @@ class Doublons:
                 c.execute('BEGIN IMMEDIATE')
                 try:
                     c.execute(f'DELETE FROM doublons_empreintes WHERE photo_id IN ({marques})', lot)
-                    c.execute(f'DELETE FROM doublons_paires WHERE a IN ({marques}) OR b IN ({marques})', lot + lot)
+                    for table in ('doublons_paires', 'doublons_tournees'):
+                        c.execute(f'DELETE FROM {table} WHERE a IN ({marques}) OR b IN ({marques})', lot + lot)
                 except BaseException:
                     c.execute('ROLLBACK')
                     raise
                 c.execute('COMMIT')
         self._phase('empreintes', 0, len(a_faire))
         if a_faire:
-            self._calculer_empreintes(a_faire, photos, resultat, comptes)
+            self._calculer_empreintes(a_faire, photos, resultat, comptes, sans_cles)
         return resultat
 
-    def _calculer_empreintes(self, ids, photos, resultat, comptes):
+    def _calculer_empreintes(self, ids, photos, resultat, comptes, sans_cles=()):
+        """sans_cles : photos dont seule l'empreinte orientée manquait ; si leur empreinte n'a pas changé, leurs
+        vérifications gardées restent valables (une base de la 0.4.0 n'est pas tout entière à refaire)."""
         base = self.base
 
         def une(pid):
             try:
                 jpeg = base.miniature(pid)
-                return pid, (empreinte(jpeg) if jpeg else None)
+                return pid, (empreinte_complete(jpeg) if jpeg else None)
             except RuntimeError:
                 raise                               # base fermée
             except Exception:
@@ -1167,14 +1293,16 @@ class Doublons:
                 for pid, r in pool.map(une, ids[debut:debut + LOT_ECRITURE]):
                     p = photos[pid]
                     e = resultat[pid]
+                    avant = e['phash']
                     if r is None:
                         comptes['illisibles'] += 1
-                        e['phash'] = e['contraste'] = None
+                        e['phash'] = e['contraste'] = e['cles'] = None
                     else:
-                        e['phash'], e['contraste'] = r
+                        e['phash'], e['contraste'], e['cles'] = r
                     lot.append((pid, p['taille'], p['modifie'], e['phash'], e['contraste'],
-                                0 if p['analysee'] else 1, e['sha256']))
-                    refaites.append(pid)
+                                0 if p['analysee'] else 1, e['sha256'], e['cles']))
+                    if pid not in sans_cles or e['phash'] != avant:
+                        refaites.append(pid)
                 fait += len(ids[debut:debut + LOT_ECRITURE])
                 self._enregistrer_empreintes(lot, refaites)
                 lot, refaites = [], []
@@ -1187,11 +1315,12 @@ class Doublons:
         c.execute('BEGIN IMMEDIATE')
         try:
             c.executemany('INSERT OR REPLACE INTO doublons_empreintes(photo_id, taille, modifie, phash, contraste, '
-                          'provisoire, sha256) VALUES (?, ?, ?, ?, ?, ?, ?)', lot)
+                          'provisoire, sha256, cles) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', lot)
             for i in range(0, len(refaites), LOT_ECRITURE):
                 part = refaites[i:i + LOT_ECRITURE]
                 marques = ','.join('?' * len(part))
-                c.execute(f'DELETE FROM doublons_paires WHERE a IN ({marques}) OR b IN ({marques})', part + part)
+                for table in ('doublons_paires', 'doublons_tournees'):
+                    c.execute(f'DELETE FROM {table} WHERE a IN ({marques}) OR b IN ({marques})', part + part)
         except BaseException:
             c.execute('ROLLBACK')
             raise
@@ -1272,11 +1401,16 @@ class Doublons:
     def _candidates(self, ids, empreintes, photos, comptes):
         """Paires à examiner parmi `ids` (photos qui ont une empreinte assez contrastée).
 
-        Renvoie (a_verifier, directes), listes de (a, b, hamming, cosinus ou None) avec a < b :
+        Renvoie (a_verifier, directes, tournees) ; a_verifier et directes : listes de (a, b, hamming, cosinus ou
+        None) avec a < b :
         - a_verifier : empreintes à au plus HAMMING_CANDIDAT bits (quasi identiques, toujours) ; ou vecteurs voisins
           (COSINUS_CANDIDAT) avec des empreintes à au plus HAMMING_RETOUCHE_MAX bits et des dates compatibles, au plus
           VOISINES_MAX par photo (les plus ressemblantes). Les quasi identiques d'abord ;
-        - directes : « proches » par les vecteurs seuls (COSINUS_PROCHE, dates compatibles), sans vérification.
+        - directes : « proches » par les vecteurs seuls (COSINUS_PROCHE, dates compatibles), sans vérification ;
+        - tournees : copies tournées ou en miroir possibles, (a, b, hamming des empreintes orientées, t) : b tournée
+          par orienter(·, t) ressemblerait à a. Empreintes orientées à au plus HAMMING_CANDIDAT bits (toujours), ou
+          vecteurs voisins avec des empreintes orientées plus proches que les empreintes (au plus VOISINES_MAX par
+          photo).
         Tout est fait par blocs, en tableaux : la place prise ne dépend pas du nombre de paires voisines.
         """
         ids = np.array(sorted(ids), dtype=np.int64)
@@ -1286,8 +1420,28 @@ class Doublons:
         self._verifier_arret()
         if n < 2:
             comptes['sans_vecteur'] = n - int(np.isin(vid, ids).sum()) if n else 0
-            return [], []
+            return [], [], []
         h = np.array([empreintes[i]['phash'] for i in liste], dtype=np.int64).view(np.uint64)
+        # Empreintes orientées : toutes (proprio : rang dans ids ; orient : orientation), et la première de chaque photo.
+        proprio, orient, valeurs = [], [], []
+        if CHERCHER_TOURNEES:
+            for x, pid in enumerate(liste):
+                for t, v in lire_cles(empreintes[pid].get('cles')):
+                    proprio.append(x)
+                    orient.append(t)
+                    valeurs.append(v)
+        proprio = np.array(proprio, dtype=np.int64)
+        orient = np.array(orient, dtype=np.int64)
+        valeurs = np.array(valeurs, dtype=np.uint64)
+        avec_cle = np.zeros(n, bool)
+        h_or = np.zeros(n, np.uint64)
+        t_or = np.zeros(n, np.int64)
+        if len(proprio):
+            premieres = np.flatnonzero(np.r_[True, proprio[1:] != proprio[:-1]])    # clés rangées par photo
+            avec_cle[proprio[premieres]] = True
+            h_or[proprio[premieres]] = valeurs[premieres]
+            t_or[proprio[premieres]] = orient[premieres]
+        relative = np.array(_RELATIVE, dtype=np.int64)
         dates = np.array([_secondes(photos[i]['date_prise']) for i in liste], dtype=np.float64)
         # Vecteurs rangés comme ids : pos[k] = rang dans ids de la k-ième ligne de mat ; ligne[i] = l'inverse (-1 : aucun).
         pos = np.searchsorted(ids, vid)
@@ -1306,10 +1460,12 @@ class Doublons:
             da, db = dates[a], dates[b]
             return np.isnan(da) | np.isnan(db) | (np.abs(da - db) <= FENETRE_PROCHES_S)
 
+        def blocs_triangle(m):
+            return ((m + BLOC_EMPREINTES - 1) // BLOC_EMPREINTES) * ((m + BLOC_EMPREINTES - 1) // BLOC_EMPREINTES + 1) // 2
         blocs_v = [(i, j) for i in range(0, nv, BLOC_VECTEURS)
                    for j in range(i - i % BLOC_COLONNES, nv, BLOC_COLONNES)] if nv > 1 else []
-        blocs_h = [(i, j) for i in range(0, n, BLOC_EMPREINTES) for j in range(i - i % BLOC_COLONNES, n, BLOC_COLONNES)]
-        self._phase('comparaison', 0, len(blocs_v) + len(blocs_h))
+        nk = len(proprio)
+        self._phase('comparaison', 0, len(blocs_v) + blocs_triangle(n) + (blocs_triangle(nk) if nk > 1 else 0))
         fait = 0
         pa, pb = [], []
         for i, j in blocs_v:
@@ -1319,26 +1475,30 @@ class Doublons:
             garde = ii + i < jj + j
             ii, jj = ii[garde], jj[garde]
             a, b = pos[ii + i], pos[jj + j]
-            ok = compatibles(a, b) & ((np.bitwise_count(h[a] ^ h[b]) <= HAMMING_RETOUCHE_MAX) | (s[ii, jj] >= c_proche))
+            voisines = np.bitwise_count(h[a] ^ h[b]) <= HAMMING_RETOUCHE_MAX
+            if CHERCHER_TOURNEES:                  # (copie tournée ou en miroir : empreintes orientées voisines)
+                voisines |= avec_cle[a] & avec_cle[b] & (np.bitwise_count(h_or[a] ^ h_or[b]) <= HAMMING_RETOUCHE_MAX)
+            ok = compatibles(a, b) & (voisines | (s[ii, jj] >= c_proche))
             pa.append(a[ok])
             pb.append(b[ok])
             fait += 1
             self._avancer(fait)
-        # Empreintes : chaque bit devient +1 ou -1 ; le produit de deux empreintes vaut alors 64 - 2 × leur distance de
-        # Hamming, exactement. Un produit de matrices (comme pour les vecteurs) va bien plus vite que bit à bit.
-        bits = np.unpackbits(h.view(np.uint8).reshape(n, 8), axis=1, bitorder='little').astype(np.float32) * 2 - 1
+        # Empreintes : quasi identiques, puis empreintes orientées quasi identiques (toutes, avec leur photo).
         seuil_h = 64 - 2 * HAMMING_CANDIDAT - 0.5
-        for i, j in blocs_h:
-            self._verifier_arret()
-            s = bits[i:i + BLOC_EMPREINTES] @ bits[j:j + BLOC_COLONNES].T
-            ii, jj = np.nonzero(s >= seuil_h)
-            garde = ii + i < jj + j
-            pa.append(ii[garde] + i)
-            pb.append(jj[garde] + j)
-            fait += 1
-            self._avancer(fait)
-        if not pa:
-            return [], []
+        x, y, fait = self._produits_empreintes(h, seuil_h, fait)
+        pa.append(x)
+        pb.append(y)
+        ta, tb, tham, tt = [], [], [], []
+        if nk > 1:
+            x, y, fait = self._produits_empreintes(valeurs, seuil_h, fait)
+            autre = proprio[x] != proprio[y]           # (x < y : clés rangées par photo, donc proprio[x] <= proprio[y])
+            x, y = x[autre], y[autre]
+            ta.append(proprio[x])
+            tb.append(proprio[y])
+            tham.append(np.bitwise_count(valeurs[x] ^ valeurs[y]).astype(np.int64))
+            tt.append(relative[orient[x], orient[y]])
+        if not any(len(v) for v in pa) and not any(len(v) for v in ta):
+            return [], [], []
         a, b = np.concatenate(pa).astype(np.int64), np.concatenate(pb).astype(np.int64)
         cle = np.unique(np.minimum(a, b) * n + np.maximum(a, b))
         a, b = cle // n, cle % n
@@ -1363,66 +1523,148 @@ class Doublons:
             return [(liste[x], liste[y], hh, None if cc != cc else cc)
                     for x, y, hh, cc in zip(a[k].tolist(), b[k].tolist(), ham[k].tolist(), cos[k].tolist())]
         ordre = np.lexsort((b, a, ~quasi))                # quasi identiques d'abord, puis par photo
-        return sortie(verif, ordre), sortie(directes, ordre)
 
-    def _verifications(self, paires, comptes):
+        # Copies tournées ou en miroir : empreintes orientées quasi identiques (toujours), puis vecteurs voisins dont
+        # les empreintes orientées (les premières) sont plus proches que les empreintes elles-mêmes.
+        tournees = {}
+        if ta:
+            x, y = np.concatenate(ta), np.concatenate(tb)
+            hh, tt = np.concatenate(tham), np.concatenate(tt)
+            # Seulement si l'orientation explique mieux la ressemblance que les empreintes telles quelles : deux photos
+            # d'une même scène, presque symétrique, ont aussi des empreintes orientées voisines, sans être tournées.
+            # Et des vecteurs pas trop éloignés quand les deux photos en ont : une copie tournée garde à peu près son
+            # sens (cosinus de 0,62 au moins, demi-tour compris) ; des images simples (ciels, dégradés), elles, ont
+            # souvent des empreintes orientées voisines sans se ressembler.
+            mieux = (tt != 0) & (hh < np.bitwise_count(h[x] ^ h[y]))
+            x, y, hh, tt = x[mieux], y[mieux], hh[mieux], tt[mieux]
+            deux = np.flatnonzero((ligne[x] >= 0) & (ligne[y] >= 0))
+            if len(deux):
+                c_xy = np.einsum('ij,ij->i', mat[ligne[x[deux]]], mat[ligne[y[deux]]])
+                garde = np.ones(len(x), bool)
+                garde[deux[c_xy < COSINUS_TOURNEE]] = False
+                x, y, hh, tt = x[garde], y[garde], hh[garde], tt[garde]
+            for k in np.lexsort((y, x, hh)).tolist():
+                if (int(x[k]), int(y[k])) not in tournees:
+                    tournees[(int(x[k]), int(y[k]))] = (int(hh[k]), int(tt[k]))
+        comptes['tournees_par_empreintes'] = len(tournees)
+        if CHERCHER_TOURNEES and len(a):
+            ham_or = np.bitwise_count(h_or[a] ^ h_or[b]).astype(np.int64)
+            t_rel = relative[t_or[a], t_or[b]]
+            # (empreintes telles quelles éloignées : celles d'une copie tournée n'ont rien à voir, ~32 bits ; deux photos
+            # voisines d'une même scène, elles, restent proches et passent par la vérification ordinaire)
+            with np.errstate(invalid='ignore'):
+                vt = np.flatnonzero(avec_cle[a] & avec_cle[b] & (t_rel != 0) & (ham_or <= HAMMING_RETOUCHE_MAX)
+                                    & (ham > HAMMING_RETOUCHE_MAX) & (cos >= c_cand) & temps)
+            if len(vt):
+                vt = vt[_meilleures(a[vt], b[vt], cos[vt], VOISINES_MAX)]
+                for x, y, hh, tt in zip(a[vt].tolist(), b[vt].tolist(), ham_or[vt].tolist(), t_rel[vt].tolist()):
+                    tournees.setdefault((x, y), (hh, tt))
+        tournees = [(liste[x], liste[y], hh, tt) for (x, y), (hh, tt) in sorted(tournees.items(),
+                                                                              key=lambda e: (e[1][0], e[0]))]
+        return sortie(verif, ordre), sortie(directes, ordre), tournees
+
+    def _produits_empreintes(self, valeurs, seuil, fait):
+        """Paires (i < j) d'empreintes de `valeurs` (entiers de 64 bits) qui se ressemblent : chaque bit devient +1 ou
+        -1, et le produit de deux empreintes vaut alors 64 - 2 × leur distance de Hamming, exactement ; un produit de
+        matrices (comme pour les vecteurs) va bien plus vite que bit à bit. Par blocs qui tiennent dans le cache du
+        processeur ; seules les lignes qui ont au moins une voisine sont examinées en détail. Renvoie (i, j, fait)."""
+        m = len(valeurs)
+        if m < 2:
+            return np.zeros(0, np.int64), np.zeros(0, np.int64), fait
+        bits = (np.unpackbits(np.ascontiguousarray(valeurs, dtype=np.uint64).view(np.uint8).reshape(m, 8), axis=1,
+                              bitorder='little').astype(np.float32) * 2 - 1)
+        pa, pb = [], []
+        for i in range(0, m, BLOC_EMPREINTES):
+            for j in range(i, m, BLOC_EMPREINTES):
+                self._verifier_arret()
+                s = bits[i:i + BLOC_EMPREINTES] @ bits[j:j + BLOC_EMPREINTES].T
+                lignes = np.flatnonzero(s.max(axis=1) >= seuil)
+                if len(lignes):
+                    ii, jj = np.nonzero(s[lignes] >= seuil)
+                    ii = lignes[ii] + i
+                    jj = jj + j
+                    garde = ii < jj
+                    pa.append(ii[garde])
+                    pb.append(jj[garde])
+                fait += 1
+                self._avancer(fait)
+        if not pa:
+            return np.zeros(0, np.int64), np.zeros(0, np.int64), fait
+        return np.concatenate(pa).astype(np.int64), np.concatenate(pb).astype(np.int64), fait
+
+    def _verifications(self, paires, tournees, comptes):
         """Mesures de verifier() pour chaque paire, dans l'ordre : gardées en base, calculées si elles manquent. Les
-        retouchées se réunissent au fur et à mesure ; deux photos déjà réunies ne sont pas comparées (_SAUTEE).
-        Renvoie (mesures, ensembles des retouchées)."""
+        retouchées se réunissent au fur et à mesure ; deux photos déjà réunies ne sont pas comparées (_SAUTEE). Puis
+        les copies tournées ou en miroir possibles (tournees : (a, b, hamming, t)), la miniature de b tournée, qui ne
+        comptent que si elles sont des retouches. Renvoie (mesures, mesures des tournées, ensembles des retouchées)."""
         c = self._cnx()
-        connues = {}
-        cles = sorted((a, b) for a, b, _, _ in paires)
-        for i in range(0, len(cles), LOT_ECRITURE):
-            lot = cles[i:i + LOT_ECRITURE]
-            voulues = set(lot)
-            for a, b, m in c.execute('SELECT a, b, mesure FROM doublons_paires WHERE a BETWEEN ? AND ?',
-                                     (lot[0][0], lot[-1][0])):
-                if (a, b) in voulues:
-                    connues[(a, b)] = m
+
+        def lire(table, voulues, cle):
+            connues = {}
+            voulues = sorted(voulues)
+            for i in range(0, len(voulues), LOT_ECRITURE):
+                lot = voulues[i:i + LOT_ECRITURE]
+                dans = set(lot)
+                for ligne in c.execute(f'SELECT * FROM {table} WHERE a BETWEEN ? AND ?', (lot[0][0], lot[-1][0])):
+                    if cle(ligne) in dans:
+                        connues[cle(ligne)] = ligne[-1]
+            return connues
+        connues = lire('doublons_paires', {(a, b) for a, b, _, _ in paires}, lambda r: (r[0], r[1]))
+        connues_t = lire('doublons_tournees', {(a, b, t) for a, b, _, t in tournees}, lambda r: (r[0], r[1], r[2]))
         pyramides = OrderedDict()
 
-        def pyramide(pid):
-            p = pyramides.get(pid)
+        def pyramide(pid, t=0):
+            p = pyramides.get((pid, t))
             if p is None:
                 jpeg = self.base.miniature(pid)
                 try:
-                    p = preparer_verification(jpeg) if jpeg else False
+                    p = preparer_verification(jpeg, t) if jpeg else False
                 except Exception:
                     p = False
-                pyramides[pid] = p
+                pyramides[(pid, t)] = p
                 if len(pyramides) > 256:
                     pyramides.popitem(last=False)
             else:
-                pyramides.move_to_end(pid)
+                pyramides.move_to_end((pid, t))
             return p
 
         retouches = _Ensembles()
-        mesures = []
-        nouvelles = []
-        calculees = 0
-        for k, (a, b, _, _) in enumerate(paires):
+        nouvelles = {'doublons_paires': [], 'doublons_tournees': []}
+        calculees = [0]
+
+        def enregistrer(table, ligne, fin=False):
+            if ligne is not None:
+                nouvelles[table].append(ligne)
+                calculees[0] += 1
+            if nouvelles[table] and (fin or len(nouvelles[table]) >= LOT_ECRITURE):
+                marques = ', '.join('?' * len(nouvelles[table][0]))
+                self._ecrire(f'INSERT OR REPLACE INTO {table} VALUES ({marques})', nouvelles[table])
+                nouvelles[table] = []
+
+        def une(k, a, b, t, brut, table, cle):
             if k % 16 == 0:
                 self._verifier_arret()
             if retouches.trouver(a) == retouches.trouver(b):
-                mesures.append(_SAUTEE)
+                m = _SAUTEE
             else:
-                brut = connues.get((a, b))
                 if brut is not None:
                     m = json.loads(brut)
                 else:
-                    pa, pb = pyramide(a), pyramide(b)
+                    pa, pb = pyramide(a), pyramide(b, t)
                     m = verifier(pa, pb) if pa and pb else None
-                    nouvelles.append((a, b, json.dumps(m, separators=(',', ':'))))
-                    calculees += 1
-                    if len(nouvelles) >= LOT_ECRITURE:
-                        self._ecrire('INSERT OR REPLACE INTO doublons_paires(a, b, mesure) VALUES (?, ?, ?)', nouvelles)
-                        nouvelles = []
+                    enregistrer(table, cle + (json.dumps(m, separators=(',', ':')),))
                 if est_retouchee(m):
                     retouches.unir(a, b)
-                mesures.append(m)
             self._avancer(k + 1)
-        if nouvelles:
-            self._ecrire('INSERT OR REPLACE INTO doublons_paires(a, b, mesure) VALUES (?, ?, ?)', nouvelles)
+            return m
+
+        mesures = [une(k, a, b, 0, connues.get((a, b)), 'doublons_paires', (a, b))
+                   for k, (a, b, _, _) in enumerate(paires)]
+        mesures_t = [une(len(paires) + k, a, b, t, connues_t.get((a, b, t)), 'doublons_tournees', (a, b, t))
+                     for k, (a, b, _, t) in enumerate(tournees)]
+        for table in nouvelles:
+            enregistrer(table, None, fin=True)
         comptes['paires_verifiees'] = len(paires)
-        comptes['paires_calculees'] = calculees
-        return mesures, retouches
+        comptes['paires_tournees'] = len(tournees)
+        comptes['paires_calculees'] = calculees[0]
+        return mesures, mesures_t, retouches

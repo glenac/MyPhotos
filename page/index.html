@@ -441,7 +441,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 .r-fin { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .r-fin .note { margin: 0; }
 .r-fin .r-fermeture { flex-basis: 100%; }
-#r-raccourci { white-space: normal; max-width: 100%; text-align: left; }
+#r-raccourci, #r-aide { white-space: normal; max-width: 100%; text-align: left; }
 
 /* ------------------------------------------------ visionneuse */
 .visionneuse {
@@ -676,6 +676,20 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   .fenetre-corps, .panneau-corps { padding-left: 18px; padding-right: 18px; }
   .v-actions .bouton { flex: 1 1 calc(50% - 5px); white-space: normal; }
   .v-infos { padding: 10px 14px 14px; }
+}
+/* Grand texte sur un écran étroit : les boutons de la sélection passent sous le nombre de photos cochées, qui reste
+   lisible en entier (0.4.1 ; avant, à 420 px en « Très grande » : « 2 sélec… »). */
+@media (max-width: 640px) {
+  :root[data-taille="grande"] .barre-selection, :root[data-taille="tres-grande"] .barre-selection {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  :root[data-taille="grande"] .sel-actions, :root[data-taille="tres-grande"] .sel-actions {
+    grid-column: 1 / -1; justify-content: flex-start;
+  }
+}
+@media (max-width: 460px) {                 /* (taille normale : « 1 234 sélectionnées » ne tiendrait pas non plus) */
+  .barre-selection { grid-template-columns: auto minmax(0, 1fr); }
+  .sel-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
 /* Grand texte : l'en-tête passe sur deux lignes, et les boutons de la sélection gardent leurs icônes seules, plus tôt
    (les largeurs des requêtes de média ne suivent pas la taille du texte). */
@@ -1026,6 +1040,11 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
         <button id="r-nv-verifier" class="bouton petit actualiser" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg><span>Rechercher une nouvelle version</span></button>
         <button id="r-nv-installer" class="bouton petit principal" type="button" hidden>Mettre à jour</button>
       </div>
+    </section>
+    <section aria-labelledby="r-t-aide">
+      <h3 id="r-t-aide">Besoin d’aide ?</h3>
+      <p id="r-aide-explication" class="note">Ce bouton copie un petit texte qui décrit MyPhotos et votre ordinateur. Collez-le (Ctrl+V) dans un e-mail ou un message WhatsApp à la personne qui vous aide. Il contient les noms de vos dossiers de photos : à n’envoyer qu’à quelqu’un de confiance.</p>
+      <button id="r-aide" class="bouton" type="button" aria-describedby="r-aide-explication"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Copier pour demander de l’aide</button>
     </section>
     <section class="r-fin">
       <button id="r-quitter" class="bouton danger" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Arrêter MyPhotos</button>
@@ -1607,8 +1626,30 @@ async function chargerDossiers() {
 function infosDossier(d) {
   const infos = [d.photos ? pluriel(d.photos, 'photo') : 'aucune photo pour le moment'];
   if (d.photos && d.a_faire > 0) infos.push(`${nombre.format(d.a_faire)} à analyser`);
-  if (!d.disponible) infos.push('inaccessible pour le moment (disque débranché ?)');
+  if (d.autre_disque) infos.push('inaccessible : un autre disque occupe sa lettre');
+  else if (!d.disponible) infos.push('inaccessible pour le moment (disque débranché ?)');
   return infos.join(' · ');
+}
+
+/** « C'est bien le même disque » (0.4.1) : le disque branché à la lettre de ce dossier est bien le sien. */
+async function memeDisque(d, bouton) {
+  const ok = await confirmer({titre: 'Est-ce bien le même disque ?', oui: 'Oui, c’est le même disque', danger: true,
+    texte: [`« ${d.chemin} »`,
+      'MyPhotos ne reconnaît pas le disque branché à cette place : beaucoup de ses photos n’y sont pas. C’est peut-être un autre disque (une sauvegarde, une clé USB) qui a pris sa lettre.',
+      'Si c’est bien le disque de ce dossier, MyPhotos l’adopte : les photos qui n’y sont plus seront retirées de MyPhotos (rien n’est supprimé de vos disques), et les nouvelles seront ajoutées.',
+      'En cas de doute, choisissez Annuler : vos photos restent gardées jusqu’au retour de leur disque.']});
+  if (!ok) return;
+  bouton.disabled = true;
+  try {
+    await api('/api/dossiers/meme-disque', {id: d.id});
+    annoncer('Disque adopté : MyPhotos refait le tour de ce dossier.');
+    await chargerDossiers();
+    apresChangementDossiers();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    bouton.disabled = false;
+  }
 }
 
 /** Chemin d'un sous-dossier, montré à partir de son dossier suivi (« Captures d'écran » plutôt que tout le chemin). */
@@ -1632,6 +1673,9 @@ function ligneDossier(d, reglages) {
   return el('li', {classe: 'dossier'}, icone('dossier'),
     el('div', {classe: 'dossier-texte'}, el('span', {classe: 'dossier-chemin', texte: d.chemin}),
       el('span', {classe: 'dossier-infos', texte: infosDossier(d)}), exclusions,
+      reglages && d.autre_disque ? el('button', {classe: 'bouton-lien', type: 'button',
+        'aria-label': `C’est bien le même disque pour ${d.chemin}`,
+        onclick: (ev) => memeDisque(d, ev.currentTarget)}, 'C’est bien le même disque') : null,
       reglages ? el('button', {classe: 'bouton-lien', type: 'button', 'aria-label': `Exclure un sous-dossier de ${d.chemin}`,
         onclick: (ev) => exclureSousDossier(d, ev.currentTarget)}, 'Exclure un sous-dossier…') : null),
     el('button', {classe: 'bouton petit', type: 'button', 'aria-label': `Retirer le dossier ${d.chemin}`,
@@ -3175,14 +3219,13 @@ async function copierPhotos(ids) {
   occuper(true);
   try {
     const r = await api('/api/copier', {ids});
-    if (r.retirees && r.retirees.length) photosRetirees(r.retirees);
     const n = r.copiees, refus = r.nb_refusees || 0;
     let t = `${n > 1 ? `${nombre.format(n)} photos copiées` : 'Photo copiée'}. Collez-${n > 1 ? 'les' : 'la'} où vous voulez avec Ctrl+V : dans un dossier, un e-mail, un document…`;
     if (refus) t += ` ${refus > 1 ? `${nombre.format(refus)} photos n’ont pas pu être copiées` : 'Une photo n’a pas pu être copiée'} : ${raisonsGroupees(r.refusees, refus)[0]}`;
     annoncer(t, refus ? 'erreur' : 'info');
     return r;
   } catch (err) {
-    if (err.statut === 410) photosRetirees(ids, err.message); else annoncer(err.message, 'erreur');
+    annoncer(err.message, 'erreur');
     return null;
   } finally {
     occuper(false);
@@ -3197,11 +3240,10 @@ async function copierPhotosVers(ids) {
   annoncer('Une fenêtre s’ouvre pour choisir où copier les photos.');
   try {
     const r = await api('/api/copier-vers', {ids});
-    if (r.retirees && r.retirees.length) photosRetirees(r.retirees);
     if (!r.annule) suivreCopie(r.copie);
     return r;
   } catch (err) {
-    if (err.statut === 410) photosRetirees(ids, err.message); else annoncer(err.message, 'erreur');
+    annoncer(err.message, 'erreur');
     return null;
   } finally {
     occuper(false);
@@ -3910,6 +3952,20 @@ async function creerRaccourci(bouton) {
   }
 }
 
+// Réglages, « Copier pour demander de l'aide » (0.4.1) : le serveur compose le texte et le met dans le presse-papiers
+// de Windows (la page n'a pas besoin de l'API Clipboard, ni de voir le journal).
+async function copierAide(bouton) {
+  bouton.disabled = true;
+  try {
+    await api('/api/aide/copier', {});
+    annoncer('Texte copié. Collez-le (Ctrl+V) dans un e-mail ou un message à la personne qui vous aide.');
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
 // ---------------- changer de moteur
 async function ouvrirChoixMoteur() {
   const d = $('#moteurs');
@@ -4188,12 +4244,11 @@ function brancher() {
   $('#v-ouvrir').addEventListener('click', async () => {
     const id = V.id;
     try { await api('/api/ouvrir', {id}); annoncer('La photo s’ouvre dans la visionneuse de Windows…'); }
-    catch (err) { if (err.statut === 410) photosRetirees([id], err.message); else annoncer(err.message, 'erreur'); }
+    catch (err) { annoncer(err.message, 'erreur'); }
   });
   $('#v-montrer').addEventListener('click', async () => {
-    const id = V.id;
-    try { await api('/api/montrer', {id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
-    catch (err) { if (err.statut === 410) photosRetirees([id], err.message); else annoncer(err.message, 'erreur'); }
+    try { await api('/api/montrer', {id: V.id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
+    catch (err) { annoncer(err.message, 'erreur'); }
   });
 
   // Réglages et fenêtres
@@ -4216,6 +4271,7 @@ function brancher() {
   $('#actualiser').addEventListener('click', actualiser);
   $('#r-changer').addEventListener('click', ouvrirChoixMoteur);
   $('#r-raccourci').addEventListener('click', (ev) => creerRaccourci(ev.currentTarget));
+$('#r-aide').addEventListener('click', (ev) => copierAide(ev.currentTarget));
   $('#r-quitter').addEventListener('click', quitter);
   for (const r of document.querySelectorAll('input[name="taille-texte"]')) {
     r.addEventListener('change', () => { if (r.checked) choisirTaille(r.value); });

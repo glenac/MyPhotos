@@ -95,6 +95,7 @@ Le bouton **Réglages**, en haut à droite, regroupe :
 - **Moteur de reconnaissance** : le moteur utilisé, et le bouton **Changer de moteur**.
 - **Votre ordinateur** : ce que MyPhotos sait de votre PC.
 - **Raccourci** (MyPhotos.exe seul) : **Créer un raccourci sur le Bureau et dans le menu Démarrer**. La version installée a déjà le sien.
+- **Besoin d'aide ?** : **Copier pour demander de l'aide** met dans le presse-papiers un petit texte qui décrit MyPhotos et votre ordinateur (version, Windows, moteur, nombre de photos, dossiers suivis, état de l'analyse et de la mise à jour, dernières lignes du journal de MyPhotos). Collez-le (Ctrl+V) dans un e-mail ou un message WhatsApp à la personne qui vous aide. Il ne contient jamais vos recherches, mais il contient les noms de vos dossiers de photos : à n'envoyer qu'à quelqu'un de confiance.
 - **Arrêter MyPhotos**.
 
 **Fermer la fenêtre arrête MyPhotos.** Si un travail est en cours (analyse, copie, recherche des doublons, téléchargement du moteur), MyPhotos demande d'abord s'il faut vraiment l'arrêter ; l'analyse reprendra au lancement suivant. Un double-clic sur MyPhotos alors qu'il est déjà ouvert ramène simplement sa fenêtre au premier plan. MyPhotos retient la place et la taille de sa fenêtre d'une fois sur l'autre.
@@ -122,12 +123,12 @@ La visionneuse propose les mêmes actions pour la photo affichée.
 Le bouton **Doublons**, en haut à droite, ouvre l'écran des photos en double. Cliquez sur **Chercher les doublons** : MyPhotos compare vos photos entre elles, sur votre ordinateur, et vous pouvez continuer à chercher pendant ce temps. Il les range en trois rubriques :
 
 - **Copies identiques** : le même fichier, enregistré plusieurs fois ;
-- **Copies retouchées** : la même photo, réduite, recompressée (envoyée par WhatsApp…), légèrement recadrée ou redressée, convertie en PNG, éclaircie ou assombrie, ou entourée d'une bordure ;
+- **Copies retouchées** : la même photo, réduite, recompressée (envoyée par WhatsApp…), légèrement recadrée ou redressée, convertie en PNG, éclaircie ou assombrie, entourée d'une bordure, et depuis la 0.4.1 tournée d'un quart de tour ou d'un demi-tour, ou retournée en miroir ;
 - **Photos très proches (rafales)** : plusieurs prises du même instant. Cette rubrique est repliée et rien n'y est coché : à vous de choisir.
 
 Chaque photo s'affiche avec sa définition, sa taille, sa date et son dossier. Dans chaque groupe, MyPhotos indique la photo **À garder** (la plus grande ; à définition égale, l'original plutôt qu'une copie évidente comme « IMG_0001 - Copie.jpg », puis le fichier le plus détaillé) et coche les autres. Vérifiez, cochez ou décochez (un clic sur une miniature l'ouvre en grand), puis cliquez sur **Supprimer les copies cochées** : le bouton indique la place qu'elles occupent. Après confirmation, elles partent dans la Corbeille de Windows ; la place est libérée quand vous la videz. MyPhotos refuse de mettre à la Corbeille toutes les photos d'un groupe de copies : il ne vous en resterait aucune.
 
-La première recherche prend un peu de temps : environ 40 secondes pour 10 000 photos sur le PC d'essai, avec une photothèque riche en rafales. MyPhotos garde ce qu'il a déjà comparé : les recherches suivantes ne prennent que quelques secondes. Quand l'analyse ajoute des photos, ou quand vous en supprimez, la liste se met à jour d'elle-même. Les photos pas encore analysées ne sont comparées qu'à l'identique. Limites : une photo retournée en miroir, tournée d'un quart de tour ou très recadrée n'est pas reconnue comme une copie. Détails et mesures : [outils/DOUBLONS.md](outils/DOUBLONS.md).
+La première recherche prend un peu de temps : environ 40 secondes pour 10 000 photos sur le PC d'essai, avec une photothèque riche en rafales. MyPhotos garde ce qu'il a déjà comparé : les recherches suivantes ne prennent que quelques secondes. Quand l'analyse ajoute des photos, ou quand vous en supprimez, la liste se met à jour d'elle-même. Les photos pas encore analysées ne sont comparées qu'à l'identique. Limite : une photo très recadrée (plus d'un tiers retiré), même tournée, n'est pas reconnue comme une copie ; elle peut arriver dans « Photos très proches ». Détails et mesures : [outils/DOUBLONS.md](outils/DOUBLONS.md).
 
 ## Le moteur de reconnaissance
 
@@ -265,7 +266,7 @@ Pour chaque photo, le moteur estime la probabilité qu'elle corresponde à votre
 
 ### Mes photos sont sur un disque externe ou sur le réseau.
 
-Ajoutez le dossier comme les autres. Si le disque est débranché ou le dossier injoignable, MyPhotos garde ce qu'il en sait et reprend quand le dossier revient. Depuis la 0.4.0, il reconnaît aussi le disque lui-même (son numéro de série) : si un autre disque prend la même lettre, par exemple deux disques USB qui échangent leurs lettres, le dossier est simplement traité comme débranché, et rien n'est oublié. Un disque recopié ou cloné, qui porte les mêmes photos aux mêmes endroits, est reconnu et repris tel quel.
+Ajoutez le dossier comme les autres. Si le disque est débranché ou le dossier injoignable, MyPhotos garde ce qu'il en sait et reprend quand le dossier revient. Depuis la 0.4.0, il reconnaît aussi le disque lui-même (son numéro de série) : si un autre disque prend la même lettre, par exemple deux disques USB qui échangent leurs lettres, le dossier est simplement traité comme débranché, et rien n'est oublié. Un disque recopié ou cloné, qui porte les mêmes photos aux mêmes endroits, est reconnu et repris tel quel. Si c'est bien votre disque, mais que ses photos ont beaucoup changé (disque remplacé, photos rangées autrement), les Réglages le signalent sous le dossier (« un autre disque occupe sa lettre ») et proposent **C'est bien le même disque** : après confirmation, MyPhotos adopte ce disque et refait le tour du dossier. Un même dossier ne peut pas être ajouté deux fois, même écrit autrement (nom court comme « PHOTOS~1 », raccourci de dossier) : MyPhotos le reconnaît et le dit.
 
 ## Développement
 
@@ -293,7 +294,7 @@ python -m venv .venv
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (377 essais) :
+**Tests** (429 essais) :
 
 ```powershell
 .venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature
@@ -367,7 +368,7 @@ Des idées pour les versions suivantes, sans date promise :
 
 **First run.** MyPhotos opens in its own window, with a three-step assistant: « Votre ordinateur » (MyPhotos describes your PC and recommends an engine; click « Télécharger »), « Vos photos » (pick your photo folders with « Ajouter » or « Ajouter un dossier… »), and « Analyse » (each photo is analysed once; you can start searching right away with « Commencer à chercher »). Before a folder is added, MyPhotos lists its largest subfolders with their photo counts; screenshot and wallpaper folders are unticked by default and become excluded subfolders.
 
-**Window.** Closing the window stops MyPhotos (it asks first if work is in progress); launching MyPhotos again while it runs brings its window back. MyPhotos.exe alone can create its own desktop and Start menu shortcuts (« Réglages » > « Raccourci »).
+**Window.** Closing the window stops MyPhotos (it asks first if work is in progress); launching MyPhotos again while it runs brings its window back. MyPhotos.exe alone can create its own desktop and Start menu shortcuts (« Réglages » > « Raccourci »). Since 0.4.1, « Réglages » > « Copier pour demander de l'aide » copies a short report (versions, engine, folders, recent log lines; never your searches) to paste into an e-mail to whoever helps you.
 
 **Refresh and exclude.** « Actualiser » (above the photos and in « Réglages ») rescans all folders right away: new photos are added, deleted ones are forgotten, unreachable drives keep their photos, and MyPhotos reports what changed. In « Réglages », « Exclure un sous-dossier… » hides a subfolder from MyPhotos without deleting anything; « Ne plus exclure » brings it back. A photo whose file has disappeared is forgotten as soon as you open it, unless its drive is simply unplugged.
 
@@ -375,7 +376,7 @@ Des idées pour les versions suivantes, sans date promise :
 
 **Select, copy, delete.** Tick photos as in Google Photos: hover a thumbnail and click the circle (long-press on a touch screen), Shift+click for a range, Ctrl+A for everything shown, Esc to clear. « Copier » (Ctrl+C) puts the files on the Windows clipboard; « Copier dans un dossier… » copies them to a folder you pick, never overwriting anything; « Supprimer » (Del) sends them to the Recycle Bin after confirmation. The viewer offers the same actions.
 
-**Duplicates.** The « Doublons » screen finds exact copies, edited copies (resized, recompressed by WhatsApp, slightly cropped or straightened, converted, brightened…) and bursts. Each photo is shown with its resolution, size, date and folder; MyPhotos marks the one to keep (« À garder ») and ticks the others, but ticks nothing in bursts. « Supprimer les copies cochées » sends the ticked photos to the Recycle Bin after confirmation, and never all the copies of a photo. The first run takes about 40 s for 10,000 photos on the test PC; later runs take seconds. Details: [outils/DOUBLONS.md](outils/DOUBLONS.md) (in French).
+**Duplicates.** The « Doublons » screen finds exact copies, edited copies (resized, recompressed by WhatsApp, slightly cropped or straightened, converted, brightened…, and since 0.4.1 rotated by a quarter or half turn, or mirrored) and bursts. Each photo is shown with its resolution, size, date and folder; MyPhotos marks the one to keep (« À garder ») and ticks the others, but ticks nothing in bursts. « Supprimer les copies cochées » sends the ticked photos to the Recycle Bin after confirmation, and never all the copies of a photo. The first run takes about 40 s for 10,000 photos on the test PC; later runs take seconds. Details: [outils/DOUBLONS.md](outils/DOUBLONS.md) (in French).
 
 **Engines.** Four engines, all based on Google's SigLIP 2 (Apache-2.0), using onnx-community's fp16 ONNX exports:
 

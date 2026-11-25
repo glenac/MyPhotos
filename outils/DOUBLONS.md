@@ -10,7 +10,7 @@ ni regardée. Moteur de vecteurs mesuré : `base` (celui par défaut).
 | Niveau | Ce qu'on y trouve | Proposées à la suppression | Précision mesurée | Rappel mesuré |
 |---|---|---|---:|---:|
 | `identiques` | fichiers identiques octet par octet | toutes sauf une | 100 % (SHA-256) | 100 % (les 111 copies, et 3 doublons déjà dans le jeu public) |
-| `retouchees` | même photo réduite, recompressée, recadrée, redressée, convertie, sans EXIF, avec bordure, éclaircie ou assombrie | toutes sauf une | 100 % (0 photo différente sur 1,44 million de paires) | 99,6 % (4 098 / 4 114) |
+| `retouchees` | même photo réduite, recompressée, recadrée, redressée, convertie, sans EXIF, avec bordure, éclaircie ou assombrie, tournée (quart de tour, demi-tour) ou en miroir (0.4.1) | toutes sauf une | 100 % (0 photo différente sur 1,44 million de paires) | 99,6 % (4 098 / 4 114) |
 | `proches` | rafales, prises du même instant | **aucune** | 99,8 % (rafales) | 93 % des paires d'une rafale dans la même série |
 
 - **Deux photos différentes n'ont jamais été réunies** dans « identiques » ou « retouchees » : 0 sur 1 437 228 paires
@@ -147,6 +147,97 @@ surtout par la **superposition des miniatures** (990 / 999 rafales, 0 photo diff
 partir de 0,96. Dans une vraie photothèque, la fenêtre de 30 min sur les dates de prise de vue écarte en plus deux
 photos semblables de jours différents.
 
+## Copies tournées ou en miroir (0.4.1)
+
+Mesuré le 25/11/2026, sur les mêmes images publiques (340 images, 333 origines) et sur des images générées
+(`outils/calibrer_doublons.py --tournees`). Une copie tournée d'un quart de tour, d'un demi-tour, ou retournée en
+miroir, n'a plus rien de commun avec l'original pour l'empreinte ordinaire (environ 32 bits sur 64 : du hasard) ;
+ses vecteurs restent assez voisins, mais pas assez pour la trouver seuls.
+
+**Méthode.** Chaque miniature reçoit, en plus de son empreinte, une ou plusieurs **empreintes orientées** (colonne
+`cles` de `doublons_empreintes`) : l'empreinte de l'image tournée et retournée dans une position de référence, choisie
+d'après ses grandes masses de lumière (coefficients de la transformée en cosinus : la direction la plus contrastée en
+largeur, puis le côté clair à gauche, puis en haut). Rien n'est recalculé sur l'image : les coefficients d'une image
+retournée sont ceux de l'original, transposés ou au signe près. Une copie tournée arrive à la même position, donc à la
+même empreinte. Quand un choix est indécis (écart sous 4 % du relief de l'empreinte, `MARGE_ORIENTATION` : image
+presque symétrique), les deux possibilités sont gardées : 1,3 empreinte orientée par photo en moyenne. Deux empreintes
+orientées voisines donnent l'orientation qui pose l'une sur l'autre ; la vérification se fait alors sur la miniature
+ainsi tournée, avec exactement les mêmes exigences que pour une retouche (table `doublons_tournees`). Une paire vérifiée
+ainsi ne compte que si c'est une retouche : jamais pour « proches ».
+
+Paires vérifiées comme copies tournées possibles :
+- empreintes orientées à au plus 12 bits (`HAMMING_CANDIDAT`), plus proches que les empreintes ordinaires, et vecteurs
+  à un cosinus d'au moins 0,55 quand les deux photos en ont (`COSINUS_TOURNEE`) ;
+- ou vecteurs voisins (cosinus d'au moins 0,86, dates compatibles), empreintes ordinaires éloignées (plus de 26 bits)
+  et empreintes orientées à au plus 26 bits (copie tournée et recadrée) ; au plus 12 par photo.
+
+**Vecteurs d'une photo et de sa copie tournée** (moteur `base`, 340 images) :
+
+| Copie | Cosinus min / 5 % / médiane |
+|---|---|
+| quart de tour (horaire) | 0,688 / 0,808 / 0,909 |
+| quart de tour (antihoraire) | 0,716 / 0,801 / 0,908 |
+| demi-tour | 0,630 / 0,734 / 0,874 |
+| miroir | 0,840 / 0,933 / 0,992 |
+| miroir haut-bas | 0,617 / 0,736 / 0,880 |
+| miroir et quart de tour | 0,666 à 0,700 / 0,786 / 0,908 |
+
+Entre photos différentes, 13,6 % des paires ont un cosinus d'au moins 0,60, 2,4 % d'au moins 0,70 : les vecteurs seuls
+ne peuvent pas choisir les paires à vérifier (100 000 photos : des centaines de millions de paires). D'où les
+empreintes orientées.
+
+**Empreintes orientées** (340 images, leurs 7 copies tournées ou en miroir, miniatures refaites comme l'analyse) :
+à au plus 12 bits pour 100 % des copies, des 7 orientations (sans garder les choix indécis : 96,2 à 99,7 %) ; entre
+photos différentes, 8 paires sur 57 630 à au plus 12 bits, autant qu'avec les empreintes ordinaires.
+
+**Calcul complet, photothèque « tournées »** (3 531 photos) : chaque origine publique avec ses copies (quarts de tour,
+demi-tour, miroir, miroir et quart de tour, quart de tour envoyé par WhatsApp, miroir recadré de 3 %, quart de tour
+recadré de 10 %) ; 167 images rendues symétriques (moitié gauche et son miroir) et leur rafale symétrique décalée de
+3 % ; 80 ciels et 80 textures générés (dégradés, nuages, sable, herbe), dont un sur quatre avec une copie tournée ou
+en miroir. Chaque image symétrique, chaque rafale, chaque ciel et chaque texture est une origine à part.
+
+| Copie réunie à l'original | Avant (0.4.0) | Après |
+|---|---:|---:|
+| quart de tour (horaire, antihoraire) | 0 / 686 | 686 / 686 |
+| demi-tour | 0 / 343 | 343 / 343 |
+| miroir | 1 / 343 | 343 / 343 |
+| miroir et quart de tour | 0 / 333 | 333 / 333 |
+| quart de tour envoyé par WhatsApp | 0 / 333 | 333 / 333 |
+| miroir recadré de 3 % | 1 / 333 | 331 / 333 |
+| quart de tour recadré de 10 % | 0 / 333 | 329 / 333 |
+
+- Photos différentes réunies : **aucune de plus**. Un seul groupe mêlé, avant comme après : une petite bobine posée
+  sur un fond uni, que le générateur a rendue symétrique sans presque la changer ; à 128 px, ses deux versions
+  symétriques (dont la rafale) ne se distinguent pas d'elle. Ce cas vient du jeu d'essai, pas des copies tournées
+  (19 paires fausses sur 12 000, toutes dans ce groupe). Aucune image symétrique, aucun ciel, aucune texture réunis à
+  un autre.
+- Photothèques « retouches » et « rafales » (mesures plus haut) : résultats identiques avant et après (25 850 paires
+  justes sur 25 850, aucun groupe mêlé, mêmes rappels) ; 1 041 et 130 paires vérifiées en plus comme copies tournées
+  possibles, aucune réunie.
+
+**Coût**, photothèque synthétique de 100 000 photos (`--perf 100000`, même PC) :
+
+| | Avant (0.4.0) | Après |
+|---|---:|---:|
+| relance (rien de changé) | 65,7 s | 50,9 s |
+| dont comparaisons | 59,4 s | 45,8 s |
+| premier calcul | 796 s | 616 s |
+| paires vérifiées | 115 075 | 121 235 |
+
+- Les comparaisons d'empreintes se font maintenant par blocs de 1 024 × 1 024, qui tiennent dans le cache du
+  processeur, et seules les lignes qui ont une voisine sont détaillées : 5,5 s au lieu de 19,4 s pour 100 000
+  empreintes. Ce gain paie le passage des empreintes orientées (1,3 par photo).
+- 6 160 vérifications de plus (copies tournées possibles, ~1,6 ms chacune, gardées ensuite). Le premier calcul
+  « avant » a été mesuré pendant d'autres calculs : à lire comme « pas plus long ». Une première version, sans les
+  conditions sur les empreintes ordinaires et les vecteurs, en vérifiait 78 000 de plus (+118 s) : sur des images
+  simples (fonds unis, dégradés), les empreintes orientées se ressemblent souvent sans que les photos se ressemblent.
+- Base de la 0.4.0 : au premier passage, seules les empreintes orientées sont calculées (46 s pour 100 000 photos) ;
+  les vérifications déjà gardées restent valables.
+
+**Limites** : une copie très recadrée (plus d'un tiers retiré) n'est toujours pas reconnue, tournée ou non ; une
+rotation d'un angle quelconque (au-delà de 4°, hors quarts de tour) non plus ; les images presque unies ne sont
+comparées qu'à l'identique.
+
 ## Choix des seuils
 
 | Réglage | Valeur | Pourquoi |
@@ -198,8 +289,10 @@ de 0,63 à 0,89 ; dates sur deux heures, 30 % sans date), environ 22 % des photo
   restent dans les objectifs (1,2 s et 15 s).
 - **Textes et petits détails** : la vérification se fait à 128 px. Une légende très fine sur un fond clair, ou deux
   captures d'écran qui ne diffèrent que par quelques mots, peuvent passer pour la même photo (5 textes ajoutés sur 333).
-- **Non détectés comme retouches** : rotation d'un quart de tour, image retournée (miroir), recadrage de plus d'un
-  tiers, montage ou collage. Ces photos peuvent tout de même arriver dans « proches » si leurs vecteurs sont très voisins.
+- **Non détectés comme retouches** : recadrage de plus d'un tiers (tourné ou non), rotation d'un
+  angle quelconque au-delà de 4°, montage ou collage. Ces photos peuvent tout de même arriver dans
+  « proches » si leurs vecteurs sont très voisins. Les quarts de tour, le demi-tour et le miroir sont
+  reconnus depuis la 0.4.1 (plus haut).
 - **Photo gardée** : la règle demandée (définition, puis taille du fichier) garde une conversion PNG plutôt que le
   JPEG d'origine (même définition, fichier plus lourd), et la version avec bordure plutôt que l'originale. Préférer à
   taille égale de définition la photo qui a gardé sa date de prise de vue serait une amélioration simple.

@@ -287,6 +287,142 @@ def fabriquer(origines, travail, graine=7):
     return verite
 
 
+TOURNEES = {'r90': (Image.Transpose.ROTATE_90,), 'r180': (Image.Transpose.ROTATE_180,),
+            'r270': (Image.Transpose.ROTATE_270,), 'miroir': (Image.Transpose.FLIP_LEFT_RIGHT,),
+            'miroir_r90': (Image.Transpose.TRANSPOSE,)}
+
+
+def _symetrique(im, decalage=0.0):
+    """La moitié gauche de l'image et son miroir (image symétrique), puis un cadre de 94 % de la largeur, décalé de
+    `decalage` (part de la largeur) : deux cadres décalés de 3 % sont une rafale, pas une copie, même en miroir."""
+    w, h = im.size
+    g = im.crop((0, 0, w // 2, h))
+    s = Image.new('RGB', (2 * (w // 2), h))
+    s.paste(g, (0, 0))
+    s.paste(g.transpose(Image.Transpose.FLIP_LEFT_RIGHT), (w // 2, 0))
+    cw = round(s.width * 0.94)
+    x = round(s.width * decalage)
+    return s.crop((x, 0, x + cw, h))
+
+
+def _ciel(rnd, w=1200, h=800):
+    """Ciel généré : dégradé vertical, nuages doux (bruit très flou), grain léger."""
+    haut = np.array([rnd.uniform(40, 140), rnd.uniform(90, 180), rnd.uniform(170, 250)])
+    bas = np.array([rnd.uniform(170, 250), rnd.uniform(170, 240), rnd.uniform(160, 250)])
+    y = np.linspace(0, 1, h)[:, None, None]
+    a = haut * (1 - y) + bas * y + np.zeros((h, w, 3))
+    g = np.random.default_rng(rnd.randrange(1 << 30))
+    nuages = Image.fromarray((g.random((6, 9)) * 255).astype(np.uint8)).resize((w, h), Image.Resampling.BICUBIC)
+    n = np.asarray(nuages, np.float32)[:, :, None] / 255.0
+    a = a * (1 - 0.5 * n) + 250 * 0.5 * n + g.normal(0, 3, (h, w, 3))
+    return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
+
+def _texture_generee(rnd, w=1200, h=800):
+    """Texture générée (sable, herbe, gravier) : bruit à plusieurs échelles, teinte au hasard, sans sujet."""
+    g = np.random.default_rng(rnd.randrange(1 << 30))
+    a = np.zeros((h, w), np.float32)
+    for k, poids in ((8, 0.5), (32, 0.3), (128, 0.2), (w, 0.15)):
+        b = Image.fromarray((g.random((max(2, h * k // w), k)) * 255).astype(np.uint8)).resize(
+            (w, h), Image.Resampling.BICUBIC)
+        a += poids * np.asarray(b, np.float32)
+    teinte = np.array([rnd.uniform(0.6, 1.2), rnd.uniform(0.6, 1.2), rnd.uniform(0.4, 1.0)])
+    return Image.fromarray(np.clip(a[:, :, None] * teinte, 0, 255).astype(np.uint8))
+
+
+def fabriquer_tournees(origines, travail, graine=13):
+    """Photothèque « tournees » (0.4.1) et sa vérité (verite_tournees.json) :
+    - chaque origine publique (avec une date EXIF) et ses copies tournées ou en miroir : quart de tour (r90, r270),
+      demi-tour, miroir, miroir et quart de tour ; un quart de tour envoyé par WhatsApp (1 600 px, qualité 70, sans
+      EXIF), un miroir recadré de 3 %, un quart de tour recadré de 10 % ;
+    - des images symétriques (une origine sur deux : moitié gauche et son miroir) et leur rafale (cadre décalé de
+      3 %, symétrique elle aussi : son miroir est elle-même, pas la première) ;
+    - 80 ciels et 80 textures générés (dégradés, nuages, sable, herbe : presque pareils dans tous les sens), avec
+      une copie en miroir ou tournée pour un sur quatre.
+    Chaque image symétrique, chaque rafale, chaque ciel et chaque texture est une origine à part : aucune ne doit être
+    réunie à une autre comme retouche."""
+    verite_f = travail / 'verite_tournees.json'
+    if verite_f.is_file():
+        return json.loads(verite_f.read_text(encoding='utf-8'))
+    rnd = random.Random(graine)
+    verite = {}
+    racine = travail / 'tournees' / 'photos'
+
+    def poser(rel, octets, origine, variante, cat):
+        p = racine / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(octets)
+        verite[rel.lower()] = {'origine': origine, 'variante': variante, 'categorie': cat}
+    for k, origine in enumerate(origines):
+        cat = re.sub(r'[^a-z0-9]+', '_', origine[0]['categorie']).strip('_') or 'divers'
+        src = origine[0]['octets']
+        if src[:2] == b'\xff\xd8':
+            src = _avec_exif(src)
+        im = modele.vers_rvb(ImageOps.exif_transpose(Image.open(io.BytesIO(src))))
+        poser(f'{cat}/{k:04d}.jpg', src, k, 'original', cat)
+        for v, ops in TOURNEES.items():
+            poser(f'{cat}/{k:04d}_{v}.jpg', _jpeg(im.transpose(*ops), 90, exif=True), k, v, cat)
+        r90 = im.transpose(Image.Transpose.ROTATE_90)
+        w, h = r90.size
+        r = min(1600, round(max(w, h) * 0.75)) / max(w, h)
+        poser(f'WhatsApp Images/{cat}_{k:04d}_r90_whatsapp.jpg',
+              _jpeg(r90.resize((round(w * r), round(h * r)), Image.Resampling.LANCZOS), 70), k, 'r90_whatsapp', cat)
+        poser(f'{cat}/{k:04d}_miroir_recadrage3.jpg',
+              _jpeg(_recadrer(im.transpose(Image.Transpose.FLIP_LEFT_RIGHT), 0.03, rnd), 90, exif=True), k,
+              'miroir_recadrage3', cat)
+        poser(f'{cat}/{k:04d}_r270_recadrage10.jpg',
+              _jpeg(_recadrer(im.transpose(Image.Transpose.ROTATE_270), 0.10, rnd), 90, exif=True), k,
+              'r270_recadrage10', cat)
+        if k % 2 == 0:
+            poser(f'symetriques/{k:04d}_sym.jpg', _jpeg(_symetrique(im, 0.0), 90), 100000 + k, 'original', 'symetrique')
+            poser(f'symetriques/{k:04d}_sym_rafale.jpg', _jpeg(_symetrique(im, 0.03), 90), 200000 + k, 'original',
+                  'symetrique')
+        if k % 50 == 0:
+            print(f'  tournées : {k + 1} / {len(origines)} origines', flush=True)
+    for k in range(80):
+        for nom, fabrique in (('ciel', _ciel), ('texture', _texture_generee)):
+            im = fabrique(rnd)
+            o = (300000 if nom == 'ciel' else 400000) + k
+            poser(f'{nom}s/{nom}_{k:03d}.jpg', _jpeg(im, 90), o, 'original', nom)
+            if k % 4 == 0:
+                v = ('miroir', 'r90', 'r180', 'r270')[(k // 4) % 4]
+                poser(f'{nom}s/{nom}_{k:03d}_{v}.jpg', _jpeg(im.transpose(*TOURNEES[v]), 90), o, v, nom)
+    verite_f.write_text(json.dumps(verite, ensure_ascii=False), encoding='utf-8')
+    return verite
+
+
+def mesurer_tournees(travail, cle, materiel_choisi, origines):
+    """Copies tournées ou en miroir : rappel par variante et photos différentes réunies, avant (recherche des copies
+    tournées coupée, comme la 0.4.0) et après, sur la photothèque « tournees » ; puis, s'ils sont là, sur les
+    photothèques « retouches » et « rafales » (pas de photo différente réunie de plus, durées)."""
+    verite = fabriquer_tournees(origines, travail)
+    sortie = {}
+    mondes = [('tournees', verite)]
+    v_f = travail / 'verite.json'
+    if v_f.is_file():
+        v = json.loads(v_f.read_text(encoding='utf-8'))
+        mondes += [(m, v[m]) for m in ('retouches', 'rafales') if (travail / m / 'donnees' / 'index.db').is_file()]
+    for monde, ver in mondes:
+        base = indexer(travail / monde, cle, materiel_choisi)
+        racine = Path(base.dossiers()[0]['chemin'])
+        for nom, actif in (('avant', False), ('apres', True)):
+            doublons.CHERCHER_TOURNEES = actif
+            t0 = time.perf_counter()
+            fin, res = bout_en_bout(base, cle, ver, racine)
+            fin['rappels'] = rappels(res, base, ver, racine, 'rafales' if monde == 'rafales' else 'retouches')
+            sortie[f'{monde}_{nom}'] = fin
+            r = fin['retouchees']
+            print(f"{monde} {nom} : {fin['duree_s']} s (relance {fin['duree_relance_s']} s), retouchées "
+                  f"{r['groupes']} groupes, {r['paires_justes']}/{r['paires']} paires justes, impurs {r['n_impurs']} "
+                  f"{r['impurs'][:3]} ; tournées vérifiées {fin['comptes'].get('paires_tournees')} ; "
+                  f"{time.perf_counter() - t0:.0f} s", flush=True)
+            for var, s in sorted(fin['rappels'].items()):
+                print('    ', var, s)
+        doublons.CHERCHER_TOURNEES = True
+        base.fermer()
+    return sortie
+
+
 # ---------------------------------------------------------------- index
 
 def indexer(monde, cle, materiel_choisi):
@@ -741,11 +877,19 @@ def main():
     ap.add_argument('--perf', default='')
     ap.add_argument('--markdown', action='store_true')
     ap.add_argument('--limite', type=int, default=0, help="nombre d'origines au plus (essai rapide)")
+    ap.add_argument('--tournees', action='store_true',
+                    help='copies tournées ou en miroir seulement (photothèque « tournees », avant / après)')
     a = ap.parse_args()
     travail = Path(a.travail)
     resultats_f = travail / 'resultats_doublons.json'
     resultats = json.loads(resultats_f.read_text(encoding='utf-8')) if resultats_f.is_file() else {}
-    if a.images:
+    if a.images and a.tournees:
+        travail.mkdir(parents=True, exist_ok=True)
+        origines = regrouper_origines(lister_sources(a.images))
+        if a.limite:
+            origines = origines[::max(1, len(origines) // a.limite)][:a.limite]
+        resultats.setdefault(a.moteur, {})['tournees'] = mesurer_tournees(travail, a.moteur, a.materiel, origines)
+    elif a.images:
         if a.reconstruire and travail.exists():
             for p in ('retouches', 'rafales', 'verite.json'):
                 q = travail / p

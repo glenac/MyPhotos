@@ -86,6 +86,17 @@ def fabrique(materiel='auto'):
     return MoteurPixels()
 
 
+class MoteurSymetrise(MoteurPixels):
+    """Comme MoteurPixels, mais en moyenne sur les 8 orientations de l'image : une copie tournée ou en miroir garde
+    à peu près son vecteur, comme avec le vrai moteur (cosinus de 0,62 à 0,99 : voir outils/DOUBLONS.md)."""
+
+    def vecteurs_images(self, lot):
+        n = len(lot)
+        x = lot.reshape(n, 3, 4, 8, 4, 8).mean(axis=(3, 5))
+        v = sum(np.rot90(y, k, axes=(2, 3)) for y in (x, x[..., ::-1]) for k in range(4)).reshape(n, -1)
+        return modele.normaliser(v - v.mean(axis=1, keepdims=True))
+
+
 class EssaiDoublons(unittest.TestCase):
     """Photothèque générée : une photo, sa copie exacte et ses retouches ; une rafale ; deux scènes différentes de
     même style ; deux images presque noires."""
@@ -134,10 +145,10 @@ class EssaiDoublons(unittest.TestCase):
         self.base.fermer()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def indexer(self):
+    def indexer(self, moteur=fabrique):
         if not self.base.dossiers():
             self.base.ajouter_dossier(str(self.photos))
-        ix = Indexeur(self.base, fabrique, CLE, fils_decodage=2)
+        ix = Indexeur(self.base, moteur, CLE, fils_decodage=2)
         self.a_fermer.append(ix.arreter)
         ix.relancer()
         self.assertTrue(ix.attendre(60), 'indexation trop longue')
@@ -219,6 +230,42 @@ class TestFonctions(unittest.TestCase):
         self.assertFalse(doublons.est_retouchee(doublons.verifier(ref, mini(t))))
         # Deux scènes différentes.
         self.assertFalse(doublons.est_retouchee(doublons.verifier(ref, mini(dessin(22, 900, 600)))))
+
+    def test_empreintes_orientees(self):
+        """Une copie tournée (quart de tour, demi-tour) ou en miroir a une empreinte orientée voisine de celle de
+        l'original, et l'orientation trouvée pose exactement l'une sur l'autre (vérification : une retouche)."""
+        def jpeg(im):
+            t = io.BytesIO()
+            im = im.copy()
+            im.thumbnail((360, 360))
+            im.save(t, 'JPEG', quality=80)
+            return t.getvalue()
+        T = Image.Transpose
+        for graine in (40, 41):
+            a = dessin(graine, 900, 600)
+            ja = jpeg(a)
+            ha, _, ca = doublons.empreinte_complete(ja)
+            cles_a = doublons.lire_cles(ca)
+            self.assertTrue(1 <= len(cles_a) <= 8)
+            pa = doublons.preparer_verification(ja)
+            for transp in (T.ROTATE_90, T.ROTATE_180, T.ROTATE_270, T.FLIP_LEFT_RIGHT, T.FLIP_TOP_BOTTOM,
+                           T.TRANSPOSE, T.TRANSVERSE):
+                jb = jpeg(a.transpose(transp))
+                hb, _, cb = doublons.empreinte_complete(jb)
+                self.assertGreater(doublons.distance(ha, hb), doublons.HAMMING_CANDIDAT, transp)   # pas vue avant
+                d, ta, tb = min((doublons.distance(x, y), ta, tb) for ta, x in cles_a
+                                for tb, y in doublons.lire_cles(cb))
+                self.assertLessEqual(d, doublons.HAMMING_CANDIDAT, transp)
+                t = doublons._RELATIVE[ta][tb]
+                self.assertNotEqual(t, 0)
+                m = doublons.verifier(pa, doublons.preparer_verification(jb, t))
+                self.assertTrue(doublons.est_retouchee(m), (transp, t, m))
+        # orienter() : 0 telle quelle, 1 miroir, 3 demi-tour, 5 et 6 quarts de tour (comme Pillow).
+        x = np.arange(12).reshape(3, 4)
+        im = Image.fromarray(x.astype(np.uint8))
+        for t, transp in ((1, T.FLIP_LEFT_RIGHT), (2, T.FLIP_TOP_BOTTOM), (3, T.ROTATE_180), (4, T.TRANSPOSE),
+                          (5, T.ROTATE_270), (6, T.ROTATE_90), (7, T.TRANSVERSE)):
+            self.assertTrue(np.array_equal(doublons.orienter(x, t), np.asarray(im.transpose(transp))), t)
 
     def test_choix_de_la_photo_a_garder(self):
         def p(i, w, h, taille, chemin='E:\\Photos\\x.jpg', date=None):
@@ -358,6 +405,61 @@ class TestDoublons(EssaiDoublons):
         tables = {r[0] for r in self.base._cnx().execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         self.assertTrue({'doublons_empreintes', 'doublons_paires', 'doublons_meta', 'photos'} <= tables)
         self.assertEqual(self.base._cnx().execute('PRAGMA user_version').fetchone()[0], 1)
+
+    def test_copies_tournees_ou_en_miroir(self):
+        """0.4.1 : une copie tournée d'un quart de tour, d'un demi-tour ou en miroir (même réduite et recompressée)
+        rejoint les copies retouchées ; une image symétrique, sa rafale et une autre image symétrique non."""
+        a = self.a
+        T = Image.Transpose
+        ecrire(self.photos / 'tournees' / 'quart.jpg', a.transpose(T.ROTATE_90), qualite=90)
+        ecrire(self.photos / 'tournees' / 'demi.jpg', a.transpose(T.ROTATE_180), qualite=90)
+        ecrire(self.photos / 'tournees' / 'miroir.jpg', a.transpose(T.FLIP_LEFT_RIGHT), qualite=90)
+        w, h = a.size
+        ecrire(self.photos / 'tournees' / 'quart_whatsapp.jpg',
+               a.transpose(T.ROTATE_270).resize((h // 2, w // 2), Image.Resampling.LANCZOS), qualite=70)
+
+        def symetrique(graine):                       # moitié gauche d'une scène et son miroir : symétrique
+            s = dessin(graine, 960, 675)
+            g = s.crop((0, 0, 480, 675))
+            im = Image.new('RGB', (960, 675))
+            im.paste(g, (0, 0))
+            im.paste(g.transpose(T.FLIP_LEFT_RIGHT), (480, 0))
+            return im
+        s1, s2 = symetrique(50), symetrique(51)
+        ecrire(self.photos / 'symetriques' / 'S1.jpg', s1.crop((0, 0, 900, 675)))
+        ecrire(self.photos / 'symetriques' / 'S1_rafale.jpg', s1.crop((30, 0, 930, 675)))     # décalée de 3 %
+        ecrire(self.photos / 'symetriques' / 'S2.jpg', s2.crop((30, 0, 930, 675)))
+        self.indexer(lambda materiel='auto': MoteurSymetrise())
+        tournees = {'tournees/quart.jpg', 'tournees/demi.jpg', 'tournees/miroir.jpg', 'tournees/quart_whatsapp.jpg'}
+        # Avant (0.4.0) : aucune n'était reconnue.
+        with mock.patch.object(doublons, 'CHERCHER_TOURNEES', False):
+            res = self.doublons().calculer()
+        self.assertFalse(any(tournees & self.noms(g) for g in self.groupes(res, 'retouchees')))
+        res = self.doublons().calculer()
+        retouchees = self.groupes(res, 'retouchees')
+        self.assertEqual(len(retouchees), 1, retouchees)
+        self.assertLessEqual(tournees | {'vacances/IMG_0001.jpg'}, self.noms(retouchees[0]))
+        self.assertGreaterEqual(res['comptes']['paires_tournees'], 3)
+        for g in res['groupes']:
+            noms = self.noms(g)
+            self.assertFalse({'symetriques/S1.jpg', 'symetriques/S2.jpg'} <= noms, g)
+            self.assertFalse({'divers/C.jpg', 'divers/D.jpg'} & noms, g)
+            if g['type'] != 'proches':
+                self.assertFalse({'symetriques/S1.jpg', 'symetriques/S1_rafale.jpg'} <= noms, g)
+        # Relance : rien n'est recalculé ; une base de la 0.4.0 (sans empreintes orientées) garde ses vérifications.
+        self.assertEqual(self.doublons().calculer()['comptes']['paires_calculees'], 0)
+        cnx = self.base._cnx()
+        cnx.execute('ALTER TABLE doublons_empreintes DROP COLUMN cles')
+        cnx.execute('DELETE FROM doublons_tournees')
+        paires = cnx.execute('SELECT COUNT(*) FROM doublons_paires').fetchone()[0]
+        res2 = self.doublons().calculer()
+        self.assertEqual(cnx.execute('SELECT COUNT(*) FROM doublons_paires').fetchone()[0], paires)
+        self.assertGreater(res2['comptes']['paires_calculees'], 0)          # les copies tournées seulement
+        self.assertLessEqual(res2['comptes']['paires_calculees'], res['comptes']['paires_tournees'])
+        self.assertEqual(cnx.execute('SELECT COUNT(*) FROM doublons_empreintes WHERE cles IS NULL AND phash IS NOT NULL')
+                         .fetchone()[0], 0)
+        self.assertEqual([sorted(p['id'] for p in g['photos']) for g in self.groupes(res2, 'retouchees')],
+                         [sorted(p['id'] for p in g['photos']) for g in retouchees])
 
     def test_relance_sans_rien_recalculer(self):
         self.indexer()

@@ -1382,6 +1382,71 @@ class TestExclusions(EssaiAvecImages):
                 except OSError:
                     pass
 
+    @unittest.skipUnless(os.name == 'nt', 'noms courts et jonctions : Windows')
+    def test_meme_dossier_autre_ecriture(self):
+        """0.4.1 : le même dossier suivi, écrit autrement (jonction, préfixe \\\\?\\, majuscules, nom court 8.3), est
+        reconnu ; ajouté par un nom court, il est enregistré sous son nom long ; un dossier ne peut pas être ajouté,
+        écrit autrement, dans un sous-dossier exclu ; « Vacances. » reste un autre dossier que « Vacances ». Avant, la
+        jonction et le nom court étaient acceptés : le même dossier suivi deux fois, ou suivi dans une exclusion."""
+        import _winapi
+        racine = self.tmp / 'racine'
+        famille = racine / 'Photos de famille 2021'
+        prive = famille / 'Privé'
+        ie.jpeg(famille / 'a.jpg', (200, 150))
+        ie.jpeg(prive / 'sous' / 'b.jpg', (200, 150))
+        (famille / 'Autre').mkdir()
+        lien = self.tmp / 'Lien vers famille'
+        lien_racine = self.tmp / 'Lien vers racine'
+        _winapi.CreateJunction(str(famille), str(lien))
+        _winapi.CreateJunction(str(racine), str(lien_racine))
+        v = self.tmp / 'V'
+        (v / 'Vacances').mkdir(parents=True)
+        os.mkdir(chemin_systeme(str(v / 'Vacances') + '.'))
+        try:
+            court = nom_court(famille)
+            if court:                                                # ajouté par son nom court : nom long gardé
+                self.assertEqual(self.base.ajouter_dossier(court)['chemin'], str(famille))
+                self.base.retirer_dossier(self.base.dossiers()[0]['id'])
+            d = self.base.ajouter_dossier(famille)
+            self.base.ajouter_exclusion(d['id'], str(prive))
+            ecritures = [str(lien), '\\\\?\\' + str(famille), str(famille).upper(), str(lien) + '\\']
+            if court:
+                ecritures.append(court)
+            for e in ecritures:
+                with self.subTest(ecriture=e), self.assertRaises(DossierRefuse) as r:
+                    self.base.ajouter_dossier(e)
+                self.assertIn('déjà dans MyPhotos', str(r.exception))
+            # Dans le sous-dossier exclu, à travers la jonction (ou par des noms courts) : refusé, avec le bon conseil.
+            dans_exclusion = [str(lien / 'Privé' / 'sous')]
+            if nom_court(prive / 'sous') and court:
+                dans_exclusion.append(os.path.join(court, os.path.basename(nom_court(prive)), 'sous'))
+            for e in dans_exclusion:
+                with self.subTest(ecriture=e), self.assertRaises(DossierRefuse) as r:
+                    self.base.ajouter_dossier(e)
+                self.assertIn('que vous avez exclu', str(r.exception))
+            with self.assertRaises(DossierRefuse) as r:
+                self.base.ajouter_dossier(str(lien / 'Autre'))
+            self.assertIn('fait déjà partie', str(r.exception))
+            # Le dossier qui le contient, écrit à travers une jonction : refusé (retirer d'abord l'autre).
+            with self.assertRaises(DossierRefuse) as r:
+                self.base.ajouter_dossier(str(lien_racine))
+            self.assertIn('sous une autre écriture', str(r.exception))
+            self.assertEqual([x['chemin'] for x in self.base.dossiers()], [str(famille)])
+            # « Vacances » et « Vacances. » : deux dossiers différents, suivis tous les deux.
+            self.base.ajouter_dossier(str(v / 'Vacances'))
+            self.assertEqual(self.base.ajouter_dossier(str(v / 'Vacances') + '.')['chemin'], str(v / 'Vacances') + '.')
+            self.assertEqual(len(self.base.dossiers()), 3)
+        finally:
+            for j in (lien, lien_racine):
+                try:
+                    os.rmdir(j)                                      # la jonction seule, pas ce qu'elle désigne
+                except OSError:
+                    pass
+            try:
+                os.rmdir(chemin_systeme(str(v / 'Vacances') + '.'))
+            except OSError:
+                pass
+
 
 class TestActualisation(EssaiAvecImages):
     """Bouton « Actualiser » : un inventaire numéroté, avec son bilan (nouvelles, retirées, dossiers injoignables)."""
