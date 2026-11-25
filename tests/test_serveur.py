@@ -455,18 +455,22 @@ class TestJeton(EssaiServeur):
 
     def test_adresse_d_entree(self):
         """La fenêtre, Edge, le navigateur et la relance ouvrent « /?jeton=… » : cookie HttpOnly, SameSite=Strict,
-        Path=/, sans date (le temps de la séance), puis « / » sans le jeton dans l'adresse."""
+        Path=/, sans date (le temps de la séance), puis « /?entree=1 » (le cookie est-il revenu ?), puis « / » sans le
+        jeton dans l'adresse."""
         j = jeton_essai()
         for page in ('/', '/index.html'):
             with self.subTest(page=page):
                 statut, e, corps = requete('GET', f'{page}?jeton={j}', entetes=self.NAVIGATION, jeton=False)
-                self.assertEqual((statut, e['location'], corps), (303, '/', b''))
+                self.assertEqual((statut, e['location'], corps), (303, '/?entree=1', b''))
                 self.assertEqual(e['cache-control'], 'no-store')
                 self.assertEqual(e['referrer-policy'], 'no-referrer')
                 morceaux = [m.strip() for m in e['set-cookie'].split(';')]
                 self.assertEqual(morceaux[0], f'myphotos-{PORT}={j}')
                 self.assertEqual(set(morceaux[1:]), {'Path=/', 'HttpOnly', 'SameSite=Strict'})
                 biscuit = morceaux[0].split('=', 1)[1]
+                statut, e, corps = requete('GET', '/?entree=1', entetes=self.NAVIGATION, jeton=biscuit)
+                self.assertEqual((statut, e['location'], corps), (303, '/', b''))
+                self.assertNotIn('set-cookie', e)
                 statut, _, corps = requete('GET', '/', entetes=self.NAVIGATION, jeton=biscuit)
                 self.assertEqual(statut, 200)
                 self.assertIn(b'<title>MyPhotos</title>', corps)
@@ -476,13 +480,40 @@ class TestJeton(EssaiServeur):
             with self.subTest(faux=faux):
                 self.assert_refus(*requete('GET', '/?' + urllib.parse.urlencode({'jeton': faux}),
                                            entetes=self.NAVIGATION, jeton=False), '/')
-        # Adresse d'entrée périmée (historique) avec un cookie valable : « / », sans nouveau cookie.
-        statut, e, _ = requete('GET', '/?jeton=perime', entetes=self.NAVIGATION)
-        self.assertEqual((statut, e['location']), (303, '/'))
-        self.assertNotIn('set-cookie', e)
+        # Adresse d'entrée périmée (historique) avec un cookie valable : « / », sans nouveau cookie ; de même avec le
+        # bon jeton et le cookie déjà là.
+        for adresse in ('/?jeton=perime', f'/?jeton={j}'):
+            statut, e, _ = requete('GET', adresse, entetes=self.NAVIGATION)
+            self.assertEqual((statut, e['location']), (303, '/'))
+            self.assertNotIn('set-cookie', e)
         # Un autre site peut mener à l'adresse d'entrée, mais sans le jeton il n'obtient que la petite page.
         self.assert_refus(*requete('GET', '/?jeton=devine', jeton=False, entetes=dict(
             self.NAVIGATION, **{'Sec-Fetch-Site': 'cross-site'})), '/')
+        self.vivant()
+
+    def test_navigateur_qui_refuse_les_cookies(self):
+        """Relecture adverse de la 0.4.0 (mode navigateur) : un navigateur réglé pour bloquer les cookies arrivait sur
+        « Ouvrez MyPhotos depuis son raccourci », alors qu'il venait de l'ouvrir ainsi. À l'arrivée de la redirection
+        d'entrée (« /?entree=1 », marqueur non secret) sans cookie valable, une page dit quoi faire ; une requête
+        ordinaire n'obtient toujours que la petite page, et l'API son JSON."""
+        j = jeton_essai()
+        statut, e, corps = requete('GET', f'/?jeton={j}', entetes=self.NAVIGATION, jeton=False)
+        self.assertEqual((statut, e['location']), (303, '/?entree=1'))
+        for jeton in (False, 'faux', j + 'x'):                     # cookie refusé (absent) ou abîmé
+            for page in ('/?entree=1', '/index.html?entree=1'):
+                with self.subTest(jeton=jeton, page=page):
+                    statut, e, corps = requete('GET', page, entetes=self.NAVIGATION, jeton=jeton)
+                    self.assertEqual(statut, 403)
+                    self.assertNotIn('set-cookie', e)
+                    self.assertTrue(e['content-type'].startswith('text/html'))
+                    texte = corps.decode('utf-8')
+                    self.assertIn('refuse les cookies de MyPhotos', texte)
+                    self.assertIn('autorisez-les pour 127.0.0.1', texte)
+                    self.assertNotIn(j, texte)
+                    self.assertNotIn('<script', texte)
+        for chemin in ('/', '/?entree=0', '/?autre=1', '/api/etat?entree=1', f'/miniature/{INCONNU}?entree=1'):
+            with self.subTest(chemin=chemin):
+                self.assert_refus(*requete('GET', chemin, entetes=self.NAVIGATION, jeton=False), chemin.split('?')[0])
         self.vivant()
 
     def test_jamais_dans_le_journal(self):

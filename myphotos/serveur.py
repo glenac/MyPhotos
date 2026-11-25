@@ -146,6 +146,7 @@ EN_TETE = 'X-MyPhotos'
 # MyPhotos sur deux ports ne se marchent pas dessus), adresse d'entrée « /?jeton=… », refus sans rien révéler.
 COOKIE_JETON = 'myphotos-{port}'
 PARAMETRE_JETON = 'jeton'
+PARAMETRE_ARRIVEE = 'entree'           # « /?entree=1 » : marqueur NON secret, posé par la redirection d'entrée
 JETON_REFUSE = 'Ouvrez MyPhotos depuis son raccourci.'
 # Relance : le port est tenu par un programme d'un autre compte Windows (ou que Windows ne laisse pas identifier) ;
 # rien ne lui est envoyé (fenetre.port_tenu_par).
@@ -153,6 +154,12 @@ PORT_PRIS = ('MyPhotos ne peut pas démarrer : le port {port} est déjà utilis�
              'ouvert sur un autre compte de cet ordinateur.')
 PAGE_REFUS = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
               f'<p>{JETON_REFUSE}</p></html>').encode('utf-8')
+# Mode navigateur : le navigateur a refusé le cookie du jeton (réglage « bloquer les cookies ») ; dit seulement à
+# l'arrivée de la redirection d'entrée (« /?entree=1 »), jamais à une requête ordinaire.
+COOKIES_REFUSES = ('Votre navigateur refuse les cookies de MyPhotos : autorisez-les pour 127.0.0.1 (MyPhotos, sur cet '
+                   'ordinateur), puis ouvrez de nouveau MyPhotos depuis son raccourci.')
+PAGE_COOKIES = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
+                f'<p>{COOKIES_REFUSES}</p></html>').encode('utf-8')
 _JETON = re.compile(r'[A-Za-z0-9_-]{32,128}')
 JETON_ESSAIS, JETON_PAUSE_S = 20, 0.05     # fichier « jeton » lu à l'instant par une relance : 1 s pour le remplacer
 PAGES = ('/', '/index.html')
@@ -3201,34 +3208,46 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         """Jeton d'accès, pour TOUTE requête (page, API, miniatures, photos, et les routes à venir : contrôle fait ici,
         avant l'aiguillage). Le cookie myphotos-<port> doit porter le jeton du serveur. Seule autre entrée : l'adresse
         d'entrée « /?jeton=… » (fenêtre, Edge, navigateur, relance), qui pose le cookie (HttpOnly, SameSite=Strict,
-        Path=/) et redirige vers « / » : le jeton ne reste ni dans l'adresse affichée ni dans l'historique de la page.
+        Path=/) et redirige vers « /?entree=1 », puis, le cookie reçu, vers « / » : le jeton ne reste ni dans l'adresse
+        affichée ni dans l'historique de la page.
+
+        « /?entree=1 » (marqueur non secret) sans cookie valable : le navigateur a refusé le cookie (réglage « bloquer
+        les cookies ») ; une page le dit (PAGE_COOKIES), au lieu de « Ouvrez MyPhotos depuis son raccourci ».
 
         Rend True si la requête continue ; sinon la réponse est déjà partie : redirection, ou refus 403 sans rien
         révéler (« Ouvrez MyPhotos depuis son raccourci » ; JSON pour /api/…, avec « jeton: requis » pour qu'une
         relance reconnaisse une MyPhotos qui n'est pas la sienne)."""
         jeton = self.server.jeton
         valide = bool(jeton) and self._cookie_ok(jeton)
-        if methode == 'GET' and chemin in PAGES and PARAMETRE_JETON in requete:
+        arrivee = False
+        if methode == 'GET' and chemin in PAGES and (PARAMETRE_JETON in requete or PARAMETRE_ARRIVEE in requete):
             try:
-                donnes = urllib.parse.parse_qs(requete, keep_blank_values=True, max_num_fields=20).get(PARAMETRE_JETON)
+                params = urllib.parse.parse_qs(requete, keep_blank_values=True, max_num_fields=20)
             except ValueError:
                 raise Refus('Requête refusée.', 400)
+            donnes = params.get(PARAMETRE_JETON)
+            arrivee = (params.get(PARAMETRE_ARRIVEE) or [''])[-1] == '1'
             if donnes:
                 entree = jeton_egal(donnes[-1], jeton)
                 if entree or valide:            # jeton juste, ou adresse d'entrée périmée avec un cookie valable
                     entetes = {'Location': '/', 'Cache-Control': 'no-store'}
-                    if entree:
+                    if entree and not valide:
                         entetes['Set-Cookie'] = (f'{nom_cookie(self.server.server_port)}={jeton}; Path=/; HttpOnly; '
                                                  'SameSite=Strict')
+                        entetes['Location'] = f'/?{PARAMETRE_ARRIVEE}=1'     # le cookie est-il bien revenu ?
                     self._envoyer(303, b'', 'text/plain; charset=utf-8', entetes)
                     return False
+            elif arrivee and valide:
+                self._envoyer(303, b'', 'text/plain; charset=utf-8', {'Location': '/', 'Cache-Control': 'no-store'})
+                return False
         if valide:
             return True
         self.close_connection = True
         if chemin.startswith('/api/'):
             self._json({'erreur': JETON_REFUSE, 'jeton': 'requis'}, 403)
         else:
-            self._envoyer(403, PAGE_REFUS, 'text/html; charset=utf-8', {'Cache-Control': 'no-store'})
+            self._envoyer(403, PAGE_COOKIES if arrivee else PAGE_REFUS, 'text/html; charset=utf-8',
+                          {'Cache-Control': 'no-store'})
         return False
 
     def _corps(self):
