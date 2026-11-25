@@ -1787,6 +1787,10 @@ class TestDossiersEtActualiser(unittest.TestCase):
         self.assertEqual(m({'nouvelles': 1, 'retirees': 1, 'injoignables': []}),
                          'Actualisation terminée : 1 nouvelle photo, 1 photo retirée. Elle va être analysée.')
         self.assertIn('2 dossiers sont inaccessibles', m({'nouvelles': 0, 'retirees': 0, 'injoignables': ['A', 'B']}))
+        # Un autre disque occupe la lettre d'un dossier : dit à part, pas « disque débranché ? ».
+        texte = m({'nouvelles': 0, 'retirees': 0, 'injoignables': ['E:\\Photos'], 'autres_disques': ['E:\\Photos']})
+        self.assertIn('Un autre disque occupe la lettre du dossier « E:\\Photos »', texte)
+        self.assertNotIn('débranché', texte)
 
     def test_photo_introuvable(self):
         d = self.app.base.ajouter_dossier(str(self.photos))

@@ -17,7 +17,7 @@ import threading
 import time
 import unicodedata
 import warnings
-from collections import deque
+from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -42,7 +42,11 @@ COTE_MINIATURE = 360
 QUALITE_MINIATURE = 80
 PAQUET_INVENTAIRE = 500
 ECHECS_AVANT_CONTROLE = 3      # erreurs de lecture d'affilée avant de vérifier que le dossier répond
-ECHANTILLON_VOLUME = 20        # photos connues cherchées quand le disque d'un dossier suivi a changé (memes_photos)
+# Numéro de volume d'un dossier suivi changé : le nouveau est adopté si les photos connues sont là (au moins 90 %), et les
+# plus récentes aussi, à une près (les 5 dernières par date du fichier et les 5 dernières trouvées). Voir memes_photos.
+PART_ADOPTION = 0.9
+RECENTES_VOLUME = 5
+ECHANTILLON_VOLUME = 20        # photos connues, réparties, cherchées à leur chemin (memes_photos)
 VIDE_DOSSIERS_MAX = 2000       # dossier_vide : dossiers regardés au plus avant de répondre « pas vide »
 
 # Formats lus (ceux de config.EXTENSIONS), quel que soit le nom du fichier. Pillow en connaît d'autres, dont EPS, qui
@@ -177,24 +181,58 @@ def dossier_vide(chemin, limite=VIDE_DOSSIERS_MAX):
     return True
 
 
+def _recentes(connus, n=RECENTES_VOLUME):
+    """Chemins des photos connues les plus récentes : les n dernières par date de modification du fichier, et les n
+    dernières trouvées (plus hauts identifiants, jamais redonnés). Une sauvegarde faite il y a un moment est justement
+    celle qui ne les a pas."""
+    par_date = sorted(connus, key=lambda ch: (connus[ch][2], connus[ch][0]))[-n:]
+    par_id = sorted(connus, key=lambda ch: connus[ch][0])[-n:]
+    return list(dict.fromkeys(par_date + par_id))
+
+
+def _adoptable(trouvees, total, recentes_trouvees, recentes):
+    """Au moins PART_ADOPTION des photos regardées sont là, et les plus récentes aussi, à une près."""
+    return trouvees >= PART_ADOPTION * total and recentes_trouvees >= recentes - 1
+
+
 def memes_photos(connus, n=ECHANTILLON_VOLUME):
-    """Le volume d'un dossier suivi a changé (autre numéro) : y trouve-t-on ses photos connues ({chemin: (id, taille,
-    modifie)}) ? Vrai si la plupart d'un échantillon de n photos est là, même chemin et même taille : disque recopié ou
-    cloné, partage remonté, numéro lu autrement. Faux pour un autre disque qui a pris la même lettre. Sans photo connue,
-    il n'y a rien à perdre : vrai."""
+    """Le volume d'un dossier suivi a changé (autre numéro) : ses photos connues ({chemin: (id, taille, modifie)}) y
+    sont-elles, à leur chemin et avec la même taille (disque recopié ou cloné, partage remonté, numéro lu autrement) ?
+    Regarde un échantillon de n photos réparties sur toute la liste, plus les plus récentes (_recentes), avec la règle
+    de _adoptable. Faux pour un autre disque qui a pris la même lettre, et pour un disque de sauvegarde à qui manquent
+    les photos récentes. Rapide ; s'il répond non, photos_retrouvees les cherche partout. Sans photo connue, il n'y a
+    rien à perdre : vrai."""
     if not connus:
         return True
     chemins = sorted(connus)
-    echantillon = chemins[::max(1, len(chemins) // n)][:n]
-    trouvees = 0
-    for ch in echantillon:
+    echantillon = list(dict.fromkeys(chemins[i * len(chemins) // n] for i in range(min(n, len(chemins)))))
+    recentes = _recentes(connus)
+
+    def la(ch):
         try:
             st = os.stat(chemin_systeme(ch))
         except (OSError, ValueError):
-            continue
-        if stat.S_ISREG(st.st_mode) and st.st_size == connus[ch][1]:
+            return False
+        return stat.S_ISREG(st.st_mode) and st.st_size == connus[ch][1]
+    return _adoptable(sum(map(la, echantillon)), len(echantillon), sum(map(la, recentes)), len(recentes))
+
+
+def photos_retrouvees(connus, empreintes):
+    """Comme memes_photos, mais pour TOUTES les photos connues, cherchées n'importe où dans le dossier : empreintes
+    compte les images trouvées par un parcours sans écriture, par (taille, modifie) à la nanoseconde, comme le
+    rapprochement des photos déplacées de l'inventaire. Des photos rangées dans des sous-dossiers ou renommées sont donc
+    retrouvées."""
+    if not connus:
+        return True
+    reste = Counter(empreintes)
+    trouvees = 0
+    for _, taille, modifie in connus.values():
+        if reste[(taille, modifie)] > 0:
+            reste[(taille, modifie)] -= 1
             trouvees += 1
-    return 2 * trouvees > len(echantillon)
+    recentes = _recentes(connus)
+    r = sum(1 for ch in recentes if empreintes.get((connus[ch][1], connus[ch][2]), 0) > 0)
+    return _adoptable(trouvees, len(connus), r, len(recentes))
 
 
 class Parcours:
@@ -860,7 +898,8 @@ class Indexeur:
 
     def _inventaire(self, cibles=None):
         self._changer('inventaire', dossier_courant=None, trouvees=0)
-        self._bilan_courant = {'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'dossiers': 0}
+        self._bilan_courant = {'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'autres_disques': [],
+                               'dossiers': 0}
         for d in self.base.dossiers():
             if cibles is not None and d['id'] not in cibles:
                 continue
@@ -882,26 +921,50 @@ class Indexeur:
                 cles.add(cle_chemin(reel))
         return cles
 
+    def _retrouvees(self, racine, exclus, connus):
+        """Parcours SANS écriture d'un dossier dont le numéro de volume a changé : ses photos connues y sont-elles,
+        n'importe où (rangées dans des sous-dossiers, renommées) ? Voir photos_retrouvees. Faux si le dossier ne répond
+        pas, ou si l'arrêt est demandé."""
+        empreintes = Counter()
+        parcours = Parcours(racine, exclus=exclus)
+        try:
+            for n, (_, taille, modifie) in enumerate(parcours, 1):
+                empreintes[(taille, modifie)] += 1
+                if n % 100 == 0:
+                    self._changer(dossier_courant=parcours.courant, trouvees=n)
+                    if self._arret.is_set():
+                        return False
+        except OSError:
+            return False
+        return photos_retrouvees(connus, empreintes)
+
     def _inventorier(self, d):
         did, racine = d['id'], d['chemin']
         self._changer(dossier_courant=racine, trouvees=0)
         connus = self.base.connus(did)
         bilan = self._bilan_courant if self._bilan_courant is not None else {
-            'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'dossiers': 0}
+            'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'autres_disques': [], 'dossiers': 0}
         bilan['dossiers'] += 1
-        # Autre numéro de volume qu'au dernier passage : un autre disque a pris la lettre de celui du dossier (deux
-        # disques USB qui échangent leur lettre). Ses photos ne sont pas supprimées : le dossier est inaccessible, comme
-        # un disque débranché, et rien du disque inconnu n'est ajouté. Sauf si les photos connues sont là (memes_photos :
-        # disque recopié ou cloné, partage remonté) : ce volume est adopté. Numéro inconnu (base 0.3.0) : appris ici.
+        exclus = self._exclus(did, racine)
+        # Autre numéro de volume qu'au dernier passage : un autre disque a peut-être pris la lettre de celui du dossier
+        # (deux disques USB qui échangent leur lettre, disque de sauvegarde). Le nouveau numéro n'est adopté que si les
+        # photos connues sont là : à leur chemin (memes_photos, rapide), ou n'importe où dans le dossier (parcours sans
+        # écriture : photos rangées entre-temps). Sinon, le dossier est inaccessible, comme un disque débranché ; ses
+        # photos sont gardées et rien de l'autre disque n'est ajouté. Numéro inconnu (base 0.3.0) : appris ici.
         volume = identite_volume(racine)
+        adopte = False
         if volume is not None and d.get('volume') is not None and volume != d['volume']:
-            if not memes_photos(connus):
+            adopte = memes_photos(connus) or self._retrouvees(racine, exclus, connus)
+            if self._arret.is_set():
+                return
+            if not adopte:
                 journal.info('autre disque à la place de %s : considéré injoignable, ses photos sont gardées', racine)
                 self.base.marquer_dossier(did, disponible=False)
                 bilan['injoignables'].append(racine)
+                bilan['autres_disques'].append(racine)
                 return
             journal.info('%s : nouveau numéro de volume, avec les mêmes photos : adopté', racine)
-        parcours = Parcours(racine, exclus=self._exclus(did, racine))
+        parcours = Parcours(racine, exclus=exclus)
         ajoutees = 0
         nouveaux, modifies, vus = [], [], set()
         par_empreinte = {}                       # (taille, modifie) -> nouveaux chemins (déplacements)
@@ -972,7 +1035,12 @@ class Indexeur:
             if deplaces:
                 self.base.deplacer_photos(deplaces)
                 ajoutees -= len(deplaces)        # une photo déplacée n'est ni nouvelle ni retirée
-            if oublies:
+            if oublies and adopte:
+                # Tour où un nouveau numéro est adopté : rien n'est oublié (si c'était quand même une sauvegarde
+                # incomplète, son vrai disque peut revenir) ; les photos absentes attendent le tour suivant.
+                journal.info("%d photo(s) absente(s) de %s, gardées jusqu'au tour suivant (nouveau volume)",
+                             len(oublies), racine)
+            elif oublies:
                 self.base.oublier_photos(oublies)
                 bilan['retirees'] += len(oublies)
         bilan['nouvelles'] += max(0, ajoutees)

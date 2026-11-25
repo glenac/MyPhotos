@@ -488,6 +488,15 @@ def message_actualisation(b):
         else 'Actualisation terminée : rien n\'a changé.'
     if nouvelles:
         texte += ' Les nouvelles photos vont être analysées.' if nouvelles > 1 else ' Elle va être analysée.'
+    # Un autre disque sur la lettre d'un dossier suivi (autre numéro de volume, ses photos absentes) : dit à part.
+    autres = b.get('autres_disques') or []
+    injoignables = [x for x in injoignables if x not in autres]
+    if len(autres) == 1:
+        texte += (f' Un autre disque occupe la lettre du dossier « {autres[0]} » : ses photos sont gardées jusqu\'au '
+                  'retour de son disque.')
+    elif autres:
+        texte += (f' Un autre disque occupe la lettre de {len(autres)} dossiers : leurs photos sont gardées jusqu\'au '
+                  'retour de leur disque.')
     if len(injoignables) == 1:
         texte += (f' Le dossier « {injoignables[0]} » est inaccessible pour le moment (disque débranché ?) : ses photos '
                   'sont gardées.')
