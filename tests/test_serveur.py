@@ -2139,39 +2139,34 @@ class TestWindowsReel(unittest.TestCase):
 
 
 class TestChoixDossier(unittest.TestCase):
-    """Fenêtre « Choisir un dossier » : fil réservé, une fenêtre à la fois, annuler ne fait rien. tkinter est
-    entièrement simulé : aucune fenêtre n'apparaît sur le bureau pendant les essais."""
+    """Fenêtre « Choisir un dossier » des replis (serveur.ChoixDossier) : un fil COM à elle par demande, une fenêtre à
+    la fois, annuler ne fait rien, une panne donne un message clair. La fenêtre de Windows (dialogue.ouvrir_devant)
+    est simulée : rien n'apparaît sur le bureau pendant ces essais."""
 
     def setUp(self):
         from myphotos import serveur
         self.serveur = serveur
         self.reponses = []
+        self.appels = []
         self.ouverte = threading.Event()
         self.relacher = threading.Event()
-        faux = mock.MagicMock()
 
-        def askdirectory(**options):
-            self.options = options
+        def ouvrir(titre, initial, zone):
+            self.appels.append((titre, initial, zone, threading.current_thread().name))
             self.ouverte.set()
             self.relacher.wait(10)
             r = self.reponses.pop(0)
             if isinstance(r, Exception):
                 raise r
             return r
-        faux.filedialog.askdirectory.side_effect = askdirectory
-        self.modules = mock.patch.dict(sys.modules, {'tkinter': faux, 'tkinter.filedialog': faux.filedialog})
-        self.modules.start()
-        self.premier_plan = mock.patch.object(serveur, '_premier_plan')
-        self.premier_plan.start()
+        self.ouvrir = ouvrir
 
     def tearDown(self):
         self.relacher.set()
-        self.premier_plan.stop()
-        self.modules.stop()
 
     def test_choix_annulation_et_fenetre_unique(self):
-        choix = self.serveur.ChoixDossier()
-        self.reponses = ['E:/Photos', '', OSError('Tk en panne'), 'D:/Vacances']
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
+        self.reponses = ['E:\\Photos', None, '', OSError('COM en panne'), 'D:\\Vacances \U0001F334']
         resultats = []
         fil = threading.Thread(target=lambda: resultats.append(choix.demander(initial='C:\\Images')))
         fil.start()
@@ -2181,13 +2176,48 @@ class TestChoixDossier(unittest.TestCase):
         self.assertEqual(e.exception.statut, 409)
         self.relacher.set()
         fil.join(10)
-        self.assertEqual(resultats, ['E:/Photos'])
-        self.assertEqual(self.options['initialdir'], 'C:\\Images')
-        self.assertTrue(self.options['mustexist'])
+        self.assertEqual(resultats, ['E:\\Photos'])
+        self.assertEqual(self.appels[0][:3], ('Choisissez un dossier de photos', 'C:\\Images', None))
+        self.assertEqual(self.appels[0][3], 'myphotos-choix-dossier')          # son propre fil (COM STA)
         self.assertIsNone(choix.demander())                          # annuler : rien
-        with self.assertRaises(OSError):                             # panne : signalée…
+        self.assertIsNone(choix.demander())
+        with self.assertRaises(self.serveur.Refus) as e:             # panne : message clair (comme dans la fenêtre)…
             choix.demander()
-        self.assertEqual(choix.demander(), 'D:/Vacances')            # … et la fenêtre suivante fonctionne
+        self.assertEqual((e.exception.statut, str(e.exception)),
+                         (503, "La fenêtre de choix d'un dossier n'a pas pu s'ouvrir."))
+        self.assertEqual(choix.demander(titre='Choisissez où copier les photos'), 'D:\\Vacances \U0001F334')
+        self.assertEqual(self.appels[-1][0], 'Choisissez où copier les photos')   # … et la suivante fonctionne
+
+    def test_place_de_la_fenetre_d_edge(self):
+        """Mode « edge » : la fenêtre s'ouvre au milieu de la fenêtre d'Edge (FenetreEdge.zone) ; une zone illisible
+        ne l'empêche pas de s'ouvrir."""
+        self.relacher.set()
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
+        self.reponses = ['E:\\A', 'E:\\B']
+        choix.zone = lambda: (10, 20, 810, 620)
+        self.assertEqual(choix.demander(), 'E:\\A')
+        self.assertEqual(self.appels[-1][2], (10, 20, 810, 620))
+        choix.zone = mock.Mock(side_effect=OSError('fenêtre disparue'))
+        self.assertEqual(choix.demander(), 'E:\\B')
+        self.assertIsNone(self.appels[-1][2])
+
+    def test_delai_depasse(self):
+        """Fenêtre laissée ouverte au-delà du délai : la requête répond « annulé » ; la fenêtre, toujours ouverte, en
+        refuse une seconde jusqu'à sa fermeture."""
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
+        self.reponses = ['E:\\Tard']
+        self.assertIsNone(choix.demander(delai=0.2))
+        with self.assertRaises(self.serveur.Refus):
+            choix.demander()
+        self.relacher.set()
+        self.assertTrue(attendre(lambda: not choix._ouverte.is_set(), 10))
+
+    def test_par_defaut_la_fenetre_de_windows(self):
+        from myphotos import dialogue
+        self.assertIs(self.serveur.ChoixDossier()._ouvrir, dialogue.ouvrir_devant)
+        source = (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8')
+        self.assertNotIn('import tkinter', source)
+        self.assertNotIn('filedialog', source)
 
     def test_annuler_ne_fait_rien(self):
         app = self.serveur.Application.__new__(self.serveur.Application)
@@ -2195,6 +2225,194 @@ class TestChoixDossier(unittest.TestCase):
         app.ajouter_dossier = mock.Mock()
         self.assertEqual(app.choisir_dossier(), {'annule': True})
         app.ajouter_dossier.assert_not_called()
+
+
+class FauxCom:
+    """Couche COM simulée pour dialogue.py : CoCreateInstance, tables virtuelles (_methode), Release,
+    SHCreateItemFromParsingName et CoTaskMemFree. Objets : 1, la fenêtre (IFileOpenDialog) ; 2, le dossier proposé ;
+    3, le dossier choisi (IShellItem)."""
+
+    def __init__(self, show=0, chemin='E:\\Photos', creer=0, dossier_lisible=True, nom=0):
+        from myphotos import dialogue
+        self.d = dialogue
+        self.show, self.chemin, self.creer, self.dossier_lisible, self.nom = show, chemin, creer, dossier_lisible, nom
+        self.journal = []
+        self.liberes = []
+        self.textes_liberes = []
+        self.adresse = None
+        self._garde = []
+
+    @staticmethod
+    def guid(ref):
+        import uuid
+        return str(uuid.UUID(bytes_le=bytes(ref._obj))).upper()
+
+    # ole32
+    def CoCreateInstance(self, clsid, exterieur, contexte, iid, sortie):
+        self.journal.append(('CoCreateInstance', self.guid(clsid), contexte, self.guid(iid)))
+        if self.creer < 0:
+            return self.creer
+        sortie._obj.value = 1
+        return 0
+
+    def CoTaskMemFree(self, texte):
+        self.textes_liberes.append(texte.value)
+
+    # shell32
+    def SHCreateItemFromParsingName(self, chemin, contexte, iid, sortie):
+        self.journal.append(('SHCreateItemFromParsingName', chemin, self.guid(iid)))
+        if not self.dossier_lisible:
+            return 0x80070002 - (1 << 32)                    # HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+        sortie._obj.value = 2
+        return 0
+
+    def dll(self, _nom):
+        return self
+
+    def methode(self, objet, index, *_types):
+        import ctypes
+        o = objet.value
+        d = self.d
+
+        def appel(*valeurs):
+            if index == 2:                                   # Release
+                self.liberes.append(o)
+                return 0
+            if o == 1 and index == d.GET_OPTIONS:
+                valeurs[0]._obj.value = 0x1000               # FOS_FILEMUSTEXIST, comme Windows
+            elif o == 1 and index == d.SET_OPTIONS:
+                self.journal.append(('SetOptions', valeurs[0]))
+            elif o == 1 and index == d.SET_CLIENT_GUID:
+                self.journal.append(('SetClientGuid', self.guid(valeurs[0])))
+            elif o == 1 and index == d.SET_TITLE:
+                self.journal.append(('SetTitle', valeurs[0]))
+            elif o == 1 and index == d.SET_FOLDER:
+                self.journal.append(('SetFolder', valeurs[0].value))
+            elif o == 1 and index == d.SHOW:
+                self.journal.append(('Show', valeurs[0]))
+                return self.show
+            elif o == 1 and index == d.GET_RESULT:
+                valeurs[0]._obj.value = 3
+                self.journal.append(('GetResult',))
+            elif o == 3 and index == d.GET_DISPLAY_NAME:
+                self.journal.append(('GetDisplayName', valeurs[0]))
+                if self.nom < 0:
+                    return self.nom
+                tampon = ctypes.create_unicode_buffer(self.chemin)
+                self._garde.append(tampon)
+                self.adresse = ctypes.addressof(tampon)
+                valeurs[1]._obj.value = self.adresse
+            else:
+                raise AssertionError(f'méthode inattendue : objet {o}, n° {index}')
+            return 0
+        return appel
+
+    def __enter__(self):
+        from myphotos import raccourci
+        self.patchs = [mock.patch.object(self.d, '_methode', self.methode),
+                       mock.patch.object(raccourci, '_methode', self.methode),      # Release (_liberer)
+                       mock.patch.object(self.d, '_ole32', lambda: self),
+                       mock.patch.object(self.d, '_dll', self.dll)]
+        for p in self.patchs:
+            p.start()
+        return self
+
+    def __exit__(self, *_):
+        for p in self.patchs:
+            p.stop()
+
+    def noms(self):
+        return [x[0] for x in self.journal]
+
+
+class TestDialogueCom(unittest.TestCase):
+    """dialogue.choisir_dossier, couche COM simulée (FauxCom) : réglages de la fenêtre de Windows, dossier proposé,
+    propriétaire, annulation, pannes, et chaque objet COM libéré."""
+
+    ANNULE = 0x800704C7 - (1 << 32)                          # HRESULT tel que ctypes le rend (c_long)
+    E_FAIL = 0x80004005 - (1 << 32)
+
+    def setUp(self):
+        from myphotos import dialogue
+        self.d = dialogue
+
+    def test_dossier_choisi(self):
+        with FauxCom(chemin='E:\\Photos d\u2019été \U0001F334') as com:
+            r = self.d.choisir_dossier('Choisissez un dossier de photos', 'C:\\Images', proprietaire=4242)
+        self.assertEqual(r, 'E:\\Photos d\u2019été \U0001F334')
+        self.assertEqual(com.journal[0], ('CoCreateInstance', self.d.CLSID_FILEOPENDIALOG.strip('{}'), 1,
+                                          self.d.IID_IFILEOPENDIALOG.strip('{}')))
+        options = next(x[1] for x in com.journal if x[0] == 'SetOptions')
+        for drapeau in (0x20, 0x40, 0x800, 0x8, 0x2000000, 0x1000):   # dossiers, du disque, existant… et Windows
+            self.assertTrue(options & drapeau, hex(drapeau))
+        self.assertIn(('SetTitle', 'Choisissez un dossier de photos'), com.journal)
+        self.assertIn(('SetClientGuid', self.d.CLIENT.strip('{}')), com.journal)
+        self.assertIn(('SHCreateItemFromParsingName', 'C:\\Images', self.d.IID_ISHELLITEM.strip('{}')), com.journal)
+        self.assertEqual(com.noms()[-4:], ['SetFolder', 'Show', 'GetResult', 'GetDisplayName'])
+        self.assertIn(('SetFolder', 2), com.journal)
+        self.assertIn(('Show', 4242), com.journal)                    # la fenêtre hôte en est la propriétaire
+        self.assertIn(('GetDisplayName', self.d.SIGDN_FILESYSPATH), com.journal)
+        self.assertEqual(sorted(com.liberes), [1, 2, 3])               # chaque objet COM libéré, une fois
+        self.assertEqual(com.textes_liberes, [com.adresse])            # chemin rendu par Windows libéré
+
+    def test_annuler(self):
+        with FauxCom(show=self.ANNULE) as com:
+            self.assertIsNone(self.d.choisir_dossier('T', None))
+        self.assertNotIn('GetResult', com.noms())
+        self.assertNotIn('SHCreateItemFromParsingName', com.noms())    # aucun dossier proposé
+        self.assertEqual(com.liberes, [1])
+
+    def test_pannes(self):
+        with FauxCom(show=self.E_FAIL) as com:
+            with self.assertRaisesRegex(OSError, 'Show : erreur 0x80004005'):
+                self.d.choisir_dossier('T', 'C:\\Images')
+        self.assertEqual(sorted(com.liberes), [1, 2])
+        with FauxCom(creer=self.E_FAIL) as com:
+            with self.assertRaisesRegex(OSError, 'FileOpenDialog'):
+                self.d.choisir_dossier('T', 'C:\\Images')
+        self.assertEqual(com.liberes, [])
+        with FauxCom(nom=self.E_FAIL) as com:
+            with self.assertRaisesRegex(OSError, 'GetDisplayName'):
+                self.d.choisir_dossier('T', None)
+        self.assertEqual(sorted(com.liberes), [1, 3])
+
+    def test_dossier_propose_disparu(self):
+        """Dossier proposé débranché ou supprimé : la fenêtre s'ouvre quand même (là où Windows l'avait laissée)."""
+        with FauxCom(dossier_lisible=False) as com:
+            self.assertEqual(self.d.choisir_dossier('T', 'Z:\\Débranché'), 'E:\\Photos')
+        self.assertNotIn('SetFolder', com.noms())
+        self.assertIn('Show', com.noms())
+
+    def test_position_de_l_hote(self):
+        """La fenêtre de Windows s'ouvre avec son coin sur celui de son hôte, à la moitié de la zone de travail :
+        l'hôte est posé pour qu'elle soit au milieu de la fenêtre de MyPhotos (ou de l'écran), sans sortir de
+        l'écran."""
+        travail = (0, 0, 1920, 1040)
+        self.assertEqual(self.d.position_hote(None, travail), (480, 260))
+        self.assertEqual(self.d.position_hote((1000, 100, 1800, 900), travail), (920, 240))
+        self.assertEqual(self.d.position_hote((0, 0, 200, 200), travail), (0, 0))           # jamais hors de l'écran
+        self.assertEqual(self.d.position_hote((-1920, 0, 0, 1040), (-1920, 0, 0, 1040)), (-1440, 260))
+        self.assertEqual(self.d.position_hote((5, 5, 5, 5), travail), (480, 260))          # zone vide : l'écran
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_vraie_classe_com_sans_afficher(self):
+        """La vraie fenêtre de Windows, créée et réglée SANS être affichée (Show n'est jamais appelé), dans un fil
+        STA : classe, interfaces et ordre des méthodes justes ; options relues."""
+        res = {}
+
+        def fil():
+            try:
+                with self.d.Sta():
+                    res['options'] = self.d.verifier('Essai', tempfile.gettempdir())
+                    res['absent'] = self.d.verifier('Essai', str(Path(tempfile.gettempdir()) / 'absent-myphotos'))
+            except Exception as e:
+                res['erreur'] = e
+        t = threading.Thread(target=fil)
+        t.start()
+        t.join(30)
+        self.assertNotIn('erreur', res)
+        for cle in ('options', 'absent'):
+            self.assertEqual(res[cle] & self.d.OPTIONS, self.d.OPTIONS, hex(res[cle]))
 
 
 class TestOutils(unittest.TestCase):

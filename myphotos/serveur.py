@@ -90,7 +90,7 @@ from collections import deque
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import config, fenetre, materiel, modele, raccourci
+from . import config, dialogue, fenetre, materiel, modele, raccourci
 from . import doublons as _doublons
 from . import recherche as _recherche
 from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, maintenant,
@@ -474,27 +474,6 @@ def compter_images(racine, limite_s=ESTIMATION_S):
     except OSError:
         return None, False
     return n, True
-
-
-def _premier_plan(fenetre):
-    """Amène une fenêtre tkinter au premier plan, alors que c'est le navigateur qui a le clavier."""
-    if os.name != 'nt':
-        return
-    try:
-        user32 = _dll('user32')
-        hwnd = user32.GetAncestor(fenetre.winfo_id(), 2) or fenetre.winfo_id()      # GA_ROOT
-        devant = user32.GetForegroundWindow()
-        fil_devant = user32.GetWindowThreadProcessId(devant, None) if devant else 0
-        moi = _dll('kernel32').GetCurrentThreadId()
-        attache = bool(fil_devant and fil_devant != moi and user32.AttachThreadInput(moi, fil_devant, True))
-        try:
-            user32.BringWindowToTop(hwnd)
-            user32.SetForegroundWindow(hwnd)
-        finally:
-            if attache:
-                user32.AttachThreadInput(moi, fil_devant, False)
-    except Exception:
-        journal.debug('premier plan impossible', exc_info=True)
 
 
 def montrer_dans_dossier(chemin):
@@ -1008,18 +987,20 @@ def adresse_entree(port, jeton):
     return f'http://{config.HOTE}:{int(port)}/?{PARAMETRE_JETON}={jeton}'
 
 
-# ---------------------------------------------------------------- choix d'un dossier (tkinter)
+# ---------------------------------------------------------------- choix d'un dossier (fenêtre de Windows)
 
 class ChoixDossier:
-    """Fenêtre « Choisir un dossier » de Windows, ouverte par tkinter dans un fil qui lui est réservé
-    (Tk n'accepte qu'un seul fil). Une seule fenêtre à la fois ; annuler renvoie None.
+    """Fenêtre « Choisir un dossier » de Windows (IFileOpenDialog, voir dialogue.py), ouverte dans un fil COM STA qui
+    lui est réservé, devant la page : elle appartient à une petite fenêtre hôte invisible de MyPhotos, toujours
+    au-dessus, posée au milieu de la fenêtre de MyPhotos (zone : celle d'Edge, donnée par fenetre.FenetreEdge) quand
+    on la connaît. Une seule à la fois ; annuler renvoie None. Depuis la 0.4.0, sans tkinter ni Tcl/Tk.
 
     Modes « edge » et « navigateur » seulement : dans la fenêtre de MyPhotos, fenetre.ChoixDossierFenetre la
-    remplace (fenêtre de Windows qui appartient à la fenêtre MyPhotos)."""
+    remplace (la même fenêtre de Windows, qui appartient alors à la fenêtre MyPhotos)."""
 
-    def __init__(self):
-        self._demandes = queue.Queue()
-        self._fil = None
+    def __init__(self, ouvrir=None):
+        self._ouvrir = ouvrir or dialogue.ouvrir_devant    # (titre, initial, zone) -> chemin ou None
+        self.zone = None                                   # () -> (gauche, haut, droite, bas) ou None
         self._ouverte = threading.Event()
         self._verrou = threading.Lock()
 
@@ -1029,65 +1010,38 @@ class ChoixDossier:
                 raise Refus("La fenêtre de choix d'un dossier est déjà ouverte : regardez dans la barre des "
                             "tâches, en bas de l'écran.", 409)
             self._ouverte.set()
-            if self._fil is None or not self._fil.is_alive():
-                self._fil = threading.Thread(target=self._boucle, name='myphotos-choix-dossier', daemon=True)
-                self._fil.start()
         reponse = concurrent.futures.Future()
-        self._demandes.put((reponse, initial, titre))
+        try:
+            threading.Thread(target=self._fil, args=(reponse, initial, titre), name='myphotos-choix-dossier',
+                             daemon=True).start()
+        except BaseException:
+            self._ouverte.clear()
+            raise
         try:
             return reponse.result(timeout=delai)
         except concurrent.futures.TimeoutError:
             return None
 
-    def _boucle(self):
-        racine = None
-        while True:
-            reponse, initial, titre = self._demandes.get()
-            resultat = erreur = None
-            try:
-                import tkinter
-                from tkinter import filedialog
-                if racine is None:
-                    racine = tkinter.Tk()
-                    racine.withdraw()
-                    icone = config.CODE / 'construction' / 'MyPhotos.ico'
-                    if icone.is_file():
-                        try:
-                            racine.iconbitmap(default=str(icone))
-                        except Exception:
-                            pass
-                # Fenêtre hôte invisible, toujours au-dessus : la fenêtre de choix, qui lui appartient, l'est aussi.
-                hote = tkinter.Toplevel(racine)
-                hote.title(NOM)
-                hote.overrideredirect(True)
-                hote.attributes('-alpha', 0.0)
-                hote.attributes('-topmost', True)
-                hote.geometry(f'1x1+{hote.winfo_screenwidth() // 2 - 320}+{hote.winfo_screenheight() // 2 - 240}')
-                hote.deiconify()
-                hote.update()
-                _premier_plan(hote)
+    def _fil(self, reponse, initial, titre):
+        resultat = erreur = None
+        try:
+            zone = None
+            if self.zone is not None:
                 try:
-                    chemin = filedialog.askdirectory(parent=hote, title=titre, initialdir=initial or None,
-                                                     mustexist=True)
-                finally:
-                    hote.destroy()
-                    racine.update()
-                resultat = chemin if isinstance(chemin, str) and chemin else None
-            except Exception as e:
-                journal.exception('fenêtre de choix de dossier')
-                erreur = e
-                try:
-                    if racine is not None:
-                        racine.destroy()
+                    zone = self.zone()
                 except Exception:
-                    pass
-                racine = None
-            # La fenêtre est fermée avant que la réponse parte : la demande suivante est acceptée.
-            self._ouverte.clear()
-            if erreur is not None:
-                reponse.set_exception(erreur)
-            else:
-                reponse.set_result(resultat)
+                    journal.debug('place de la fenêtre de MyPhotos inconnue', exc_info=True)
+            chemin = self._ouvrir(titre, initial, zone)
+            resultat = chemin if isinstance(chemin, str) and chemin else None
+        except Exception:
+            journal.exception('fenêtre de choix de dossier')
+            erreur = Refus("La fenêtre de choix d'un dossier n'a pas pu s'ouvrir.", 503)
+        # La fenêtre est fermée avant que la réponse parte : la demande suivante est acceptée.
+        self._ouverte.clear()
+        if erreur is not None:
+            reponse.set_exception(erreur)
+        else:
+            reponse.set_result(resultat)
 
 
 # ---------------------------------------------------------------- copie vers un dossier

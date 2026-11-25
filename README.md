@@ -309,7 +309,7 @@ Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md
 
 - **MyPhotos** : licence MIT, © 2026 glenac. Voir [LICENSE](LICENSE).
 - **Moteur de reconnaissance** : SigLIP 2, © Google, licence Apache-2.0, dans les exports ONNX publiés par onnx-community sur Hugging Face. MyPhotos le télécharge depuis Hugging Face ; il n'est pas inclus dans MyPhotos.exe.
-- **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, pywebview et les DLL WebView2 de Microsoft, pythonnet, Tcl/Tk et le chargeur de PyInstaller, chacun sous sa propre licence. L'installateur est fait avec Inno Setup. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, pywebview et les DLL WebView2 de Microsoft, pythonnet et le chargeur de PyInstaller, chacun sous sa propre licence. L'installateur est fait avec Inno Setup. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **Choix des moteurs** : banc d'essai multilingue du projet Immich (jeu Crossmodal-3600).
 - **Captures d'écran** : photos de Wikimedia Commons versées dans le domaine public (CC0). Voir [docs/captures/CREDITS.md](docs/captures/CREDITS.md).
 

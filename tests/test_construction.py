@@ -132,9 +132,18 @@ class TestFenetre(unittest.TestCase):
                     'webview\\lib\\pywebview-android.jar', 'page\\index.html'):
             self.assertEqual(espace['garder']((nom, 'source', 'BINARY')), not construire.retire(nom), nom)
         self.assertIn("'webview.platforms.winforms'", texte)
-        # pywebview a besoin de typing_extensions ; tkinter sert encore aux replis (Edge, navigateur).
-        for necessaire in ('typing_extensions', 'tkinter', '_tkinter', 'webview', 'clr', 'bottle', 'proxy_tools'):
+        # pywebview a besoin de typing_extensions.
+        for necessaire in ('typing_extensions', 'webview', 'clr', 'bottle', 'proxy_tools'):
             self.assertNotIn(necessaire, construire.EXCLUS)
+        # 0.4.0 : tkinter et Tcl/Tk ne sont plus embarqués (« Choisir un dossier » : fenêtre de Windows, par COM) ;
+        # leurs DLL seraient retirées et signalées par le contrôle final si une dépendance les tirait encore.
+        for exclu in ('tkinter', '_tkinter'):
+            self.assertIn(exclu, construire.EXCLUS)
+        for nom in ('_tkinter.pyd', 'tcl90.dll', 'tcl9tk90.dll', 'libtommath.dll'):
+            self.assertTrue(construire.retire(nom), nom)
+            self.assertFalse(espace['garder']((nom, 'source', 'BINARY')), nom)
+            self.assertNotIn(nom, construire.OBLIGATOIRES)
+        self.assertNotIn('import tkinter', (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8'))
 
 
 class TestLicencesRust(unittest.TestCase):

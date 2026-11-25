@@ -28,7 +28,6 @@ Inventaire du 23/11/2026, complété le 24/11/2026 pour la 0.3.0 (fenêtre de My
 | [proxy_tools](#proxy_tools-bottle-et-typing_extensions) | 0.1.0 | MIT selon PyPI, BSD selon son dépôt | oui |
 | [bottle](#proxy_tools-bottle-et-typing_extensions) | 0.13.4 | MIT | oui |
 | [typing_extensions](#proxy_tools-bottle-et-typing_extensions) | 4.16.0 | PSF-2.0 | oui |
-| [Tcl/Tk](#tcltk) (fenêtre « Choisir un dossier » des replis) | 9.0.4 | licence Tcl/Tk (type BSD) | oui |
 | [Runtime Microsoft Visual C++](#runtime-microsoft-visual-c) | 14.x | « Microsoft Distributable Code » | oui |
 | [PyInstaller](#pyinstaller) (chargeur) | 6.22.3 | GPL-2.0-or-later avec exception pour le chargeur | oui, le chargeur seulement |
 | [Inno Setup](#inno-setup-installateur) (installateur) | 6.7.4 | licence Inno Setup (type Zlib) | **non** : seulement dans `MyPhotos-<version>-installation.exe` |
@@ -36,7 +35,7 @@ Inventaire du 23/11/2026, complété le 24/11/2026 pour la 0.3.0 (fenêtre de My
 | [SigLIP 2](#le-moteur-de-reconnaissance-siglip-2) (Google) | 2025 | Apache-2.0 | **non** : téléchargé par l'utilisateur |
 | [Exports ONNX d'onnx-community](#le-moteur-de-reconnaissance-siglip-2) | révisions figées | aucune licence propre déclarée ; dérivés de SigLIP 2 | **non** : téléchargés |
 
-**Ne sont pas embarqués** (exclus par `construction/construire.py`) : `sympy`, `mpmath`, `flatbuffers`, `protobuf` et `packaging`, dépendances déclarées d'`onnxruntime-directml` mais inutiles à l'exécution ; `huggingface_hub` et ses dépendances, tirées par `tokenizers` (MyPhotos télécharge le moteur lui-même) ; les outils d'ONNX Runtime (quantification, conversion) ; les modules `_avif`, `_imagingft` et `_imagingtk` de Pillow ; les moteurs de pywebview pour les autres systèmes (macOS, Linux, Qt, CEF, Android), `WebBrowserInterop.x86.dll` et `pywebview-android.jar` ; la partie « compilation » de cffi et la version 32 bits de `ClrLoader.dll`. **Le runtime WebView2 lui-même n'est pas livré** : MyPhotos utilise celui que Windows fournit (à défaut, Microsoft Edge déjà installé, puis le navigateur par défaut). La bibliothèque `onnxruntime.dll` (interface C d'ONNX Runtime) est aussi retirée : le module Python contient déjà tout le moteur.
+**Ne sont pas embarqués** (exclus par `construction/construire.py`) : `sympy`, `mpmath`, `flatbuffers`, `protobuf` et `packaging`, dépendances déclarées d'`onnxruntime-directml` mais inutiles à l'exécution ; `huggingface_hub` et ses dépendances, tirées par `tokenizers` (MyPhotos télécharge le moteur lui-même) ; les outils d'ONNX Runtime (quantification, conversion) ; les modules `_avif`, `_imagingft` et `_imagingtk` de Pillow ; tkinter et Tcl/Tk (`_tkinter.pyd`, `tcl90.dll`, `tcl9tk90.dll`, `libtommath.dll`), embarqués jusqu'à la 0.3.0 pour la seule fenêtre « Choisir un dossier » des replis, que MyPhotos ouvre depuis la 0.4.0 par la boîte de dialogue de Windows (COM) ; les moteurs de pywebview pour les autres systèmes (macOS, Linux, Qt, CEF, Android), `WebBrowserInterop.x86.dll` et `pywebview-android.jar` ; la partie « compilation » de cffi et la version 32 bits de `ClrLoader.dll`. **Le runtime WebView2 lui-même n'est pas livré** : MyPhotos utilise celui que Windows fournit (à défaut, Microsoft Edge déjà installé, puis le navigateur par défaut). La bibliothèque `onnxruntime.dll` (interface C d'ONNX Runtime) est aussi retirée : le module Python contient déjà tout le moteur.
 
 ## Points d'attention pour une redistribution publique
 
@@ -44,7 +43,7 @@ Aucune licence n'interdit de publier MyPhotos.exe gratuitement sur GitHub. Il fa
 
 1. **DirectML n'est pas un logiciel libre.** C'est un composant Microsoft propriétaire, que sa licence permet de redistribuer *à l'intérieur d'une application* pour Windows, mais pas seul. L'exécutable MyPhotos.exe n'est donc pas entièrement libre, même si son code source l'est. Voir [DirectML](#directml).
 2. **Télémétrie Microsoft.** Les versions officielles d'ONNX Runtime pour Windows émettent par défaut des événements de diagnostic par le mécanisme TraceLogging de Windows (fichier `Privacy.md` d'ONNX Runtime) ; la licence de DirectML prévoit aussi une collecte de données (§ 2). Windows ne transmet ces événements à Microsoft que selon les réglages de diagnostic de l'utilisateur. MyPhotos lui-même n'envoie rien, mais son code n'appelle pas aujourd'hui `onnxruntime.disable_telemetry_events()`, la fonction d'ONNX Runtime qui coupe ces événements.
-3. **Les textes de licence doivent accompagner l'exécutable.** Les licences MIT, BSD, Apache-2.0, Tcl/Tk, FTL, IJG, PSF, etc. demandent que les mentions de droits d'auteur et les textes de licence soient fournis avec le binaire. Le paquet `onnxruntime-directml` **ne contient pas** la licence de DirectML : il faut la prendre dans le paquet NuGet `Microsoft.AI.DirectML` 1.15.4. Voir [Ce que chaque publication doit contenir](#ce-que-chaque-publication-doit-contenir).
+3. **Les textes de licence doivent accompagner l'exécutable.** Les licences MIT, BSD, Apache-2.0, FTL, IJG, PSF, etc. demandent que les mentions de droits d'auteur et les textes de licence soient fournis avec le binaire. Le paquet `onnxruntime-directml` **ne contient pas** la licence de DirectML : il faut la prendre dans le paquet NuGet `Microsoft.AI.DirectML` 1.15.4. Voir [Ce que chaque publication doit contenir](#ce-que-chaque-publication-doit-contenir).
 4. **Le runtime Visual C++** (« Microsoft Distributable Code ») est redistribuable à condition de ne pas en altérer les mentions, de ne pas laisser croire que le logiciel vient de Microsoft et de faire accepter aux utilisateurs des conditions qui protègent ce code au moins autant que celles de Microsoft. Voir [Runtime Microsoft Visual C++](#runtime-microsoft-visual-c).
 5. **Aucun composant sous GPL n'impose sa licence à MyPhotos** :
    - le chargeur de PyInstaller bénéficie d'une exception explicite ;
@@ -66,7 +65,7 @@ Aucune licence n'interdit de publier MyPhotos.exe gratuitement sur GitHub. Il fa
 | `numpy-2.5.5.dist-info/licenses/` (dossier entier) | `site-packages` |
 | `pillow-13.0.0.dist-info/licenses/LICENSE` | `site-packages` |
 | licence Apache-2.0 de tokenizers et notices de ses bibliothèques Rust | `LICENSE` du [dépôt huggingface/tokenizers](https://github.com/huggingface/tokenizers/blob/v0.23.3/LICENSE) (étiquette v0.23.3) ; liste dans `tokenizers-0.23.3.dist-info/sboms/` ; fichiers de licence des bibliothèques qui demandent leurs propres mentions, pris dans leur paquet [crates.io](https://crates.io) |
-| `LICENSE.txt` de Python (comprend OpenSSL, bzip2, libffi, Zstandard, Tcl, Tk et les conditions Microsoft) | dossier d'installation de Python 3.14 |
+| `LICENSE.txt` de Python (comprend OpenSSL, bzip2, libffi, Zstandard et les conditions Microsoft ; aussi Tcl et Tk, que MyPhotos n'embarque plus) | dossier d'installation de Python 3.14 |
 | `COPYING.txt` de PyInstaller | `pyinstaller-6.22.3.dist-info/licenses/` |
 | `LICENSE` de pywebview, pythonnet (avec `AUTHORS.md`), clr_loader, cffi, pycparser, bottle et typing_extensions | `<paquet>-<version>.dist-info/licenses/` dans `site-packages` |
 | `LICENSE.txt` de proxy_tools | [dépôt jtushman/proxy_tools](https://github.com/jtushman/proxy_tools/blob/db43f1e35d4f90a65c5a4d56d9e9af88212ec6e6/LICENSE.txt), dernier commit (le paquet n'en contient pas) |
@@ -194,7 +193,7 @@ Celles que MyPhotos.exe embarque, d'après une construction d'essai (versions li
 | mpdecimal | 4.0.0 | BSD-2-Clause | bibliothèque standard |
 | HACL* | | MIT | fonctions de hachage intégrées |
 
-Le fichier `LICENSE.txt` livré avec Python reproduit les licences d'OpenSSL, bzip2, libffi, Zstandard, Tcl et Tk ; la page [docs.python.org/3.14/license.html](https://docs.python.org/3.14/license.html) donne celles des autres.
+Le fichier `LICENSE.txt` livré avec Python reproduit les licences d'OpenSSL, bzip2, libffi et Zstandard (ainsi que celles de Tcl et Tk, que MyPhotos n'embarque plus depuis la 0.4.0) ; la page [docs.python.org/3.14/license.html](https://docs.python.org/3.14/license.html) donne celles des autres.
 
 ## pywebview
 
@@ -239,15 +238,6 @@ Petites dépendances de pywebview, embarquées sous forme de code Python.
 - **typing_extensions 4.16.0** : PSF License 2.0, comme Python.
 - **Obligations** : joindre les mentions de droits d'auteur et les textes de licence.
 - **Liens** : [github.com/jtushman/proxy_tools](https://github.com/jtushman/proxy_tools), [bottlepy.org](https://bottlepy.org), [github.com/python/typing_extensions](https://github.com/python/typing_extensions).
-
-## Tcl/Tk
-
-Sert uniquement à ouvrir la fenêtre Windows « Choisissez un dossier de photos » quand MyPhotos s'ouvre dans Edge ou dans le navigateur (replis, si WebView2 manque) ; dans sa propre fenêtre, MyPhotos utilise celle de Windows Forms. Fichiers embarqués : `tcl90.dll`, `tcl9tk90.dll`, `libtommath.dll` et les bibliothèques de scripts de Tcl/Tk.
-
-- **Licence** : licence Tcl/Tk, de type BSD : « This software is copyrighted by the Regents of the University of California, Sun Microsystems, Inc., Scriptics Corporation, ActiveState Corporation and other parties. » (Tk ajoute Apple Inc.)
-- **Obligations** : « provided that existing copyright notices are retained in all copies and that this notice is included verbatim in any distributions » : joindre le texte de la licence tel quel (il figure dans le `LICENSE.txt` de Python).
-- **libtommath** (calcul sur grands entiers, requis par Tcl 9) : domaine public (« The LibTom license »).
-- **Liens** : [licence Tcl/Tk](https://www.tcl-lang.org/software/tcltk/license.html), [libtommath](https://github.com/libtom/libtommath).
 
 ## Runtime Microsoft Visual C++
 

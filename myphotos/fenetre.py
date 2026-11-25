@@ -40,7 +40,8 @@ Trois modes, dans cet ordre (/api/etat dit lequel : « fenetre », « edge » ou
      bases fermées). Analyse, copie, recherche des doublons ou téléchargement en cours : une question d'abord.
      « Arrêter MyPhotos » (page, Réglages) ferme la fenêtre. Pas d'arrêt pour inactivité tant qu'elle est ouverte.
    - « Choisir un dossier » : fenêtre de Windows ouverte par le fil de la fenêtre MyPhotos, à qui elle appartient
-     (modale) : jamais derrière.
+     (modale) : jamais derrière. Dans les replis (Edge, navigateur) : la même fenêtre de Windows, par COM
+     (dialogue.py, serveur.ChoixDossier), au milieu de la fenêtre d'Edge quand on la connaît (FenetreEdge.zone).
    - Taille, position et état agrandi : DONNEES\\fenetre.json. Un écran disparu ramène la fenêtre sur un écran
      visible (placer()). Processus « par écran v2 » pour le DPI. Icône construction\\MyPhotos.ico ; identifiant
      d'application (AppUserModelID) explicite depuis les sources seulement (sinon les fenêtres de python.exe
@@ -438,7 +439,7 @@ def _dll(nom):
                        'PostMessageW': ([v, u, wintypes.WPARAM, wintypes.LPARAM], b),
                        'EnumDisplayMonitors': ([v, v, _ENUM_ECRANS, wintypes.LPARAM], b),
                        'GetMonitorInfoW': ([v, ctypes.POINTER(_MONITORINFO)], b),
-                       'GetDpiForWindow': ([v], u),
+                       'GetDpiForWindow': ([v], u), 'GetWindowRect': ([v, ctypes.POINTER(wintypes.RECT)], b),
                        'GetWindowPlacement': ([v, ctypes.POINTER(_WINDOWPLACEMENT)], b),
                        'SetProcessDpiAwarenessContext': ([v], b)},
             'shcore': {'GetDpiForMonitor': ([v, ctypes.c_int, ctypes.POINTER(u), ctypes.POINTER(u)], ctypes.c_long)},
@@ -1433,6 +1434,9 @@ class FenetreEdge:
             journal.warning('Edge ne démarre pas : repli sur le navigateur par défaut', exc_info=True)
             return 'echec'
         self.hote.app.mode = EDGE
+        choix = getattr(self.hote.app, 'choix_dossier', None)
+        if choix is not None and hasattr(choix, 'zone'):
+            choix.zone = self.zone                   # « Choisir un dossier » s'ouvre au milieu de cette fenêtre
         journal.info('page ouverte dans Edge, en mode application')
         try:
             while True:
@@ -1462,6 +1466,18 @@ class FenetreEdge:
         except subprocess.TimeoutExpired:
             journal.warning('Edge ne se ferme pas : arrêt de son processus')
             p.terminate()                                           # notre processus Edge, par son identifiant
+
+    def zone(self):
+        """(gauche, haut, droite, bas) de la fenêtre d'Edge qui montre MyPhotos, ou None : serveur.ChoixDossier y
+        pose sa fenêtre hôte (la fenêtre d'Edge, d'un autre processus, n'en est jamais la propriétaire)."""
+        p = self.proc
+        if p is None or p.poll() is not None:
+            return None
+        fenetres = fenetres_edge(fenetres_du_processus(p.pid))
+        r = wintypes.RECT()
+        if not fenetres or not _dll('user32').GetWindowRect(fenetres[0]['hwnd'], ctypes.byref(r)):
+            return None
+        return r.left, r.top, r.right, r.bottom
 
     def premier_plan(self):
         p = self.proc

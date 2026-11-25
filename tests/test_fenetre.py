@@ -24,6 +24,7 @@ restant, données de WebView2 effacées, position retenue). Le navigateur, le pr
 l'Explorateur sont simulés dans le processus d'essai ; « Choisir un dossier » s'ouvre sur un dossier vide.
 """
 import ctypes
+import ctypes.wintypes
 import json
 import logging
 import os
@@ -341,6 +342,33 @@ class TestReplis(unittest.TestCase):
             edge.premier_plan()
         liste.assert_called_once_with(123)
         devant.assert_called_once_with(4)
+
+    def test_choix_dossier_au_milieu_d_edge(self):
+        """Repli Edge : « Choisir un dossier » (serveur.ChoixDossier) s'ouvre au milieu de la fenêtre d'Edge qui
+        montre MyPhotos (FenetreEdge.zone) ; Edge absent ou sans fenêtre : None (le milieu de l'écran)."""
+        fenetres = [{'hwnd': 7, 'classe': 'Chrome_WidgetWin_1', 'titre': 'MyPhotos'}]
+
+        def rect(hwnd, r):
+            r._obj.left, r._obj.top, r._obj.right, r._obj.bottom = (hwnd * 10, 20, 830, 640)
+            return True
+        app = types.SimpleNamespace(choix_dossier=serveur.ChoixDossier(ouvrir=mock.Mock()), mode=None)
+        edge = fenetre.FenetreEdge(types.SimpleNamespace(app=app, _fin=threading.Event(),
+                                                         adresse='http://127.0.0.1:65011/?jeton=x'))
+        self.assertIsNone(edge.zone())                                     # pas encore lancé
+        proc = mock.Mock(pid=123)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        with mock.patch.object(fenetre, 'trouver_edge', return_value='msedge.exe'), \
+                mock.patch.object(fenetre.subprocess, 'Popen', return_value=proc), \
+                mock.patch.object(fenetre, 'fenetres_du_processus', return_value=fenetres), \
+                mock.patch.object(fenetre, '_dll', return_value=types.SimpleNamespace(GetWindowRect=rect)):
+            self.assertEqual(edge.lancer(), 'perdue')                     # Edge rendu aussitôt : peu importe ici
+            self.assertEqual(app.choix_dossier.zone, edge.zone)
+            self.assertEqual(app.choix_dossier.zone(), (70, 20, 830, 640))
+            with mock.patch.object(fenetre, 'fenetres_du_processus', return_value=[]):
+                self.assertIsNone(edge.zone())
+            proc.poll.return_value = 0                                    # Edge fermé
+            self.assertIsNone(edge.zone())
 
     def test_arret_demande_ferme_la_fenetre(self):
         srv = FauxServeur()
@@ -1000,6 +1028,121 @@ sys.exit(s.main(sys.argv[1:]))
 def _port_libre(port):
     with socket.socket() as s:
         return s.connect_ex(('127.0.0.1', port)) != 0
+
+
+ENFANT_CHOIX = '''\
+"""Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON."""
+import json, os, sys
+sys.path.insert(0, os.environ['MYPHOTOS_ESSAI_RACINE'])
+from myphotos import dialogue
+try:
+    sortie = {'chemin': dialogue.ouvrir_devant(sys.argv[1], sys.argv[2])}
+except Exception as e:
+    sortie = {'erreur': repr(e)}
+with open(os.environ['MYPHOTOS_ESSAI_SORTIE'], 'w', encoding='utf-8') as f:
+    json.dump(sortie, f)
+'''
+
+
+@unittest.skipUnless(os.environ.get('MYPHOTOS_ESSAI_FENETRE') == '1' and os.name == 'nt',
+                     'essai réel de la fenêtre : MYPHOTOS_ESSAI_FENETRE=1 (Windows)')
+class TestChoixDossierReel(unittest.TestCase):
+    """0.4.0 : la vraie fenêtre « Choisir un dossier » des replis (IFileOpenDialog par COM, dialogue.py), sur un
+    bureau Windows INVISIBLE, dans un Job Object : elle appartient à la fenêtre hôte de MyPhotos (invisible,
+    toujours au-dessus), qu'elle bloque ; elle est elle-même au-dessus, au milieu de l'écran ; « Annuler » (la croix)
+    rend None, « Sélectionner un dossier » rend le dossier proposé, au nom accentué avec un émoji. Rien ne reste."""
+
+    TITRE = 'Choisissez un dossier de photos'
+
+    def setUp(self):
+        import outils_fenetre as O
+        self.O = O
+        u32 = O.u32
+        u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        u32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)]
+        u32.GetDlgItem.restype = ctypes.c_void_p
+        u32.GetDlgItem.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
+        self.dossier = base / f'essai-choix-{time.strftime("%Y%m%d-%H%M%S")}'
+        self.propose = self.dossier / 'Été \U0001F334'
+        self.propose.mkdir(parents=True)
+        (self.dossier / 'enfant.py').write_text(ENFANT_CHOIX, encoding='utf-8')
+
+    def rect(self, hwnd):
+        r = ctypes.wintypes.RECT()
+        self.O.u32.GetWindowRect(hwnd, ctypes.byref(r))
+        return r.left, r.top, r.right, r.bottom
+
+    def ouvrir(self, action):
+        """Lance l'enfant, trouve la fenêtre de Windows, fait `action` (WM_CLOSE ou IDOK) ; rend (sortie, constats)."""
+        O = self.O
+        import processus_essai
+        from myphotos import dialogue
+        sortie = self.dossier / f'sortie-{action}.json'
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
+        env.update(MYPHOTOS_ESSAI_RACINE=str(RACINE), MYPHOTOS_ESSAI_SORTIE=str(sortie))
+        nom_bureau = f'MyPhotosChoix{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        fil = O.FilBureau(hbureau)
+        job = processus_essai.Job()
+        hproc = None
+        constats = {}
+        try:
+            _pid, hproc = O.lancer([sys.executable, str(self.dossier / 'enfant.py'), self.TITRE, str(self.propose)],
+                                   nom_bureau, str(self.dossier), env, job)
+            d = O.attendre(lambda: next((f for f in fil.faire(lambda: O.fenetres(set(job.pids())))
+                                         if f['classe'] == '#32770' and f['visible']), None), 30)
+            self.assertTrue(d, 'fenêtre « Choisir un dossier » absente')
+            tout = fil.faire(lambda: O.fenetres(set(job.pids())))
+            hote = next((f for f in tout if f['hwnd'] == d['proprietaire']), None)
+            constats.update(
+                titre=d['titre'], hote=hote and (hote['classe'], hote['titre'], hote['visible'], hote['pid']),
+                pid=d['pid'],
+                dessus=bool(fil.faire(lambda: self.O.u32.GetWindowLongPtrW(d['hwnd'], -20)) & 0x8),
+                hote_style=fil.faire(lambda: self.O.u32.GetWindowLongPtrW(d['proprietaire'], -20)),
+                hote_actif=bool(fil.faire(lambda: O.u32.IsWindowEnabled(d['proprietaire']))),
+                rect=fil.faire(lambda: self.rect(d['hwnd'])))
+            centre = ((constats['rect'][0] + constats['rect'][2]) // 2, (constats['rect'][1] + constats['rect'][3]) // 2)
+            travail = fil.faire(lambda: dialogue.zone_de_travail(*centre))
+            constats['travail'] = travail
+            time.sleep(0.5)
+            if action == 'annuler':
+                fil.faire(lambda: O.u32.PostMessageW(d['hwnd'], O.WM_CLOSE, 0, 0))
+            else:
+                bouton = fil.faire(lambda: O.u32.GetDlgItem(d['hwnd'], 1))
+                fil.faire(lambda: O.u32.PostMessageW(d['hwnd'], 0x0111, 1, bouton))     # WM_COMMAND, IDOK
+            self.assertTrue(O.attendre_processus(hproc, 30), 'la fenêtre ne se ferme pas')
+            constats['code'] = O.code_sortie(hproc)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
+            return json.loads(sortie.read_text(encoding='utf-8')), constats
+        finally:
+            if hproc is not None and O.code_sortie(hproc) is None:
+                job.terminer()                        # filet : les processus de CE job seulement
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
+
+    def verifier_constats(self, c):
+        self.assertEqual(c['titre'], self.TITRE)
+        self.assertEqual(c['hote'], ('Static', 'MyPhotos', True, c['pid']))   # hôte de MyPhotos, même processus
+        self.assertTrue(c['hote_style'] & 0x80000 and c['hote_style'] & 0x8)  # transparente, toujours au-dessus
+        self.assertTrue(c['dessus'])                                         # la fenêtre de Windows aussi
+        self.assertFalse(c['hote_actif'])                                    # modale : l'hôte attend
+        g, h, d, b = c['travail']
+        x1, y1, x2, y2 = c['rect']
+        self.assertTrue(g <= x1 < x2 <= d and h <= y1 < y2 <= b, c)           # entière sur l'écran…
+        self.assertLess(abs((x1 + x2) // 2 - (g + d) // 2), (d - g) // 8, c)   # … et au milieu
+        self.assertLess(abs((y1 + y2) // 2 - (h + b) // 2), (b - h) // 8, c)
+        self.assertEqual(c['code'], 0)
+
+    def test_annuler_puis_choisir(self):
+        sortie, constats = self.ouvrir('annuler')
+        self.assertEqual(sortie, {'chemin': None})
+        self.verifier_constats(constats)
+        sortie, constats = self.ouvrir('choisir')
+        self.assertEqual(sortie, {'chemin': str(self.propose)})              # le dossier proposé, nom intact
+        self.verifier_constats(constats)
 
 
 @unittest.skipUnless(os.environ.get('MYPHOTOS_ESSAI_FENETRE') == '1' and os.name == 'nt',
