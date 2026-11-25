@@ -238,7 +238,7 @@ Ouvrez la Corbeille de Windows (icône du Bureau), faites un clic droit sur la p
 
 ### J'ai supprimé des photos (ou tout un dossier), mais MyPhotos les montre encore.
 
-Cliquez sur **Actualiser**, au-dessus des photos ou dans les Réglages : MyPhotos refait le tour de vos dossiers et oublie les photos qui ne sont plus sur le disque. Une photo que vous ouvrez alors que son fichier a disparu est aussi retirée tout de suite (« Cette photo n'existe plus sur le disque : MyPhotos l'a retirée. »). Si son disque est seulement débranché, MyPhotos ne retire rien.
+Cliquez sur **Actualiser**, au-dessus des photos ou dans les Réglages : MyPhotos refait le tour de vos dossiers et oublie les photos qui ne sont plus sur le disque. Une photo que vous ouvrez alors que son fichier n'est plus à sa place n'est pas retirée sur-le-champ : MyPhotos refait aussitôt le tour de son dossier, la retrouve avec son analyse si elle a été rangée ou renommée, et ne l'oublie que si elle a vraiment été supprimée (0.4.0 ; avant, elle était retirée tout de suite et analysée de nouveau si on la retrouvait). Si son disque est seulement débranché, MyPhotos ne retire rien.
 
 ### Mon dossier Images contient des captures d'écran ou des fonds d'écran.
 
