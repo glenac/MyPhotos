@@ -543,6 +543,54 @@ class TestJetonFonctions(unittest.TestCase):
             with mock.patch.object(Path, 'write_text', side_effect=PermissionError('refusé')):
                 self.assertRegex(serveur.creer_jeton(Path(d) / 'autre'), r'^[A-Za-z0-9_-]{43}$')
 
+    @staticmethod
+    def droits(chemin):
+        """Liste de droits (DACL) d'un fichier, en SDDL."""
+        import ctypes
+        a = ctypes.WinDLL('advapi32', use_last_error=True)
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        v, u = ctypes.c_void_p, ctypes.c_uint32
+        a.GetNamedSecurityInfoW.argtypes = [ctypes.c_wchar_p, ctypes.c_int, u, v, v, v, v, ctypes.POINTER(v)]
+        a.GetNamedSecurityInfoW.restype = u
+        a.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [v, u, u, ctypes.POINTER(v), v]
+        k.LocalFree.argtypes, k.LocalFree.restype = [v], v
+        sd, texte = v(), v()
+        assert a.GetNamedSecurityInfoW(str(chemin), 1, 4, None, None, None, None, ctypes.byref(sd)) == 0
+        try:
+            assert a.ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, 4, ctypes.byref(texte), None)
+            try:
+                return ctypes.wstring_at(texte.value)
+            finally:
+                k.LocalFree(texte)
+        finally:
+            k.LocalFree(sd)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_jeton_prive_meme_dans_un_dossier_partage(self):
+        """Relecture adverse de la 0.4.0 : « jeton » n'était privé que si le dossier de données l'était ; avec
+        MYPHOTOS_DOSSIER sur D:\\… (« Utilisateurs authentifiés : modification », hérité), les autres comptes le
+        lisaient. Il est désormais créé (et son « .part ») avec une liste de droits protégée : notre compte seul."""
+        from myphotos import fenetre, serveur
+        with tempfile.TemporaryDirectory() as d:
+            partage = Path(d) / 'comme-D'
+            partage.mkdir()
+            r = subprocess.run(['icacls', str(partage), '/grant', '*S-1-5-11:(OI)(CI)M'], capture_output=True,
+                               creationflags=SANS_FENETRE)
+            self.assertEqual(r.returncode, 0)
+            temoin = partage / 'temoin.txt'
+            temoin.write_text('x', encoding='ascii')
+            self.assertIn('(A;ID;0x1301bf;;;AU)', self.droits(temoin))           # le dossier est bien large
+            chemin = partage / 'donnees' / 'jeton'
+            jeton = serveur.creer_jeton(chemin)
+            self.assertEqual(self.droits(chemin), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+            self.assertEqual(serveur.lire_jeton(chemin), jeton)                  # et nous le lisons toujours
+            # Un « .part » laissé par un arrêt brutal (droits hérités) est remplacé par un fichier privé.
+            (chemin.parent / 'jeton.part').write_text('reste', encoding='ascii')
+            jeton = serveur.creer_jeton(chemin)
+            self.assertEqual(self.droits(chemin), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+            self.assertEqual(serveur.lire_jeton(chemin), jeton)
+            self.assertEqual(serveur.droits_prives(), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+
     @unittest.skipUnless(os.name == 'nt', 'Windows')
     def test_jeton_lu_pendant_son_remplacement(self):
         """Relecture adverse de la 0.4.0 : une relance lit « jeton » à l'instant où la MyPhotos qui démarre le remplace,

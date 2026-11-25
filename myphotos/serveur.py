@@ -412,7 +412,9 @@ def _dll(nom):
                          'GetDriveTypeW': ([w], u), 'GetVolumePathNameW': ([w, w, u], b),
                          'GetVolumeNameForVolumeMountPointW': ([w, w, u], b), 'GetShortPathNameW': ([w, w, u], u),
                          'CreateFileW': ([w, u, u, v, u, u, v], v), 'CloseHandle': ([v], b),
-                         'GetFinalPathNameByHandleW': ([v, w, u, u], u)},
+                         'GetFinalPathNameByHandleW': ([v, w, u, u], u),
+                         'WriteFile': ([v, ctypes.c_char_p, u, ctypes.POINTER(u), v], b), 'LocalFree': ([v], v)},
+            'advapi32': {'ConvertStringSecurityDescriptorToSecurityDescriptorW': ([w, u, ctypes.POINTER(v), v], b)},
             'shell32': {'SHGetKnownFolderPath': ([v, u, v, ctypes.POINTER(v)], ctypes.c_long),
                         'ILCreateFromPathW': ([w], v), 'ILFree': ([v], None),
                         'SHOpenFolderAndSelectItems': ([v, u, v, u], ctypes.c_long),
@@ -1004,8 +1006,9 @@ def creer_jeton(chemin=None):
     provisoire = chemin.with_name(chemin.name + '.part')
     try:
         chemin.parent.mkdir(parents=True, exist_ok=True)
-        provisoire.write_text(jeton, encoding='ascii')
-        remplacer_fichier(provisoire, chemin)
+        provisoire.unlink(missing_ok=True)               # reste d'un arrêt brutal : recréé avec ses propres droits
+        ecrire_prive(provisoire, jeton.encode('ascii'))
+        remplacer_fichier(provisoire, chemin)            # le fichier renommé garde ses droits
     except OSError:
         journal.warning('jeton d\'accès impossible à écrire dans les données : une relance ne rouvrira pas la page')
         try:
@@ -1013,6 +1016,47 @@ def creer_jeton(chemin=None):
         except OSError:
             pass
     return jeton
+
+
+class _ATTRIBUTS_SECURITE(ctypes.Structure):
+    """SECURITY_ATTRIBUTES."""
+    _fields_ = [('nLength', ctypes.c_uint32), ('lpSecurityDescriptor', ctypes.c_void_p), ('bInheritHandle', ctypes.c_int)]
+
+
+def droits_prives():
+    """SDDL d'une liste de droits PROTÉGÉE (rien d'hérité du dossier), qui ne donne accès qu'à notre compte Windows ;
+    « OW » (le propriétaire du fichier) si notre SID est illisible."""
+    sid = fenetre.sid_compte()
+    return f'D:P(A;;FA;;;{sid})' if sid else 'D:P(A;;FA;;;OW)'
+
+
+def ecrire_prive(chemin, octets):
+    """Crée le fichier `chemin` (qui ne doit pas exister) avec droits_prives(), dès sa création (CreateFileW) : il
+    reste privé même quand le dossier ne l'est pas. Relecture adverse de la 0.4.0 : avec MYPHOTOS_DOSSIER sur un
+    autre disque (D:\\…, « Utilisateurs authentifiés : modification » hérité), les autres comptes lisaient le jeton."""
+    if os.name != 'nt':
+        fd = os.open(chemin, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(octets)
+        return
+    k32 = _dll('kernel32')
+    descripteur = ctypes.c_void_p()
+    if not _dll('advapi32').ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            droits_prives(), 1, ctypes.byref(descripteur), None):                  # SDDL_REVISION_1
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        attributs = _ATTRIBUTS_SECURITE(ctypes.sizeof(_ATTRIBUTS_SECURITE), descripteur.value, 0)
+        h = k32.CreateFileW(str(chemin), 0x40000000, 0, ctypes.addressof(attributs), 1, 0x80, None)
+        if not h or h == ctypes.c_void_p(-1).value:      # GENERIC_WRITE, aucun partage, CREATE_NEW, NORMAL
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            ecrit = ctypes.c_uint32()
+            if not k32.WriteFile(h, octets, len(octets), ctypes.byref(ecrit), None) or ecrit.value != len(octets):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            k32.CloseHandle(h)
+    finally:
+        k32.LocalFree(descripteur)
 
 
 def remplacer_fichier(source, cible, essais=None, pause=None):
