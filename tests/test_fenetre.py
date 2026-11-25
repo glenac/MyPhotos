@@ -676,6 +676,58 @@ class TestProcessusEssai(unittest.TestCase):
             p.stdout.close()
 
 
+class TestOutilsFenetre(unittest.TestCase):
+    """tests/outils_fenetre.lancer (essai réel de la fenêtre) : tampons de CreateProcessW comptés en unités UTF-16.
+    Relecture de la 0.3.0 : le bloc d'environnement était dimensionné en caractères (len), si bien qu'un caractère
+    hors du plan de base (émoji : DEUX unités UTF-16) faisait échouer le lancement."""
+
+    EMOJI = 'Vacances \U0001F334 été \U0001F600'
+
+    def test_bloc_environnement_en_unites_utf16(self):
+        import outils_fenetre as O
+        env = {'b': 'é', 'A': self.EMOJI, 'PATH': 'x'}
+        attendu = f'A={self.EMOJI}\0b=é\0PATH=x\0\0'                   # trié sans tenir compte de la casse
+        unites = len(attendu.encode('utf-16-le')) // 2
+        self.assertEqual(unites, len(attendu) + 2)                     # deux émojis : deux unités de plus
+        tampon = O.bloc_environnement(env)
+        self.assertGreaterEqual(len(tampon), unites + 1)
+        self.assertEqual(ctypes.wstring_at(ctypes.addressof(tampon), unites), attendu)
+        self.assertEqual(tampon[unites - 2:unites + 1], '\0\0\0')       # fin du bloc : deux NUL (au moins)
+        # Bloc vide : deux NUL quand même (Windows lit jusqu'au double NUL).
+        vide = O.bloc_environnement({})
+        self.assertEqual(vide[:2], '\0\0')
+        self.assertEqual(O.unites_utf16(self.EMOJI), len(self.EMOJI) + 2)
+        self.assertEqual(O.tampon_utf16(self.EMOJI).value, self.EMOJI)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_lancer_avec_un_emoji(self):
+        """Vrai lancement par outils_fenetre.lancer, sur un bureau invisible, dans un Job Object : la ligne de
+        commande et l'environnement arrivent entiers dans le processus lancé (aucune fenêtre)."""
+        import outils_fenetre as O
+        import processus_essai
+        with tempfile.TemporaryDirectory() as d:
+            sortie = Path(d) / 'sortie.json'
+            code = ('import json, os, sys; open(sys.argv[2], "w", encoding="utf-8").write(json.dumps('
+                    '[sys.argv[1], os.environ.get("MYPHOTOS_ESSAI_EMOJI")]))')
+            env = dict(os.environ, MYPHOTOS_ESSAI_EMOJI=self.EMOJI)
+            nom_bureau = f'MyPhotosEssaiOutils{os.getpid()}'
+            hbureau = O.creer_bureau(nom_bureau)
+            job = processus_essai.Job()
+            hproc = None
+            try:
+                _, hproc = O.lancer([sys.executable, '-c', code, 'argument ' + self.EMOJI, str(sortie)], nom_bureau,
+                                    d, env, job)
+                self.assertTrue(O.attendre_processus(hproc, 60))
+                self.assertEqual(O.code_sortie(hproc), 0)
+                self.assertEqual(json.loads(sortie.read_text(encoding='utf-8')),
+                                 ['argument ' + self.EMOJI, self.EMOJI])
+            finally:
+                job.terminer()
+                job.fermer()
+                O.fermer_handle(hproc)
+                O.fermer_bureau(hbureau)
+
+
 @unittest.skipUnless(os.name == 'nt', 'Windows')
 class TestMutex(unittest.TestCase):
     """Mutex de l'installateur (config.MUTEX) : il existe tant que MyPhotos tourne, et disparaît avec lui. Vrai
