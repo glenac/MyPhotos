@@ -1612,8 +1612,30 @@ async function chargerDossiers() {
 function infosDossier(d) {
   const infos = [d.photos ? pluriel(d.photos, 'photo') : 'aucune photo pour le moment'];
   if (d.photos && d.a_faire > 0) infos.push(`${nombre.format(d.a_faire)} à analyser`);
-  if (!d.disponible) infos.push('inaccessible pour le moment (disque débranché ?)');
+  if (d.autre_disque) infos.push('inaccessible : un autre disque occupe sa lettre');
+  else if (!d.disponible) infos.push('inaccessible pour le moment (disque débranché ?)');
   return infos.join(' · ');
+}
+
+/** « C'est bien le même disque » (0.4.1) : le disque branché à la lettre de ce dossier est bien le sien. */
+async function memeDisque(d, bouton) {
+  const ok = await confirmer({titre: 'Est-ce bien le même disque ?', oui: 'Oui, c’est le même disque', danger: true,
+    texte: [`« ${d.chemin} »`,
+      'MyPhotos ne reconnaît pas le disque branché à cette place : beaucoup de ses photos n’y sont pas. C’est peut-être un autre disque (une sauvegarde, une clé USB) qui a pris sa lettre.',
+      'Si c’est bien le disque de ce dossier, MyPhotos l’adopte : les photos qui n’y sont plus seront retirées de MyPhotos (rien n’est supprimé de vos disques), et les nouvelles seront ajoutées.',
+      'En cas de doute, choisissez Annuler : vos photos restent gardées jusqu’au retour de leur disque.']});
+  if (!ok) return;
+  bouton.disabled = true;
+  try {
+    await api('/api/dossiers/meme-disque', {id: d.id});
+    annoncer('Disque adopté : MyPhotos refait le tour de ce dossier.');
+    await chargerDossiers();
+    apresChangementDossiers();
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    bouton.disabled = false;
+  }
 }
 
 /** Chemin d'un sous-dossier, montré à partir de son dossier suivi (« Captures d'écran » plutôt que tout le chemin). */
@@ -1637,6 +1659,9 @@ function ligneDossier(d, reglages) {
   return el('li', {classe: 'dossier'}, icone('dossier'),
     el('div', {classe: 'dossier-texte'}, el('span', {classe: 'dossier-chemin', texte: d.chemin}),
       el('span', {classe: 'dossier-infos', texte: infosDossier(d)}), exclusions,
+      reglages && d.autre_disque ? el('button', {classe: 'bouton-lien', type: 'button',
+        'aria-label': `C’est bien le même disque pour ${d.chemin}`,
+        onclick: (ev) => memeDisque(d, ev.currentTarget)}, 'C’est bien le même disque') : null,
       reglages ? el('button', {classe: 'bouton-lien', type: 'button', 'aria-label': `Exclure un sous-dossier de ${d.chemin}`,
         onclick: (ev) => exclureSousDossier(d, ev.currentTarget)}, 'Exclure un sous-dossier…') : null),
     el('button', {classe: 'bouton petit', type: 'button', 'aria-label': `Retirer le dossier ${d.chemin}`,

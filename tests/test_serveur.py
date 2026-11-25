@@ -2010,6 +2010,47 @@ class TestDossiersEtActualiser(unittest.TestCase):
         return {Path(ch).relative_to(self.photos).as_posix(): v[0]
                 for ch, v in self.app.base.connus(dossier_id).items()}
 
+    def test_c_est_bien_le_meme_disque(self):
+        """0.4.1 : dossier refusé à l'inventaire parce qu'un autre disque occupe sa lettre (autre numéro de volume) :
+        signalé dans les Réglages (autre_disque) ; « C'est bien le même disque » adopte le nouveau numéro et refait le
+        tour de ce dossier seulement. Le numéro de volume est simulé (aucun disque n'est branché pendant un essai)."""
+        ix = FauxIndexeur()
+        self.app.indexeur = ix
+        numero = {'v': 0xA1}
+        vrai = self.serveur.identite_volume
+        from myphotos import base as base_mod
+        cle_chemin = base_mod.cle_chemin
+
+        def simule(chemin):
+            if cle_chemin(str(chemin)) != cle_chemin(str(self.photos)):
+                return vrai(chemin)
+            return numero['v'] if os.path.isdir(self.photos) else None
+        with mock.patch.object(self.serveur, 'identite_volume', simule), \
+                mock.patch.object(base_mod, 'identite_volume', simule):
+            d = self.app.ajouter_dossier(str(self.photos))['dossier']
+            self.assertFalse(self.app.liste_dossiers()['dossiers'][0]['autre_disque'])
+            # L'inventaire a trouvé un autre disque à cette lettre : dossier injoignable, numéro gardé.
+            numero['v'] = 0xB2
+            self.app.base.marquer_dossier(d['id'], False)
+            self.assertTrue(self.app.liste_dossiers()['dossiers'][0]['autre_disque'])
+            # Débranché (rien à cette place) : pas « autre disque ».
+            numero['v'] = None
+            self.assertFalse(self.app.liste_dossiers()['dossiers'][0]['autre_disque'])
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.meme_disque(d['id'])
+            self.assertEqual(e.exception.statut, 409)
+            numero['v'] = 0xB2
+            ix.demandes.clear()
+            r = self.app.meme_disque(d['id'])
+            self.assertTrue(r['ok'])
+            self.assertTrue(r['dossier']['disponible'])
+            self.assertFalse(r['dossier']['autre_disque'])
+            self.assertEqual(self.app.base.dossier(d['id'])['volume'], 0xB2)
+            self.assertEqual(ix.demandes, [[d['id']]])                     # le tour de ce dossier seulement
+        with self.assertRaises(self.serveur.Refus) as e:
+            self.app.meme_disque(INCONNU)
+        self.assertEqual(e.exception.statut, 404)
+
     def test_assistant_examine_puis_ajoute_sans_les_captures(self):
         ex = self.app.examiner_dossier(str(self.photos) + '\\')
         self.assertEqual((ex['chemin'], ex['nom'], ex['total'], ex['complet']), (str(self.photos), 'Images', 6, True))

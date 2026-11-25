@@ -2211,7 +2211,31 @@ class Application:
 
     @staticmethod
     def _dossier_public(d):
-        return {k: d.get(k) for k in ('id', 'chemin', 'photos', 'analysees', 'erreurs', 'a_faire', 'disponible')}
+        r = {k: d.get(k) for k in ('id', 'chemin', 'photos', 'analysees', 'erreurs', 'a_faire', 'disponible')}
+        # 0.4.1 : injoignable parce qu'un autre disque occupe sa lettre (autre numéro de volume) : la page propose
+        # « C'est bien le même disque ». Jamais demandé pour un partage réseau (lent à répondre quand il est éteint).
+        r['autre_disque'] = bool(not d.get('disponible') and d.get('volume') is not None
+                                 and not str(d.get('chemin') or '').startswith('\\\\')
+                                 and identite_volume(d['chemin']) not in (None, d['volume']))
+        return r
+
+    def meme_disque(self, dossier_id):
+        """« C'est bien le même disque » (0.4.1) : le disque qui occupe la lettre de ce dossier est bien le sien (refusé
+        à l'inventaire : autre numéro de volume et photos connues absentes, voir indexation). Son numéro est adopté,
+        puis ce dossier seul est inventorié : les photos qui n'y sont pas seront retirées de MyPhotos (les fichiers ne
+        sont jamais touchés), celles qui y sont nouvelles ajoutées. La page le fait confirmer avant."""
+        d = self.base.dossier(dossier_id)
+        if d is None:
+            raise Refus('Ce dossier ne fait pas partie de MyPhotos.', 404)
+        volume = identite_volume(d['chemin'])
+        if volume is None or not os.path.isdir(chemin_systeme(d['chemin'])):
+            raise Refus('Ce dossier est introuvable pour le moment : branchez son disque, puis recommencez.', 409)
+        self.base.marquer_dossier(d['id'], True, volume=volume)
+        journal.info('%s : nouveau numéro de volume adopté à la demande (« c\'est bien le même disque »)', d['chemin'])
+        ix = self.indexeur
+        if ix is not None:
+            ix.relancer(dossiers=[d['id']])
+        return {'ok': True, 'dossier': self._dossier_public(self.base.dossier(d['id']))}
 
     def liste_dossiers(self):
         suivis = self.base.dossiers()
@@ -3678,6 +3702,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 r = app.retirer_dossier(self._identifiant(corps.get('id')))
             except Refus:
                 raise Refus('Ce dossier ne fait pas partie de MyPhotos.', 404)
+        elif chemin == '/api/dossiers/meme-disque':
+            r = app.meme_disque(self._identifiant_dossier(corps.get('id')))
         elif chemin in ('/api/analyse/pause', '/api/analyse/reprendre', '/api/analyse/relancer'):
             r = app.analyse(chemin.rsplit('/', 1)[1])
         elif chemin == '/api/ouvrir':
