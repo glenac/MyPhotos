@@ -45,6 +45,11 @@ from myphotos import config, fenetre  # noqa: E402
 ISS = RACINE / 'construction' / 'MyPhotos.iss'
 APP_ID = '25DE0724-F7B4-4956-8238-1E33E16ABFED'
 CLE_DESINSTALLATION = rf'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{{APP_ID}}}_is1'
+# Essai réel : un AppId et un mutex à lui (0.4.0). Il ne touche jamais une vraie installation de MyPhotos du PC
+# d'essai (dossier repris, entrée de « Applications installées », mutex d'un MyPhotos ouvert).
+APP_ID_ESSAI = 'E55A1F0E-0D4C-4B7A-9C2E-4D7970686F74'
+MUTEX_ESSAI = f'MyPhotos-{APP_ID_ESSAI}'
+CLE_DESINSTALLATION_ESSAI = rf'Software\Microsoft\Windows\CurrentVersion\Uninstall\{{{APP_ID_ESSAI}}}_is1'
 
 
 def section(texte, nom):
@@ -66,12 +71,12 @@ def nom_de_myphotos():
     return lambda nom: nom.lower() in exacts or any(fnmatch.fnmatchcase(nom.lower(), m) for m in motifs)
 
 
-def mutex_existe():
+def mutex_existe(nom=None):
     k32 = ctypes.WinDLL('kernel32', use_last_error=True)
     k32.OpenMutexW.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_wchar_p]
     k32.OpenMutexW.restype = ctypes.c_void_p
     k32.CloseHandle.argtypes = [ctypes.c_void_p]
-    h = k32.OpenMutexW(0x00100000, False, config.MUTEX)                    # SYNCHRONIZE
+    h = k32.OpenMutexW(0x00100000, False, nom or config.MUTEX)            # SYNCHRONIZE
     if h:
         k32.CloseHandle(h)
     return bool(h)
@@ -663,10 +668,11 @@ class TestInstallateur(unittest.TestCase):
 
 # ---------------------------------------------------------------- essai réel de l'installateur (à la demande)
 
-def _cle_desinstallation():
+def _cle_desinstallation(cle=CLE_DESINSTALLATION_ESSAI):
+    """Dossier de l'installation d'essai (par défaut ; CLE_DESINSTALLATION pour la vraie), None si absente."""
     import winreg
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLE_DESINSTALLATION) as k:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, cle) as k:
             return winreg.QueryValueEx(k, 'InstallLocation')[0]
     except FileNotFoundError:
         return None
@@ -689,10 +695,12 @@ class TestInstallateurReel(unittest.TestCase):
         cls.app = Path(os.environ.get('MYPHOTOS_ESSAI_DOSSIER_APP') or RACINE / 'dist' / 'MyPhotos')
         if not (cls.app / 'MyPhotos.exe').is_file():
             raise unittest.SkipTest(f'version dossier absente : {cls.app} (construire.ps1 --dossier)')
+        # AppId et mutex d'essai (0.4.0) : une vraie installation de MyPhotos, ouverte ou non, n'est jamais touchée.
         if _cle_desinstallation() is not None:
-            raise unittest.SkipTest('MyPhotos est installé sur cet ordinateur : essai annulé (dossier précédent)')
-        if mutex_existe():
-            raise unittest.SkipTest('une MyPhotos 0.3 (ou plus) tourne déjà sur cet ordinateur')
+            raise unittest.SkipTest('une installation d\'essai précédente est restée (clé '
+                                    f'{CLE_DESINSTALLATION_ESSAI}) : la désinstaller d\'abord')
+        if mutex_existe(MUTEX_ESSAI):
+            raise unittest.SkipTest('un MyPhotos d\'essai tourne déjà sur cet ordinateur')
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
         cls.d = base / f'inst-{time.strftime("%H%M%S")}'         # court : chemins de _internal jusqu'à ~90
         cls.temp = cls.d / 'temp'
@@ -708,7 +716,8 @@ class TestInstallateurReel(unittest.TestCase):
             raise unittest.SkipTest(f'MYPHOTOS_ESSAI_UI trop long pour l\'essai réel : {base} (les chemins installés '
                                     'dépasseraient 259 caractères)')
         with open(journal, 'wb') as f:
-            r = subprocess.run([str(cls.iscc), f'/DMyAppVersion={config.VERSION}', f'/DDossierApp={cls.app}',
+            r = subprocess.run([str(cls.iscc), f'/DMyAppVersion={config.VERSION}', f'/DMyAppId={APP_ID_ESSAI}',
+                                f'/DMyAppMutex={MUTEX_ESSAI}', f'/DDossierApp={cls.app}',
                                 f'/DDossierLicences={licences}', f'/DSortie={cls.d}',
                                 f'/DCheminLePlusLong={cls.long}', str(ISS)],
                                cwd=str(ISS.parent), stdout=f, stderr=subprocess.STDOUT,
@@ -731,7 +740,9 @@ class TestInstallateurReel(unittest.TestCase):
     def executer(self, arguments, **env_plus):
         """Installateur ou désinstallateur, sur le bureau invisible, dans un Job Object à lui : code de sortie."""
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
-        env.update(TEMP=str(self.temp), TMP=str(self.temp), **{k: str(v) for k, v in env_plus.items()})
+        # Un MyPhotos lancé par l'installateur d'essai tient le mutex de l'essai, jamais celui de la vraie MyPhotos.
+        env.update(TEMP=str(self.temp), TMP=str(self.temp), MYPHOTOS_ESSAI_MUTEX=MUTEX_ESSAI,
+                   **{k: str(v) for k, v in env_plus.items()})
         job = self.P.Job()
         pid, h = self.O.lancer([str(a) for a in arguments], self.bureau, str(self.d), env, job)
         try:
@@ -805,12 +816,13 @@ class TestInstallateurReel(unittest.TestCase):
                                          'unins000.exe']))
         self.assertEqual(self.raccourcis(), self.raccourcis_avant)
 
-        # MyPhotos ouvert (mutex config.MUTEX tenu) : installation et désinstallation refusées, rien n'est touché.
+        # MyPhotos ouvert (mutex tenu ; ici celui de l'essai) : installation et désinstallation refusées, rien n'est
+        # touché.
         k32 = ctypes.WinDLL('kernel32', use_last_error=True)
         k32.CreateMutexW.restype = ctypes.c_void_p
         k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
         k32.CloseHandle.argtypes = [ctypes.c_void_p]
-        h = k32.CreateMutexW(None, False, config.MUTEX)
+        h = k32.CreateMutexW(None, False, MUTEX_ESSAI)
         try:
             avant = (self.inst / 'MyPhotos.exe').stat().st_mtime_ns
             self.assertNotEqual(self.installer(), 0)

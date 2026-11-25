@@ -7,8 +7,9 @@ VERSION = '0.4.0'
 NOM = 'MyPhotos'
 
 # Mutex nommé tenu par MyPhotos tant qu'il tourne : l'installateur (Inno Setup, AppMutex) s'en sert. Ne change jamais
-# (même identifiant que l'AppId de l'installateur).
-MUTEX = 'MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED'
+# (même identifiant que l'AppId de l'installateur). Seul l'essai réel de l'installateur (tests/test_construction.py)
+# en donne un autre (MYPHOTOS_ESSAI_MUTEX), avec son propre AppId : il ne se mêle jamais d'une vraie installation.
+MUTEX = os.environ.get('MYPHOTOS_ESSAI_MUTEX') or 'MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED'
 
 # Clé publique des mises à jour (ECDSA P-256, X puis Y, base64) : MyPhotos n'accepte une mise à jour que si son
 # manifeste est signé par la clé privée correspondante, gardée hors du dépôt (construction/cle_signature.py).
