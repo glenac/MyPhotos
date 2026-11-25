@@ -1253,8 +1253,21 @@ try:
                     sortie['comptes_com'].append(_methode(o, 2)())
         dialogue._liberer = liberer
         choix = serveur.ChoixDossier()
+        import time as _temps
         for _ in range(int(sys.argv[4])):
-            sortie['chemins'].append(choix.demander(initial=sys.argv[2], delai=0.5, titre=sys.argv[1]))
+            # PC chargé (suite complète des essais) : la boîte précédente peut mettre plus que prévu à se fermer, et la
+            # demande suivante est alors refusée, à juste titre (« toujours ouverte ») : on réessaie un moment.
+            for _essai in range(60):
+                try:
+                    chemin = choix.demander(initial=sys.argv[2], delai=0.5, titre=sys.argv[1])
+                    break
+                except serveur.Refus as e:
+                    if 'toujours ouverte' not in str(e):
+                        raise
+                    _temps.sleep(0.25)
+            else:
+                raise RuntimeError('boîte « Choisir un dossier » jamais refermée')
+            sortie['chemins'].append(chemin)
             gc.collect()
             n = ctypes.c_uint32()
             k32.GetProcessHandleCount(k32.GetCurrentProcess(), ctypes.byref(n))
