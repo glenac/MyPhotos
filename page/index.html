@@ -198,7 +198,6 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .operation { background: var(--surface-2); }
 .operation-boutons { display: flex; flex-wrap: wrap; gap: 8px; }
 .operation-boutons .bouton-icone { width: 40px; height: 40px; }
-.operation-boutons a.bouton { text-decoration: none; }
 /* Nouvelles versions de MyPhotos : question de l'assistant, réglage. */
 .question-version { margin: 18px 0 0; padding: 14px 18px; border: 1px solid var(--bordure); border-radius: 14px; background: var(--surface); }
 .question-version h2 { margin: 0 0 6px; font-size: 1.05rem; }
@@ -1805,9 +1804,11 @@ function majVersion(e) {
     pourcent = null;
   } else if (m.version && (m.etat === 'disponible' || m.etat === 'erreur') && !m.reportee) {
     texte = m.etat === 'erreur' && m.message ? m.message : `Une nouvelle version de MyPhotos est disponible : la ${m.version}.`;
+    // « Nouveautés » et « Télécharger » : MyPhotos ouvre lui-même la page de la version dans le navigateur de
+    // Windows (jamais un lien suivi depuis cette page).
     boutons = m.possible ? [{texte: m.etat === 'erreur' ? 'Réessayer' : 'Mettre à jour', faire: mettreAJour}]
-      : [{texte: 'Télécharger', lien: m.notes}];
-    if (m.possible && m.notes) boutons.push({texte: 'Nouveautés', lien: m.notes});
+      : [{texte: 'Télécharger', faire: () => actionVersion('page')}];
+    if (m.possible) boutons.push({texte: 'Nouveautés', faire: () => actionVersion('page')});
     boutons.push({texte: 'Plus tard', faire: () => actionVersion('reporter')});
   }
   $('#nv').hidden = !texte;
@@ -1816,14 +1817,11 @@ function majVersion(e) {
   barre.hidden = pourcent === undefined;
   if (pourcent === null) barre.removeAttribute('value');
   else if (pourcent !== undefined) barre.value = Math.max(0, Math.min(100, pourcent));
-  const cle = boutons.map((b) => b.texte + (b.lien || '')).join('|');
+  const cle = boutons.map((b) => b.texte).join('|');
   if (zone.dataset.cle === cle) return;
   zone.dataset.cle = cle;
-  // Un lien https s'ouvre dans le navigateur de Windows (fenetre.py), jamais dans la fenêtre de MyPhotos.
-  zone.replaceChildren(...boutons.map((b) => (b.lien
-    ? el('a', {classe: 'bouton petit', href: b.lien, target: '_blank', rel: 'noopener noreferrer'}, b.texte)
-    : el('button', {classe: b.texte === 'Mettre à jour' ? 'bouton petit principal' : 'bouton petit', type: 'button',
-      onclick: b.faire}, b.texte))));
+  zone.replaceChildren(...boutons.map((b) => el('button', {classe: b.texte === 'Mettre à jour' ? 'bouton petit principal'
+    : 'bouton petit', type: 'button', onclick: b.faire}, b.texte)));
 }
 
 function majReglagesVersion(e) {

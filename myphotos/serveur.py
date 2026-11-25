@@ -2315,7 +2315,7 @@ class Application:
         }
 
     def action_mise_a_jour(self, action, corps):
-        """POST /api/mise-a-jour/<action> : reglage {oui}, verifier, installer, annuler, reporter, vu."""
+        """POST /api/mise-a-jour/<action> : reglage {oui}, verifier, installer, annuler, reporter, vu, page."""
         g = self.mises_a_jour
         try:
             if action == 'reglage':
@@ -2335,6 +2335,19 @@ class Application:
                 return g.reporter()
             if action == 'vu':
                 return g.bilan_vu()
+            if action == 'page':
+                # « Nouveautés », « Télécharger » : la page de la version proposée, ouverte par MyPhotos dans le
+                # navigateur de Windows (jamais une navigation depuis la page : en mode Edge, elle resterait dans
+                # le profil de MyPhotos, qui porte le cookie du jeton). Adresse construite depuis la version signée.
+                info = g.info
+                if info is None:
+                    raise Refus('Aucune nouvelle version.', 409)
+                adresse = mise_a_jour.url_notes(info['version'])
+                if FACTICE:
+                    journal.info('essai : page de la version %s non ouverte', info['version'])
+                else:
+                    fenetre.ouvrir_lien_externe(adresse)
+                return {'ok': True}
         except mise_a_jour.Refus as e:
             raise Refus(str(e), e.code) from None
         raise Refus('Action inconnue.', 404)

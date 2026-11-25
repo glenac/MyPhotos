@@ -216,17 +216,30 @@ def _telecharger_un(url, partiel, taille, rappel, arret, ouvrir=None, agent='MyP
     if debut:
         req.add_header('Range', f'bytes={debut}-')
     with (ouvrir or urllib.request.urlopen)(req, timeout=60) as r:
+        entetes = getattr(r, 'headers', None)
         if debut and r.status != 206:            # le serveur ne sait pas reprendre : on repart de zéro
             debut = 0
+        elif debut and entetes is not None and entetes.get('Content-Range') is not None \
+                and not entetes.get('Content-Range', '').strip().startswith(f'bytes {debut}-'):
+            partiel.unlink(missing_ok=True)      # reprise à un autre endroit que demandé : on repartira de zéro
+            raise IOError('reprise du téléchargement à un endroit inattendu')
+        # Jamais plus que la taille attendue : un fichier remplacé par un plus gros ne remplit pas le disque.
+        annonce = entetes.get('Content-Length') if entetes is not None else None
+        if annonce is not None and annonce.strip().isdigit() and int(annonce) > taille - debut:
+            raise IOError(f'fichier plus gros que prévu ({int(annonce) + debut} / {taille} octets)')
         fait = debut
         dernier = 0.0
         with open(partiel, 'ab' if debut else 'wb') as f:
             while True:
                 if arret is not None and arret.is_set():
                     raise InterruptedError('téléchargement interrompu')
-                bloc = r.read(1 << 20)
+                bloc = r.read(min(1 << 20, taille - fait + 1))
                 if not bloc:
                     break
+                if fait + len(bloc) > taille:
+                    f.close()
+                    partiel.unlink(missing_ok=True)
+                    raise IOError(f'fichier plus gros que prévu (plus de {taille} octets)')
                 f.write(bloc)
                 fait += len(bloc)
                 if time.monotonic() - dernier > 0.25:

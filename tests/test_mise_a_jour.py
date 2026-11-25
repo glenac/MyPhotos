@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -109,6 +110,12 @@ class Manifeste(unittest.TestCase):
         for m in mauvais:
             with self.assertRaises(M.Refusee, msg=str(m)[:80]):
                 self.lire(m)
+
+    def test_json_tres_imbrique(self):
+        # Non signé et très imbriqué : Refusee, comme tout fichier illisible (pas RecursionError).
+        for brut in (b'[' * 60000, b'{"format": 1, "manifeste": ' + b'[' * 50000 + b'}'):
+            with self.assertRaises(M.Refusee):
+                M.lire_manifeste(brut, cle=self.publique)
 
     def test_nouveautes_nettoyees(self):
         i = self.lire(manifeste(nouveautes=['  Ligne\u202e avec\x1b[31m contrôle \t ']))
@@ -244,6 +251,57 @@ class Fichiers(unittest.TestCase):
             with self.assertRaises(InterruptedError):
                 M.telecharger(self.info, arret=arret, racine=self.d)
 
+    def test_telechargement_borne(self):
+        # Fichier remplacé par un plus gros sur GitHub : arrêté à la taille signée, rien de plus n'est écrit.
+        class Reponse:
+            def __init__(self, corps, statut=200, entetes=None):
+                self.corps, self.status, self.headers = io.BytesIO(corps), statut, entetes or {}
+
+            def read(self, n=-1):
+                return self.corps.read(n)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        partiel = self.d / 'x.part'
+        trop = b'x' * (TAILLE + 5000)
+        with self.assertRaisesRegex(IOError, 'plus gros'):
+            M.modele._telecharger_un('https://x/y', partiel, TAILLE, lambda n: None, None,
+                                     ouvrir=lambda req, timeout: Reponse(trop))
+        self.assertFalse(partiel.exists())
+        with self.assertRaisesRegex(IOError, 'plus gros'):         # annoncé trop gros : rien n'est lu
+            M.modele._telecharger_un('https://x/y', partiel, TAILLE, lambda n: None, None,
+                                     ouvrir=lambda req, timeout: Reponse(b'', entetes={'Content-Length': str(TAILLE + 1)}))
+        partiel.write_bytes(b'y' * 1000)                              # reprise : le serveur reprend ailleurs
+        with self.assertRaisesRegex(IOError, 'inattendu'):
+            M.modele._telecharger_un('https://x/y', partiel, TAILLE, lambda n: None, None,
+                                     ouvrir=lambda req, timeout: Reponse(b'z', 206, {'Content-Range': 'bytes 0-9/10'}))
+        self.assertFalse(partiel.exists())
+        M.modele._telecharger_un('https://x/y', partiel, TAILLE, lambda n: None, None,     # taille exacte : accepté
+                                 ouvrir=lambda req, timeout: Reponse(self.contenu, entetes={'Content-Length': str(TAILLE)}))
+        self.assertEqual(partiel.read_bytes(), self.contenu)
+
+    def test_lien_refuse(self):
+        d = self.d / 'mises-a-jour'
+        cible = self.d / 'ailleurs'
+        cible.mkdir()
+        r = subprocess.run(['cmd', '/c', 'mklink', '/J', str(d), str(cible)], capture_output=True,
+                           creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if r.returncode != 0:
+            self.skipTest('jonction impossible ici')
+        self.addCleanup(os.rmdir, d)
+        with mock.patch.object(M.modele, '_telecharger_un', side_effect=AssertionError('suivi')):
+            with self.assertRaisesRegex(M.Indisponible, 'lien'):
+                M.telecharger(self.info, racine=self.d)
+
+    def test_dossier_dans_le_profil(self):
+        # Les installateurs vont dans le profil de l'utilisateur, même si MYPHOTOS_DOSSIER met les données ailleurs.
+        self.assertEqual(M.dossier(), M.config.MISES_A_JOUR)
+        if os.name == 'nt' and os.environ.get('LOCALAPPDATA'):
+            self.assertEqual(M.config.MISES_A_JOUR, Path(os.environ['LOCALAPPDATA']) / 'MyPhotos' / 'mises-a-jour')
+
     def test_installation_possible(self):
         (self.d / 'unins000.exe').write_bytes(b'x')
         with mock.patch.object(M.config, 'GELE', True), mock.patch.object(M.config, 'EXE_DOSSIER', self.d):
@@ -258,10 +316,15 @@ class Fichiers(unittest.TestCase):
         p = self.d / self.info['nom']
         p.write_bytes(self.contenu)
         with mock.patch.object(M, 'installation_possible', return_value=(True, '')), \
-                mock.patch.object(M.subprocess, 'Popen') as popen:
+                mock.patch.object(M.subprocess, 'Popen') as popen, \
+                mock.patch.dict(os.environ, {'_PYI_APPLICATION_HOME_DIR': 'x', '_PYI_ARCHIVE_FILE': 'y'}):
             popen.return_value.pid = 4242
             self.assertEqual(M.lancer_installation(p, self.info), 4242)
         commande = popen.call_args[0][0]
+        env = popen.call_args[1]['env']
+        self.assertFalse([k for k in env if k.upper().startswith('_PYI_')])      # le nouveau MyPhotos repart propre
+        self.assertEqual(env['PYINSTALLER_RESET_ENVIRONMENT'], '1')
+        self.assertEqual(env.get('PATH'), os.environ.get('PATH'))
         self.assertEqual(commande[:6], [str(p), '/SP-', '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/MISEAJOUR'])
         self.assertTrue(commande[6].startswith('/LOG=') and commande[6].endswith(f'installation-{SUIVANTE}.log'))
         # Fichier modifié entre le téléchargement et le lancement : refusé, rien n'est lancé.
@@ -482,6 +545,131 @@ class Gestion(unittest.TestCase):
             self.meta['maj_lancee'] = vieux
             self.assertIsNone(self.gestion().apres, vieux)
 
+    # ---- relecture adverse de la 0.4.0 : défauts prouvés, corrigés
+
+    def test_pas_d_installation_pendant_une_verification(self):
+        # « Mettre à jour » pendant une vérification (quotidienne, ou GitHub lent) : refusé ; et la fin de la
+        # vérification n'écrase jamais un téléchargement commencé (deux téléchargements, deux installateurs).
+        g = self.gestion()
+        g.verifier()
+        self.attendre(g)
+        libere, entre = threading.Event(), threading.Event()
+
+        def lent():
+            entre.set()
+            libere.wait(10)
+            return self.info
+        g._chercher = lent
+        g.verifier()
+        self.assertTrue(entre.wait(5))
+        with self.assertRaisesRegex(M.Refus, 'chercher'):
+            g.installer()
+        libere.set()
+        self.attendre(g)
+        self.assertEqual(g.etat, 'disponible')
+        # Vérification qui se termine pendant un téléchargement : l'état reste celui du téléchargement.
+        commence, fin = threading.Event(), threading.Event()
+
+        def tel(info, progression, arret, racine):
+            commence.set()
+            fin.wait(10)
+            return Path('C:/essai') / info['nom']
+        g._telecharger = tel
+        g.installer()
+        self.assertTrue(commence.wait(5))
+        for reponse in (self.info, M.Indisponible('x'), M.Refusee('x')):   # une vérification qui finit maintenant
+            self.reponse = reponse
+            g._chercher = self.chercher
+            g._verifier(manuel=False)
+            self.assertEqual((g.etat, g.info), ('telechargement', self.info))   # rien d'écrasé
+        fin.set()
+        self.attendre(g)
+        self.assertEqual(len(self.lances), 1)
+
+    def test_annuler_a_la_fin_du_telechargement(self):
+        def tel(info, progression, arret, racine):
+            arret.set()                              # « Annuler » pendant le calcul de l'empreinte
+            return Path('C:/essai') / info['nom']
+        g = self.gestion(telecharger=tel)
+        g.verifier()
+        self.attendre(g)
+        g.installer()
+        self.attendre(g)
+        self.assertEqual((g.etat, self.lances, self.arrets), ('disponible', [], []))
+        self.assertIsNone(self.meta.get('maj_lancee'))
+
+    def test_copie_commencee_pendant_le_telechargement(self):
+        def tel(info, progression, arret, racine):
+            self.travaux.append('copie')
+            return Path('C:/essai') / info['nom']
+        g = self.gestion(telecharger=tel)
+        g.verifier()
+        self.attendre(g)
+        g.installer()
+        self.attendre(g)
+        self.assertEqual((g.etat, self.lances, self.arrets), ('erreur', [], []))
+        self.assertIn('copie', g.message)
+
+    def test_place_insuffisante(self):
+        g = self.gestion()
+        g._place = lambda: False
+        g.verifier()
+        self.attendre(g)
+        with self.assertRaisesRegex(M.Refus, 'place'):
+            g.installer()
+        self.assertEqual(g.etat, 'disponible')
+
+    def test_reglage_impossible_a_ecrire(self):
+        # Base verrouillée ou disque plein : jamais d'état figé (« verification », « installation »).
+        def ecriture_impossible(cle, valeur):
+            raise OSError('disk is full')
+        g = M.Gestion(self.meta.get, ecriture_impossible, lambda: self.arrets.append(1), lambda: self.travaux,
+                      JOURNAL, chercher=self.chercher, telecharger=lambda i, p, a, r: Path('C:/essai') / i['nom'],
+                      lancer=lambda chemin, info: self.lances.append(chemin) or 1, possible=lambda: (True, ''),
+                      place=lambda: True)
+        g.verifier()
+        self.attendre(g)
+        self.assertEqual(g.etat, 'disponible')
+        g.installer()
+        self.attendre(g)
+        self.assertEqual((g.etat, len(self.lances), self.arrets), ('installation', 1, [1]))
+
+        def lancement_impossible(chemin, info):
+            raise OSError('accès refusé')
+        g2 = M.Gestion(self.meta.get, ecriture_impossible, lambda: None, lambda: [], JOURNAL,
+                       chercher=self.chercher, telecharger=lambda i, p, a, r: Path('C:/essai') / i['nom'],
+                       lancer=lancement_impossible, possible=lambda: (True, ''), place=lambda: True)
+        g2.verifier()
+        self.attendre(g2)
+        g2.installer()
+        self.attendre(g2)
+        self.assertEqual(g2.etat, 'erreur')
+
+    def test_une_fois_par_jour_meme_en_cas_d_echec(self):
+        # GitHub qui répond mal (manifeste refusé) : prochain essai dans 24 h. Pas de réseau : 1 h, 6 h, puis 24 h.
+        g = self.gestion()
+        self.meta['maj_auto'] = 'oui'
+        maintenant = time.time()
+        self.reponse = M.Refusee('signature')
+        g.verifier(manuel=False)
+        self.attendre(g)
+        self.assertFalse(g.due(maintenant + 23 * 3600))
+        self.assertTrue(g.due(maintenant + 24 * 3600 + 5))
+        self.reponse = M.Indisponible('hors ligne')
+        attentes = []
+        for _ in range(4):
+            g.verifier(manuel=False)
+            self.attendre(g)
+            essai = float(self.meta['maj_essai'])
+            attentes.append(next(h for h in (1, 6, 24) if g.due(essai + h * 3600 + 5)))
+            self.assertFalse(g.due(essai + 600))
+        self.assertEqual(attentes, [1, 6, 24, 24])
+        self.reponse = self.info                         # de retour : compteur remis à zéro
+        g.verifier(manuel=False)
+        self.attendre(g)
+        self.assertEqual(self.meta['maj_echecs'], '0')
+        self.assertFalse(g.due(time.time() + 6 * 3600))
+
     def test_veille(self):
         g = self.gestion()
         g.PREMIERE_ATTENTE = 0
@@ -543,6 +731,18 @@ class Publication(unittest.TestCase):
         self.assertTrue(nom.startswith('myphotos-') and nom.endswith('-installation.exe'))
         p = Path('x') / f'installation-{SUIVANTE}.log'
         self.assertEqual(p.name, f'installation-{SUIVANTE}.log')          # nom employé par lancer_installation
+
+    def test_garde_fou_reconnait_la_cle(self):
+        # La clé privée copiée par erreur dans le dépôt est arrêtée par le garde-fou (nom et première ligne).
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'outils'))
+        import verifier_publication as vp
+        import cle_signature
+        self.assertEqual(vp.type_interdit('construction/cle-signature-privee.txt'), 'fichier de clés')
+        texte = cle_signature.ENTETE + '\n' + base64.b64encode(self.privee).decode() + '\n'
+        alertes = [a for n, l in enumerate(texte.splitlines()) for a in vp.Verificateur().analyser_ligne(l, f'x:{n}')]
+        self.assertTrue(any('clé privée' in a.categorie for a in alertes), alertes)
+        source = (Path(__file__).resolve().parent.parent / 'construction' / 'cle_signature.py').read_text('utf-8')
+        self.assertFalse([a for l in source.splitlines() for a in vp.Verificateur().analyser_ligne(l, 'c', 'code')])
 
     def test_nouveautes_de_la_version(self):
         # Chaque version publiée a ses nouveautés, acceptées par MyPhotos (longueur, nombre, caractères).

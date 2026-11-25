@@ -274,7 +274,7 @@ python -m venv .venv
 
 | Variable d'environnement | Effet |
 |---|---|
-| `MYPHOTOS_DOSSIER` | dossier des données (index, miniatures, journal) |
+| `MYPHOTOS_DOSSIER` | dossier des données (index, miniatures, journal) ; il doit rester privé à votre compte Windows (pas à la racine d'un disque partagé) ; les installateurs de la mise à jour vont, eux, toujours dans `%LOCALAPPDATA%\MyPhotos\mises-a-jour` |
 | `MYPHOTOS_MODELES` | dossier des moteurs, pour réutiliser un moteur déjà téléchargé |
 | `MYPHOTOS_PORT` | port local (7796 par défaut) |
 | `MYPHOTOS_SANS_PAGE=1` | n'ouvre ni fenêtre ni page (essais) |

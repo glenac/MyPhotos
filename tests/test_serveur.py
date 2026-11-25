@@ -2963,6 +2963,7 @@ class TestMiseAJour(unittest.TestCase):
         self.assertEqual((m['accord'], m['etat'], m['version'], m['apres']), (None, 'inconnu', None, None))
         self.assertEqual(self.api('/api/mise-a-jour/reporter', {})[0], 409)          # rien à reporter
         self.assertEqual(self.api('/api/mise-a-jour/installer', {})[0], 409)         # rien à installer
+        self.assertEqual(self.api('/api/mise-a-jour/page', {})[0], 409)              # aucune page à ouvrir
         statut, r = self.api('/api/mise-a-jour/reglage', {'oui': True})
         self.assertEqual((statut, r['accord']), (200, 'oui'))
         m = attendre(lambda: (lambda x: x if x['etat'] == 'disponible' else None)(self.maj()), 20)
@@ -2971,6 +2972,9 @@ class TestMiseAJour(unittest.TestCase):
                          (self.suivante, ['Une nouveauté.'], True, False))
         self.assertTrue(m['notes'].startswith('https://github.com/glenac/MyPhotos/releases/tag/v'))
         self.assertTrue(self.api('/api/mise-a-jour/reporter', {})[1]['reportee'])
+        # « Nouveautés » : la page est ouverte par MyPhotos (ici, en essai, seulement notée dans le journal).
+        self.assertEqual(self.api('/api/mise-a-jour/page', {}), (200, {'ok': True}))
+        self.assertIn('page de la version', (self.donnees / 'journal.log').read_text(encoding='utf-8'))
         # « Mettre à jour » : téléchargement (simulé), installation (simulée), puis MyPhotos s'arrête.
         statut, r = self.api('/api/mise-a-jour/installer', {})
         self.assertEqual((statut, r['etat']), (200, 'telechargement'))

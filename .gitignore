@@ -21,3 +21,6 @@ dist/
 
 # Essais locaux
 essai-*/
+
+# Clé privée de signature des mises à jour : jamais dans le dépôt (construction/cle_signature.py)
+cle-signature-privee*

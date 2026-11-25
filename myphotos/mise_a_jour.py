@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -105,9 +106,11 @@ def lire_manifeste(brut, cle=None):
         raise Refusee('manifeste absent ou trop gros')
     try:
         enveloppe = json.loads(bytes(brut).decode('utf-8'))
+        if not isinstance(enveloppe, dict):
+            raise ValueError('enveloppe')
         texte = base64.b64decode(enveloppe['manifeste'], validate=True)
         sig = base64.b64decode(enveloppe['signature'], validate=True)
-    except (ValueError, TypeError, KeyError, UnicodeDecodeError):
+    except (ValueError, TypeError, KeyError, UnicodeDecodeError, RecursionError):
         raise Refusee('manifeste illisible') from None
     if enveloppe.get('format') != 1:
         raise Refusee('format de manifeste inconnu')
@@ -116,7 +119,7 @@ def lire_manifeste(brut, cle=None):
     # Signé par le projet : on peut le lire, mais on le contrôle quand même entièrement.
     try:
         m = json.loads(texte.decode('utf-8'))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise Refusee('manifeste signé illisible') from None
     if not isinstance(m, dict) or m.get('application') != 'MyPhotos':
         raise Refusee('manifeste d\'une autre application')
@@ -203,8 +206,36 @@ def chercher(delai=20):
 
 # ---------------------------------------------------------------- téléchargement et installation
 
+PLACE_MINIMALE = 600 * 1024 * 1024       # installateur (40 Mo) + nouvelle version (115 Mo) + marge, sur le disque
+
+
 def dossier(racine=None):
-    return Path(racine or config.DONNEES) / DOSSIER
+    """Dossier des installateurs téléchargés : config.MISES_A_JOUR (profil de l'utilisateur), ou <racine>\\mises-a-jour
+    pour les essais."""
+    return Path(racine) / DOSSIER if racine else config.MISES_A_JOUR
+
+
+def _lien(p):
+    """True si p est un lien symbolique ou une jonction (jamais suivi pour un installateur)."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    return bool(getattr(st, 'st_file_attributes', 0) & 0x400) or os.path.islink(p)     # REPARSE_POINT
+
+
+def place_suffisante():
+    """Assez de place pour télécharger puis installer (disque de MyPhotos et disque du dossier des mises à jour) ?
+    Une installation silencieuse qui manque de place laisserait MyPhotos à moitié remplacé."""
+    for p in (config.EXE_DOSSIER, config.MISES_A_JOUR):
+        while not p.exists() and p.parent != p:
+            p = p.parent
+        try:
+            if shutil.disk_usage(p).free < PLACE_MINIMALE:
+                return False
+        except OSError:
+            continue
+    return True
 
 
 def conforme(chemin, info):
@@ -221,11 +252,13 @@ def telecharger(info, progression=None, arret=None, racine=None, essais=3):
     d = dossier(racine)
     d.mkdir(parents=True, exist_ok=True)
     dest = d / info['nom']
+    partiel = d / (info['nom'] + '.part')
+    if any(_lien(p) for p in (d, dest, partiel)):
+        raise Indisponible('dossier des mises à jour inattendu (lien)')
     if dest.exists() and conforme(dest, info):
         if progression:
             progression(info['taille'], info['taille'])
         return dest
-    partiel = d / (info['nom'] + '.part')
     for essai in range(1, essais + 1):
         try:
             modele._telecharger_un(info['url'], partiel, info['taille'],
@@ -269,17 +302,23 @@ def lancer_installation(chemin, info):
     if not possible:
         raise Indisponible(raison)
     chemin = Path(chemin)
-    if not conforme(chemin, info):
+    if _lien(chemin) or _lien(chemin.parent) or not conforme(chemin, info):
         raise Indisponible('installateur abîmé (empreinte inattendue)')
+    if not place_suffisante():
+        raise Indisponible('pas assez de place sur le disque')
     journal_installation = chemin.with_name(f'installation-{info["version"]}.log')
     commande = commande_installation(chemin, journal_installation)
+    # L'installateur, puis le MyPhotos qu'il rouvre, héritent de cet environnement : sans les variables que le
+    # chargeur de PyInstaller pose pour CE MyPhotos (le nouveau doit démarrer comme lancé à la main).
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith('_PYI_') and k.upper() != '_MEIPASS2'}
+    env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     drapeaux = subprocess.CREATE_NEW_PROCESS_GROUP
     try:
         # Hors du Job Object éventuel de MyPhotos : l'installateur doit lui survivre.
-        p = subprocess.Popen(commande, cwd=str(chemin.parent), close_fds=True,
+        p = subprocess.Popen(commande, cwd=str(chemin.parent), close_fds=True, env=env,
                              creationflags=drapeaux | 0x01000000)            # CREATE_BREAKAWAY_FROM_JOB
     except OSError:
-        p = subprocess.Popen(commande, cwd=str(chemin.parent), close_fds=True, creationflags=drapeaux)
+        p = subprocess.Popen(commande, cwd=str(chemin.parent), close_fds=True, env=env, creationflags=drapeaux)
     return p.pid
 
 
@@ -335,10 +374,11 @@ class Gestion:
     REPORT = 24 * 3600                           # « Plus tard » : le bandeau revient le lendemain
 
     def __init__(self, meta_get, meta_set, arreter, travaux, journal, chercher=chercher, telecharger=telecharger,
-                 lancer=lancer_installation, possible=installation_possible, racine=None):
+                 lancer=lancer_installation, possible=installation_possible, racine=None, place=place_suffisante):
         self._meta_get, self._meta_set = meta_get, meta_set
         self._arreter, self._travaux, self._journal = arreter, travaux, journal
         self._chercher, self._telecharger, self._lancer, self._possible = chercher, telecharger, lancer, possible
+        self._place = place
         self._racine = racine
         self._verrou = threading.Lock()
         self._fin = threading.Event()
@@ -420,51 +460,83 @@ class Gestion:
             self._fil.start()
             return self.resume_verrouille()
 
+    def _meta_sur(self, cle, valeur):
+        """Écrit un réglage sans jamais interrompre la mise à jour (base verrouillée, disque plein) : journalisé."""
+        try:
+            self._meta_set(cle, valeur)
+            return True
+        except Exception:
+            self._journal.exception('réglage %s de la mise à jour non enregistré', cle)
+            return False
+
     def _verifier(self, manuel):
+        """Fil de vérification. Ne change l'état que s'il vaut encore « verification » (rien ne doit écraser un
+        téléchargement ou une installation commencés entre-temps)."""
+        resultat, info, erreur = 'ok', None, None
         try:
             info = self._chercher()
         except Indisponible as e:
+            resultat, erreur = 'indisponible', e
             self._journal.info('vérification des nouvelles versions impossible : %s', e)
-            with self._verrou:
+        except Refusee as e:
+            resultat, erreur = 'refusee', e
+            self._journal.warning('fichier de mise à jour refusé : %s', e)
+        except Exception as e:
+            resultat, erreur = 'refusee', e
+            self._journal.exception('vérification des nouvelles versions')
+        maintenant = str(time.time())
+        self._meta_sur('maj_essai', maintenant)
+        self._meta_sur('maj_echecs', str(self._echecs() + 1) if resultat == 'indisponible' else '0')
+        if resultat == 'ok':
+            self._meta_sur('maj_derniere', maintenant)
+        with self._verrou:
+            if self.etat != 'verification':
+                return
+            if resultat == 'indisponible':
                 if self.info is not None:                 # une version déjà connue reste proposée
                     self.etat, self.message = 'disponible', None
                 else:
                     self.etat = 'erreur' if manuel else 'inconnu'
                     self.message = ('MyPhotos n’a pas pu joindre GitHub pour savoir s’il existe une nouvelle '
                                     'version. Vérifiez votre connexion à Internet, puis réessayez.') if manuel else None
-            return
-        except Refusee as e:
-            self._journal.warning('fichier de mise à jour refusé : %s', e)
-            with self._verrou:
+            elif resultat == 'refusee':
                 self.etat, self.info = ('erreur' if manuel else 'inconnu'), None
-                self.message = ('Le fichier de mise à jour publié n’a pas pu être vérifié : MyPhotos ne l’utilise '
-                                'pas. Réessayez plus tard.') if manuel else None
-            return
-        except Exception:
-            self._journal.exception('vérification des nouvelles versions')
-            with self._verrou:
-                self.etat = 'erreur' if manuel else 'inconnu'
-                self.message = 'La vérification a échoué. Réessayez plus tard.' if manuel else None
-            return
-        self._meta_set('maj_derniere', str(time.time()))
-        with self._verrou:
-            if info is not None and plus_recente(info['version'], config.VERSION):
+                self.message = (('Le fichier de mise à jour publié n’a pas pu être vérifié : MyPhotos ne l’utilise '
+                                 'pas. Réessayez plus tard.') if isinstance(erreur, Refusee)
+                                else 'La vérification a échoué. Réessayez plus tard.') if manuel else None
+            elif info is not None and plus_recente(info['version'], config.VERSION):
                 if self.info is None or self.info['version'] != info['version']:
                     self._journal.info('nouvelle version disponible : %s', info['version'])
-                self.info, self.etat = info, 'disponible'
+                self.info, self.etat, self.message = info, 'disponible', None
             else:
-                self.info, self.etat = None, 'a_jour'
+                self.info, self.etat, self.message = None, 'a_jour', None
 
-    def _derniere(self):
+    def _nombre(self, cle):
         try:
-            return float(self._meta_get('maj_derniere') or 0)
+            return float(self._meta_get(cle) or 0)
         except (TypeError, ValueError):
             return 0.0
 
+    def _derniere(self):
+        return self._nombre('maj_derniere')
+
+    def _echecs(self):
+        return int(self._nombre('maj_echecs'))
+
+    # Après un échec de réseau (pas d'Internet, GitHub ne répond pas), on réessaie au bout de 1 h, 6 h, puis 24 h.
+    ATTENTES_ECHEC = (3600, 6 * 3600, 24 * 3600)
+
     def due(self, maintenant=None):
+        """Vérification automatique à faire maintenant ? Une fois par jour au plus après une vérification réussie ou
+        une réponse de GitHub (même refusée) ; plus tôt seulement après un échec de réseau, de plus en plus espacé."""
         maintenant = time.time() if maintenant is None else maintenant
-        return (self.accord() == 'oui' and self.etat not in ('verification', 'telechargement', 'installation')
-                and not 0 <= maintenant - self._derniere() < self.INTERVALLE)
+        if self.accord() != 'oui' or self.etat in ('verification', 'telechargement', 'installation'):
+            return False
+        if 0 <= maintenant - self._derniere() < self.INTERVALLE:
+            return False
+        echecs = self._echecs()
+        attente = self.ATTENTES_ECHEC[min(echecs, len(self.ATTENTES_ECHEC)) - 1] if echecs else self.INTERVALLE
+        return not 0 <= maintenant - self._nombre('maj_essai') < attente
 
     def veiller(self):
         """Fil de veille : une vérification par jour au plus, si l'utilisateur l'a accepté."""
@@ -493,6 +565,8 @@ class Gestion:
         with self._verrou:
             if self.etat in ('telechargement', 'installation'):
                 return self.resume_verrouille()
+            if self.etat == 'verification':
+                raise Refus('MyPhotos est en train de chercher une nouvelle version : réessayez dans un instant.')
             if self.info is None:
                 raise Refus('Aucune nouvelle version à installer.')
             possible, _ = self._possible()
@@ -503,6 +577,9 @@ class Gestion:
                 raise Refus('Une copie de photos est en cours : attendez qu’elle soit finie, puis recommencez.')
             if self._fin.is_set():
                 raise Refus('MyPhotos est en train de s’arrêter.')
+            if not self._place():
+                raise Refus('Il n’y a pas assez de place sur le disque pour installer la nouvelle version : '
+                            'libérez au moins 600 Mo, puis recommencez.')
             self.etat, self.message, self.fait, self.total = 'telechargement', None, 0, self.info['taille']
             self._arret_telechargement.clear()
             self._fil = threading.Thread(target=self._installer, args=(self.info,), name='myphotos-installation',
@@ -514,15 +591,25 @@ class Gestion:
         self.fait, self.total = int(fait), int(total)
 
     def _installer(self, info):
+        lance = False
         try:
             chemin = self._telecharger(info, self._progression, self._arret_telechargement, self._racine)
-            if self._fin.is_set():
-                raise InterruptedError('MyPhotos s’arrête')
             with self._verrou:
+                # « Annuler » cliqué à la fin du téléchargement, MyPhotos qui s'arrête, ou copie commencée entre-temps :
+                # on ne lance rien.
+                if self._fin.is_set() or self._arret_telechargement.is_set():
+                    self.etat = 'disponible'
+                    return
+                if 'copie' in self._travaux():
+                    self.etat = 'erreur'
+                    self.message = ('Une copie de photos a commencé pendant le téléchargement : la mise à jour attend '
+                                    'qu’elle soit finie. Cliquez ensuite sur « Réessayer ».')
+                    return
                 self.etat = 'installation'
-            self._meta_set('maj_lancee', json.dumps({'de': config.VERSION, 'vers': info['version'],
+            self._meta_sur('maj_lancee', json.dumps({'de': config.VERSION, 'vers': info['version'],
                                                      'quand': time.time()}))
             pid = self._lancer(chemin, info)
+            lance = True
             self._journal.info('installation de MyPhotos %s lancée (installateur PID %s) : MyPhotos s’arrête',
                                info['version'], pid)
         except InterruptedError:
@@ -530,7 +617,6 @@ class Gestion:
                 self.etat = 'disponible'
             return
         except Exception as e:
-            self._meta_set('maj_lancee', None)
             if isinstance(e, Indisponible):
                 self._journal.warning('mise à jour vers %s impossible : %s', info['version'], e)
             else:
@@ -538,8 +624,15 @@ class Gestion:
             with self._verrou:
                 self.etat = 'erreur'
                 self.message = ('La nouvelle version n’a pas pu être téléchargée ou vérifiée. Vérifiez votre '
-                                'connexion à Internet, puis réessayez.')
+                                'connexion à Internet et la place libre sur le disque, puis réessayez.')
             return
+        finally:
+            if not lance:
+                self._meta_sur('maj_lancee', None)
+                with self._verrou:
+                    if self.etat in ('telechargement', 'installation'):     # jamais d'état figé
+                        self.etat = 'erreur'
+                        self.message = self.message or 'La mise à jour n’a pas pu commencer. Réessayez plus tard.'
         self._arreter()                                   # l'installateur attend la fermeture de MyPhotos
 
     def annuler(self):

@@ -91,7 +91,8 @@ EXT_ARCHIVES = {'.zip', '.7z', '.rar', '.tar', '.gz', '.tgz', '.bz2', '.tbz2', '
 EXT_EXECUTABLES = {'.exe', '.msi', '.msix', '.dll', '.pyd', '.so', '.dylib'}
 EXT_CLES = {'.pem', '.key', '.p12', '.pfx', '.kdbx', '.ppk', '.jks', '.keystore'}
 NOMS_CLES = {'.env', '.netrc', '_netrc', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519',
-             'credentials.json', 'secrets.json', 'sftp.json'}
+             'credentials.json', 'secrets.json', 'sftp.json',
+             'cle-signature-privee.txt'}             # clé de signature des mises à jour de MyPhotos
 ENV_EXEMPLES = {'.env.example', '.env.exemple', '.env.sample', '.env.modele', '.env.template'}
 EXT_MEDIAS = {'.png', '.jpg', '.jpeg', '.jpe', '.jfif', '.gif', '.bmp', '.dib', '.tif', '.tiff',
               '.webp', '.heic', '.heif', '.avif', '.ico', '.icns', '.svg', '.psd', '.xcf',
@@ -153,6 +154,8 @@ SECRETS = [
     ('jeton GitHub', re.compile(r'(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{30,}')),
     ('clé AWS', re.compile(r'(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])')),
     ('clé privée', re.compile(r'-----BEGIN[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----')),
+    # Fichier écrit par construction/cle_signature.py (sa première ligne ; jamais dans le code qui l'écrit).
+    ('clé privée', re.compile(r'^# MyPhotos : clé PRIVÉE de signature')),
     ('jeton Slack', re.compile(r'(?<![A-Za-z0-9])xox[abeoprs]-[A-Za-z0-9-]{10,}')),
     ('clé Google', re.compile(r'(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{35}')),
     ('jeton Hugging Face', re.compile(r'(?<![A-Za-z0-9_])hf_[A-Za-z0-9]{30,}')),

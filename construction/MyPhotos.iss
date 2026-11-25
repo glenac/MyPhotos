@@ -319,7 +319,8 @@ begin
 end;
 
 { Mise à jour lancée par MyPhotos (/MISEAJOUR, myphotos/mise_a_jour.py) : MyPhotos se ferme juste après avoir
-  lancé l'installateur. On attend ici qu'il ait fini (son mutex disparaît), 60 secondes au plus, avant la
+  lancé l'installateur. On attend ici qu'il ait fini (son mutex disparaît), 3 minutes au plus (sa fermeture
+  peut attendre la fin d'un lot d'analyse ou d'un chargement du moteur), avant la
   vérification AppMutex d'Inno Setup, qui sinon abandonnerait en silence (/SUPPRESSMSGBOXES). Essai du 25/11/2026
   (Inno Setup 6.7.4) : InitializeSetup passe bien avant cette vérification. }
 function InitializeSetup(): Boolean;
@@ -329,7 +330,7 @@ begin
   if ParametrePresent('/MISEAJOUR') then
   begin
     i := 0;
-    while CheckForMutexes('{#MyAppMutex}') and (i < 240) do
+    while CheckForMutexes('{#MyAppMutex}') and (i < 720) do
     begin
       Sleep(250);
       i := i + 1;
