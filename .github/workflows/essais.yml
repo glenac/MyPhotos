@@ -39,6 +39,9 @@ jobs:
         env:
           PYTHONUTF8: '1'
           PYTHONIOENCODING: utf-8
+          # Le dossier temporaire de la machine s'écrit avec un nom court 8.3 (RUNNER~1) : on en donne un en noms longs.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
           MYPHOTOS_ESSAI_UI: ${{ runner.temp }}\essai-ui
           MYPHOTOS_MODELES: ${{ runner.temp }}\modeles-absents
         run: |

@@ -664,6 +664,7 @@ class TestIndexeur(EssaiAvecImages):
         self.assertEqual(self.base.compter()['analysees'], self.ok())
 
     def test_pause_reprise(self):
+        avant = priorite_processus()                    # pas forcément « normale » (machine d'essais de GitHub)
         self.plus_d_images()
         self.base.ajouter_dossier(self.photos)
         with Modifie(indexation, 'ECRITURE_N', indexation.LOT):
@@ -677,7 +678,7 @@ class TestIndexeur(EssaiAvecImages):
             time.sleep(0.8)
             self.assertEqual(self.base.compter()['analysees'], gele)
             self.assertLess(gele, self.ok())
-            self.assertNotEqual(priorite_processus(), PRIORITE_INFERIEURE)   # rétablie pendant la pause
+            self.assertTrue(attendre_que(lambda: priorite_processus() == avant))   # rétablie pendant la pause
             ix.reprendre()
             self.assertTrue(ix.attendre(60))
         self.assertEqual(self.base.compter()['analysees'], self.ok())

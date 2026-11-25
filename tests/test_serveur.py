@@ -622,13 +622,16 @@ class TestJetonFonctions(unittest.TestCase):
             temoin.write_text('x', encoding='ascii')
             self.assertIn('(A;ID;0x1301bf;;;AU)', self.droits(temoin))           # le dossier est bien large
             chemin = partage / 'donnees' / 'jeton'
+            sid = fenetre.sid_compte()
+            # Windows écrit l'administrateur intégré (RID 500) sous sa forme abrégée « LA ».
+            prives = {f'D:P(A;;FA;;;{sid})'} | ({'D:P(A;;FA;;;LA)'} if sid.endswith('-500') else set())
             jeton = serveur.creer_jeton(chemin)
-            self.assertEqual(self.droits(chemin), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+            self.assertIn(self.droits(chemin), prives)
             self.assertEqual(serveur.lire_jeton(chemin), jeton)                  # et nous le lisons toujours
             # Un « .part » laissé par un arrêt brutal (droits hérités) est remplacé par un fichier privé.
             (chemin.parent / 'jeton.part').write_text('reste', encoding='ascii')
             jeton = serveur.creer_jeton(chemin)
-            self.assertEqual(self.droits(chemin), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+            self.assertIn(self.droits(chemin), prives)
             self.assertEqual(serveur.lire_jeton(chemin), jeton)
             self.assertEqual(serveur.droits_prives(), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
 
