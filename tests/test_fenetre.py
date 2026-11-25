@@ -478,6 +478,100 @@ class TestRelance(unittest.TestCase):
         infos.assert_not_called()
         self.assertFalse(fenetre.autre_compte({'version': '0.2.0'}, moi))
 
+    def test_jeton_refuse(self):
+        """0.4.0 : la MyPhotos déjà lancée refuse notre jeton d'accès (elle tourne pour un autre compte Windows : son
+        jeton est dans SES données) : message, et rien n'est ouvert ; sans page, rien du tout."""
+        etat = {'nom': 'MyPhotos', 'jeton_refuse': True}
+        for demande in ('fenetre', 'navigateur'):
+            page, infos, signal = self.relancer(etat, demande)
+            page.assert_not_called()
+            signal.assert_not_called()
+            infos.assert_called_once_with(fenetre.AUTRE_COMPTE)
+        page, infos, signal = self.relancer(etat, 'sans_page')
+        page.assert_not_called()
+        infos.assert_not_called()
+        signal.assert_not_called()
+
+    def test_main_adresse_de_relance(self):
+        """Relance : la page d'une MyPhotos 0.4.0 (ou plus) s'ouvre par l'adresse d'entrée, avec le jeton lu dans les
+        données ; celle d'une 0.3.0 ou plus ancienne, sans jeton. Une relance ne remplace jamais le jeton."""
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            jeton = serveur.creer_jeton(chemin)
+            adresse = f'http://{config.HOTE}:{config.PORT}/'
+            for etat, attendu in ((dict(self.NOUVELLE, mode='navigateur', acces_par_jeton=True),
+                                   f'{adresse}?jeton={jeton}'),
+                                  (dict(self.NOUVELLE, mode='navigateur'), adresse),
+                                  ({'nom': 'MyPhotos', 'version': '0.2.0'}, adresse)):
+                with mock.patch.object(serveur, 'Serveur', side_effect=OSError('port pris')), \
+                        mock.patch.object(config, 'JETON', chemin), \
+                        mock.patch.object(serveur, 'etat_instance', return_value=etat) as lire, \
+                        mock.patch.object(serveur, 'SANS_PAGE', False), \
+                        mock.patch.object(serveur, 'configurer_journal'), \
+                        mock.patch.object(serveur, 'ouvrir_page') as page, \
+                        mock.patch.object(serveur, 'informer'):
+                    self.assertEqual(serveur.main(['--navigateur']), 0)
+                page.assert_called_once_with(attendu)
+                self.assertEqual(lire.call_args[0][1], jeton)              # /api/etat lu avec le jeton des données
+            self.assertEqual(serveur.lire_jeton(chemin), jeton)
+
+    def test_main_jeton_refuse_puis_reecrit(self):
+        """Relance pendant le démarrage d'une MyPhotos : son jeton a été écrit pendant notre requête (refusée) ; on
+        relit, on réessaie, et sa fenêtre revient au premier plan (pas de faux message « autre compte »)."""
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            ancien = serveur.creer_jeton(chemin)
+            etats = []
+
+            def etat_instance(_port, jeton):
+                etats.append(jeton)
+                if len(etats) == 1:
+                    serveur.creer_jeton(chemin)                            # la MyPhotos qui démarre écrit le sien
+                    return {'nom': 'MyPhotos', 'jeton_refuse': True}
+                return dict(self.NOUVELLE, acces_par_jeton=True)
+            with mock.patch.object(serveur, 'Serveur', side_effect=OSError('port pris')), \
+                    mock.patch.object(config, 'JETON', chemin), \
+                    mock.patch.object(serveur, 'etat_instance', side_effect=etat_instance), \
+                    mock.patch.object(serveur, 'configurer_journal'), \
+                    mock.patch.object(serveur, 'informer') as infos, \
+                    mock.patch.object(serveur.fenetre, 'mode_demande', return_value='fenetre'), \
+                    mock.patch.object(fenetre, 'signaler_premier_plan', return_value=True) as signal, \
+                    mock.patch.object(fenetre, 'RELANCE_VERIF_S', 0), \
+                    mock.patch.object(serveur.time, 'sleep'):
+                self.assertEqual(serveur.main([]), 0)
+            self.assertEqual(etats[0], ancien)
+            self.assertEqual(etats[1], serveur.lire_jeton(chemin))
+            self.assertNotEqual(etats[1], ancien)
+            signal.assert_called_once()
+            infos.assert_not_called()
+
+    def test_main_jeton_et_adresse_d_entree(self):
+        """Port obtenu : un nouveau jeton (256 bits) à chaque lancement, écrit dans les données et donné au serveur ;
+        la fenêtre (et ses replis) reçoit l'adresse d'entrée ; le journal ne le contient pas."""
+        jetons = []
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            for _ in range(2):
+                srv = types.SimpleNamespace(server_address=('127.0.0.1', config.PORT), jeton=None, app=None)
+                with mock.patch.object(serveur, 'Serveur', return_value=srv), \
+                        mock.patch.object(config, 'JETON', chemin), \
+                        mock.patch.object(serveur, 'Application'), \
+                        mock.patch.object(serveur, 'configurer_journal'), \
+                        mock.patch.object(serveur.fenetre, 'mode_demande', return_value='fenetre'), \
+                        mock.patch.object(serveur.fenetre, 'Hote') as hote, \
+                        mock.patch('builtins.print'), \
+                        self.assertLogs('myphotos', 'INFO') as journal:
+                    hote.return_value.executer.return_value = 0
+                    self.assertEqual(serveur.main([]), 0)
+                jeton = serveur.lire_jeton(chemin)
+                self.assertRegex(jeton, r'^[A-Za-z0-9_-]{43}$')
+                self.assertEqual(srv.jeton, jeton)
+                self.assertEqual(hote.call_args[0][2], f'http://{config.HOTE}:{config.PORT}/?jeton={jeton}')
+                self.assertNotIn(jeton, '\n'.join(journal.output))
+                jetons.append(jeton)
+            self.assertNotEqual(jetons[0], jetons[1])
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['jeton'])     # pas de « .part » restant
+
     def test_relance_pendant_un_arret(self):
         """Constat R1 : l'instance signalée s'arrêtait en fait (fenêtre fermée à l'instant) : relancer rend None et
         main() attend qu'elle libère le port, au lieu de sortir sans rien ouvrir."""
@@ -757,6 +851,7 @@ class TestMutex(unittest.TestCase):
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
         donnees = base / f'essai-mutex-{time.strftime("%Y%m%d-%H%M%S")}'
         donnees.mkdir(parents=True)
+        O.donnees_du_port(self.PORT, donnees)            # jeton d'accès lu dans ses données
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
         env.update(MYPHOTOS_PORT=str(self.PORT), MYPHOTOS_DOSSIER=str(donnees), MYPHOTOS_SANS_PAGE='1',
                    MYPHOTOS_MODELES=str(Path(os.environ.get('MYPHOTOS_MODELES') or RACINE / 'donnees' / 'modele')),
@@ -931,6 +1026,7 @@ class TestFenetreReelle(unittest.TestCase):
         cls.dossier = base / f'essai-fenetre-{time.strftime("%Y%m%d-%H%M%S")}'
         cls.donnees = cls.dossier / 'donnees'
         cls.donnees.mkdir(parents=True)
+        O.donnees_du_port(cls.PORT, cls.donnees)          # jeton d'accès lu dans ses données
         cls.trace = cls.dossier / 'trace.jsonl'
         cls.lanceur = cls.dossier / 'lanceur.py'
         cls.lanceur.write_text(LANCEUR, encoding='utf-8')

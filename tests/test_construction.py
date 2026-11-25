@@ -504,7 +504,8 @@ class TestInstallateur(unittest.TestCase):
         de l'utilisateur au nom voisin (essai adverse de la 0.3.0 : « Journal.log.txt » partait avec journal.log.*)."""
         est = nom_de_myphotos()
         crees = [config.BASE.name, config.MINIATURES.name, config.JOURNAL.name, 'modele',
-                 fenetre.PLACEMENT, fenetre.PLACEMENT + '.part', fenetre.WEBVIEW2_DOSSIER, fenetre.EDGE_DOSSIER]
+                 fenetre.PLACEMENT, fenetre.PLACEMENT + '.part', fenetre.WEBVIEW2_DOSSIER, fenetre.EDGE_DOSSIER,
+                 config.JETON.name, config.JETON.name + '.part']
         crees += [config.BASE.name + s for s in ('-wal', '-shm', '-journal')]
         crees += [config.MINIATURES.name + s for s in ('-wal', '-shm', '-journal')]
         # Bases abîmées mises de côté (base.py, _ecarter_abimes), journaux WAL compris.
@@ -522,7 +523,7 @@ class TestInstallateur(unittest.TestCase):
         for nom in ('a-garder.txt', 'Images', 'photos', 'index.dbx', 'index', 'desktop.ini', 'webview2.txt',
                     'fenetre', 'journal', 'modeles', 'MyPhotos.exe', 'edge2', 'Journal.log.txt',
                     f'journal.log.{copies + 1}', 'index.db.sauvegarde', 'index.db-copie', 'miniatures.db.old',
-                    'fenetre.json.bak'):
+                    'fenetre.json.bak', 'jeton.txt', 'jetons'):
             self.assertFalse(est(nom), nom)
 
     def test_installdelete_seulement_dans_un_dossier_de_myphotos(self):
@@ -588,6 +589,7 @@ class TestInstallateur(unittest.TestCase):
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
         donnees = base / f'essai-noms-{time.strftime("%Y%m%d-%H%M%S")}'
         donnees.mkdir(parents=True)
+        O.donnees_du_port(port, donnees)                 # jeton d'accès lu dans ses données
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
         env.update(MYPHOTOS_PORT=str(port), MYPHOTOS_DOSSIER=str(donnees), MYPHOTOS_SANS_PAGE='1',
                    PYTHONIOENCODING='utf-8')            # sans MYPHOTOS_MODELES : modele\ dans les données

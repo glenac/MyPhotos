@@ -19,7 +19,15 @@ Au lancement, le moteur de reconnaissance se charge en arrière-plan, après la 
 s'affiche tout de suite, /api/etat dit « preparation » pendant ce temps et la recherche répond « préparation »
 (la page la relance d'elle-même) au lieu d'une erreur.
 
-Sécurité : n'importe quel site ouvert dans le navigateur peut viser 127.0.0.1. D'où :
+Sécurité : n'importe quel site ouvert dans le navigateur peut viser 127.0.0.1, et le port 127.0.0.1 est commun à
+tous les comptes Windows du PC. D'où :
+- jeton d'accès (0.4.0) : un secret aléatoire tiré à chaque lancement, rangé dans les données (config.JETON, privées
+  au compte Windows), exigé par TOUTE requête, en un seul endroit (Gestionnaire._acces, avant tout aiguillage : les
+  routes à venir sont couvertes d'office). La fenêtre, Edge, le navigateur et une relance ouvrent l'adresse d'entrée
+  « /?jeton=… » (adresse_entree) : le serveur pose le cookie myphotos-<port> (HttpOnly, SameSite=Strict, Path=/) et
+  redirige vers « / », sans jeton dans l'adresse affichée. Sans jeton valable : 403, une petite page « Ouvrez MyPhotos
+  depuis son raccourci » (JSON pour /api/…), rien d'autre ; comparaison en temps constant ; jamais dans le journal.
+  Une personne connectée en même temps sur un autre compte du PC n'affiche donc plus la page de MyPhotos ;
 - Host obligatoire : 127.0.0.1:PORT ou localhost:PORT (parade au « DNS rebinding ») ;
 - POST : en-tête X-MyPhotos: 1 (un autre site ne peut pas le poser sans autorisation CORS, jamais donnée),
   corps JSON de 64 Ko au plus, Origin identique à l'adresse du serveur quand elle est présente ;
@@ -55,6 +63,7 @@ import ctypes
 import errno
 import gc
 import hashlib
+import hmac
 import http.client
 import http.server
 import io
@@ -98,6 +107,15 @@ FACTICE = os.environ.get('MYPHOTOS_TELECHARGEMENT_FACTICE') == '1'
 DUREE_FACTICE_S = float(os.environ.get('MYPHOTOS_FACTICE_S') or 8)
 
 EN_TETE = 'X-MyPhotos'
+# Jeton d'accès (voir Gestionnaire._acces) : cookie myphotos-<port> (les cookies ne distinguent pas les ports : deux
+# MyPhotos sur deux ports ne se marchent pas dessus), adresse d'entrée « /?jeton=… », refus sans rien révéler.
+COOKIE_JETON = 'myphotos-{port}'
+PARAMETRE_JETON = 'jeton'
+JETON_REFUSE = 'Ouvrez MyPhotos depuis son raccourci.'
+PAGE_REFUS = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
+              f'<p>{JETON_REFUSE}</p></html>').encode('utf-8')
+_JETON = re.compile(r'[A-Za-z0-9_-]{32,128}')
+PAGES = ('/', '/index.html')
 CORPS_MAX = 64 * 1024              # corps JSON d'un POST
 LISTE_MAX = 500                    # photos par page de résultats
 LISTE_DEFAUT = 150
@@ -269,6 +287,15 @@ def _nombre_fr(x):
 
 # ---------------------------------------------------------------- journal
 
+class _FormatSansJeton(logging.Formatter):
+    """Filet : un jeton d'accès glissé dans un message (adresse d'entrée « /?jeton=… » écrite par pywebview en mode
+    débogage, cookie…) n'arrive jamais dans le journal, ni dans sa trace d'erreur."""
+    _MOTIF = re.compile(r'(jeton=|myphotos-\d+=)[A-Za-z0-9_-]+')
+
+    def format(self, record):
+        return self._MOTIF.sub(r'\1…', super().format(record))
+
+
 def configurer_journal():
     """Journal borné (config.JOURNAL, rotation à 1 Mo, 2 copies) ; console seulement depuis les sources."""
     racine = logging.getLogger('myphotos')
@@ -277,7 +304,7 @@ def configurer_journal():
     racine._myphotos = True
     racine.setLevel(logging.INFO)
     racine.propagate = False
-    forme = logging.Formatter('%(asctime)s %(levelname)-7s %(name)s : %(message)s', '%Y-%m-%d %H:%M:%S')
+    forme = _FormatSansJeton('%(asctime)s %(levelname)-7s %(name)s : %(message)s', '%Y-%m-%d %H:%M:%S')
     try:
         config.JOURNAL.parent.mkdir(parents=True, exist_ok=True)
         f = RotatingFileHandler(config.JOURNAL, maxBytes=JOURNAL_OCTETS, backupCount=JOURNAL_COPIES,
@@ -934,6 +961,51 @@ def ouvrir_page(adresse):
     except (AttributeError, OSError):
         import webbrowser
         webbrowser.open(adresse)
+
+
+# ---------------------------------------------------------------- jeton d'accès (0.4.0)
+
+def creer_jeton(chemin=None):
+    """Nouveau jeton d'accès (256 bits), écrit d'un coup dans les données (fichier provisoire, puis remplacement) :
+    une relance le lit pour rouvrir la page (lire_jeton). Appelé seulement par l'instance qui vient d'obtenir le
+    port : jamais par-dessus le jeton d'une MyPhotos déjà lancée. Rend le jeton, même s'il n'a pas pu être écrit
+    (MyPhotos marche alors quand même ; seule une relance ne pourrait pas rouvrir sa page)."""
+    chemin = Path(chemin or config.JETON)
+    jeton = secrets.token_urlsafe(32)
+    provisoire = chemin.with_name(chemin.name + '.part')
+    try:
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        provisoire.write_text(jeton, encoding='ascii')
+        os.replace(provisoire, chemin)
+    except OSError:
+        journal.warning('jeton d\'accès impossible à écrire dans les données : une relance ne rouvrira pas la page')
+    return jeton
+
+
+def lire_jeton(chemin=None):
+    """Jeton d'accès de la MyPhotos lancée avec ces données, ou None (absent, illisible, abîmé)."""
+    try:
+        texte = Path(chemin or config.JETON).read_text(encoding='ascii').strip()
+    except (OSError, ValueError):
+        return None
+    return texte if _JETON.fullmatch(texte) else None
+
+
+def jeton_egal(donne, jeton):
+    """Comparaison en temps constant (hmac.compare_digest) ; jamais vrai sans jeton."""
+    if not jeton or not isinstance(donne, str):
+        return False
+    return hmac.compare_digest(donne.encode('utf-8', 'replace'), jeton.encode('ascii'))
+
+
+def nom_cookie(port):
+    return COOKIE_JETON.format(port=int(port))
+
+
+def adresse_entree(port, jeton):
+    """Adresse d'entrée de la page : http://127.0.0.1:<port>/?jeton=… ; le serveur pose le cookie et redirige vers
+    « / ». Pour la fenêtre, Edge, le navigateur et la relance ; jamais dans le journal."""
+    return f'http://{config.HOTE}:{int(port)}/?{PARAMETRE_JETON}={jeton}'
 
 
 # ---------------------------------------------------------------- choix d'un dossier (tkinter)
@@ -2207,6 +2279,8 @@ class Application:
             'raccourci': raccourci.possible(),
             # Empreinte du compte Windows (pas le SID) : une relance depuis un autre compte n'ouvre pas cette MyPhotos.
             'compte': fenetre.identite_compte(),
+            # 0.4.0 : toute requête exige le jeton d'accès ; une relance ouvre donc l'adresse d'entrée (adresse_entree).
+            'acces_par_jeton': True,
             'assistant': self.base.meta_get('assistant'),
             'moteur': None if m is None else {
                 'cle': m['cle'], 'nom': modele.info(m['cle']).get('nom') or m['cle'],
@@ -2879,6 +2953,7 @@ class Serveur(http.server.ThreadingHTTPServer):
     allow_reuse_address = os.name != 'nt'
     request_queue_size = 128
     app = None
+    jeton = None                                 # jeton d'accès (main) ; sans lui, tout est refusé
 
     def server_bind(self):
         if os.name == 'nt' and hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
@@ -2967,6 +3042,52 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         origine = self.headers.get('Origin')
         return origine is None or origine.strip().lower() == 'http://' + self.headers.get('Host', '').strip().lower()
 
+    def _cookie_ok(self, jeton):
+        """Vrai si le cookie myphotos-<port> de la requête porte le jeton (comparaison en temps constant). Les
+        autres cookies de 127.0.0.1 (ceux d'autres programmes locaux, sur d'autres ports) sont ignorés."""
+        nom = nom_cookie(self.server.server_port)
+        ok = False
+        for entete in self.headers.get_all('Cookie') or ():
+            for morceau in entete.split(';'):
+                k, egal, v = morceau.strip().partition('=')
+                if egal and k.strip() == nom:
+                    ok = jeton_egal(v.strip().strip('"'), jeton) or ok
+        return ok
+
+    def _acces(self, methode, chemin, requete):
+        """Jeton d'accès, pour TOUTE requête (page, API, miniatures, photos, et les routes à venir : contrôle fait ici,
+        avant l'aiguillage). Le cookie myphotos-<port> doit porter le jeton du serveur. Seule autre entrée : l'adresse
+        d'entrée « /?jeton=… » (fenêtre, Edge, navigateur, relance), qui pose le cookie (HttpOnly, SameSite=Strict,
+        Path=/) et redirige vers « / » : le jeton ne reste ni dans l'adresse affichée ni dans l'historique de la page.
+
+        Rend True si la requête continue ; sinon la réponse est déjà partie : redirection, ou refus 403 sans rien
+        révéler (« Ouvrez MyPhotos depuis son raccourci » ; JSON pour /api/…, avec « jeton: requis » pour qu'une
+        relance reconnaisse une MyPhotos qui n'est pas la sienne)."""
+        jeton = self.server.jeton
+        valide = bool(jeton) and self._cookie_ok(jeton)
+        if methode == 'GET' and chemin in PAGES and PARAMETRE_JETON in requete:
+            try:
+                donnes = urllib.parse.parse_qs(requete, keep_blank_values=True, max_num_fields=20).get(PARAMETRE_JETON)
+            except ValueError:
+                raise Refus('Requête refusée.', 400)
+            if donnes:
+                entree = jeton_egal(donnes[-1], jeton)
+                if entree or valide:            # jeton juste, ou adresse d'entrée périmée avec un cookie valable
+                    entetes = {'Location': '/', 'Cache-Control': 'no-store'}
+                    if entree:
+                        entetes['Set-Cookie'] = (f'{nom_cookie(self.server.server_port)}={jeton}; Path=/; HttpOnly; '
+                                                 'SameSite=Strict')
+                    self._envoyer(303, b'', 'text/plain; charset=utf-8', entetes)
+                    return False
+        if valide:
+            return True
+        self.close_connection = True
+        if chemin.startswith('/api/'):
+            self._json({'erreur': JETON_REFUSE, 'jeton': 'requis'}, 403)
+        else:
+            self._envoyer(403, PAGE_REFUS, 'text/html; charset=utf-8', {'Cache-Control': 'no-store'})
+        return False
+
     def _corps(self):
         """Corps JSON d'un POST (64 Ko au plus) ; {} s'il est vide."""
         if self.headers.get('Transfer-Encoding'):
@@ -3025,14 +3146,16 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             if methode == 'POST':
                 if self.headers.get(EN_TETE) != '1' or not self._origine_ok() or not self._site_ok():
                     return self._erreur(403, 'Requête refusée.', fermer=True)
-                corps = self._corps()
             else:
-                corps = None
                 # Un autre site n'obtient rien, hormis l'ouverture de la page dans un onglet : ni données, ni page
                 # chargée en douce (fetch « no-cors », cadre…), qui comptait comme une activité et empêchait l'arrêt
                 # automatique (essai du 24/11/2026 : une requête toutes les 4 s gardait MyPhotos lancé indéfiniment).
-                if not self._site_ok() and not (chemin in ('/', '/index.html') and self._navigation()):
+                if not self._site_ok() and not (chemin in PAGES and self._navigation()):
                     return self._erreur(403, 'Requête refusée.', fermer=True)
+            # Jeton d'accès : TOUTE requête, avant l'aiguillage et avant de compter une activité (0.4.0).
+            if not self._acces(methode, chemin, url.query):
+                return
+            corps = self._corps() if methode == 'POST' else None
             app.activite()
             try:
                 params = urllib.parse.parse_qs(url.query, keep_blank_values=True, max_num_fields=20)
@@ -3296,16 +3419,25 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- lancement
 
-def etat_instance(port):
-    """/api/etat de la MyPhotos qui répond déjà sur ce port (version, mode, arret…), ou None."""
+def etat_instance(port, jeton=None):
+    """/api/etat de la MyPhotos qui répond déjà sur ce port (version, mode, arret…), ou None. La requête porte, comme
+    la page, le jeton d'accès (par défaut celui des données : lire_jeton) ; une 0.1, 0.2 ou 0.3 l'ignore.
+    Une MyPhotos 0.4.0 (ou plus) qui le refuse rend {'nom': 'MyPhotos', 'jeton_refuse': True} : elle tourne pour un
+    autre compte Windows (ou avec d'autres données), et sa page n'est pas pour nous."""
+    jeton = lire_jeton() if jeton is None else jeton
     try:
         c = http.client.HTTPConnection(config.HOTE, port, timeout=3)
         try:
-            c.request('GET', '/api/etat', headers={'Sec-Fetch-Site': 'same-origin'})
+            entetes = {'Sec-Fetch-Site': 'same-origin'}
+            if jeton:
+                entetes['Cookie'] = f'{nom_cookie(port)}={jeton}'
+            c.request('GET', '/api/etat', headers=entetes)
             r = c.getresponse()
             d = json.loads(r.read() or b'{}')
         finally:
             c.close()
+        if r.status == 403 and isinstance(d, dict) and d.get('jeton') == 'requis':
+            return {'nom': NOM, 'jeton_refuse': True}
         return d if r.status == 200 and isinstance(d, dict) and d.get('nom') == NOM else None
     except Exception:
         return None
@@ -3334,7 +3466,8 @@ def main(argv=None):
         try:
             serveur = Serveur((config.HOTE, config.PORT), Gestionnaire)
         except OSError as e:
-            etat = etat_instance(config.PORT)
+            jeton_lu = lire_jeton()              # celui de la MyPhotos qui tient le port (mêmes données), relu à chaque tour
+            etat = etat_instance(config.PORT, jeton_lu or '')
             if etat is None:
                 if time.monotonic() < patience_port:
                     time.sleep(0.5)              # une MyPhotos qui s'arrête garde le port un instant sans répondre
@@ -3345,12 +3478,21 @@ def main(argv=None):
             if etat.get('arret') and time.monotonic() < patience:
                 time.sleep(0.5)                  # elle s'arrête (fenêtre fermée à l'instant) : on prend sa place
                 continue
-            code = fenetre.relancer(etat, adresse, config.PORT, demande, ouvrir_page, informer,
-                                    etat_actuel=lambda: etat_instance(config.PORT))
+            if etat.get('jeton_refuse') and lire_jeton() != jeton_lu and time.monotonic() < patience:
+                time.sleep(0.2)                  # elle démarrait : son jeton a été écrit pendant notre requête
+                continue
+            # Sa page s'ouvre par l'adresse d'entrée si elle exige le jeton (0.4.0 et plus), par « / » sinon.
+            entree = adresse_entree(config.PORT, jeton_lu) if etat.get('acces_par_jeton') and jeton_lu else adresse
+            code = fenetre.relancer(etat, entree, config.PORT, demande, ouvrir_page, informer,
+                                    etat_actuel=lambda: etat_instance(config.PORT, jeton_lu or ''))
             if code is None and time.monotonic() < patience:
                 time.sleep(0.5)                  # elle s'arrêtait en fait : on attend qu'elle libère le port
                 continue
             return code or 0
+    # Le port est à nous : nouveau jeton d'accès, avant toute réponse autre que « MyPhotos démarre » (503, app absente).
+    jeton = creer_jeton()
+    serveur.jeton = jeton
+    entree = adresse_entree(config.PORT, jeton)
     journal.info('%s %s : démarrage sur %s (données : %s)', NOM, config.VERSION, adresse, config.DONNEES)
     try:
         app = Application(serveur)
@@ -3365,9 +3507,9 @@ def main(argv=None):
         print(f'{NOM} : {adresse}  (Ctrl+C pour arrêter)', flush=True)
     if demande == fenetre.FENETRE:
         # Sa propre fenêtre (replis : Edge, puis le navigateur) ; le serveur tourne dans un fil.
-        return fenetre.Hote(app, serveur, adresse, debug).executer()
+        return fenetre.Hote(app, serveur, entree, debug).executer()
     if not SANS_PAGE:
-        ouvrir_page(adresse)
+        ouvrir_page(entree)
     app.serveur_pret()                           # le moteur se chargera après la première réponse à la page
     try:
         serveur.serve_forever(poll_interval=0.5)

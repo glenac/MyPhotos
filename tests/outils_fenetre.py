@@ -271,10 +271,36 @@ def fenetres(pids):
 
 # ---------------------------------------------------------------- HTTP et protocole DevTools
 
+_DONNEES = {}                              # port -> dossier de données de la MyPhotos d'essai
+
+
+def donnees_du_port(port, dossier):
+    """Déclare le dossier de données de la MyPhotos d'essai lancée sur ce port : requete_json y lit son jeton
+    d'accès (fichier « jeton », réécrit à chaque lancement) et le donne dans le cookie, comme la page."""
+    _DONNEES[int(port)] = dossier
+
+
+def cookie(port):
+    """« myphotos-<port>=<jeton> » de la MyPhotos d'essai de ce port, ou None (port non déclaré, pas encore de jeton)."""
+    dossier = _DONNEES.get(int(port))
+    if dossier is None:
+        return None
+    try:
+        with open(os.path.join(dossier, 'jeton'), encoding='ascii') as f:
+            jeton = f.read().strip()
+    except (OSError, ValueError):
+        return None
+    return f'myphotos-{int(port)}={jeton}' if jeton else None
+
+
 def requete_json(port, chemin, corps=None, delai=30):
-    """GET (ou POST JSON comme la page) vers MyPhotos : (statut, réponse)."""
+    """GET (ou POST JSON comme la page) vers MyPhotos : (statut, réponse). Avec le jeton d'accès de ses données
+    (donnees_du_port), comme la page."""
     c = http.client.HTTPConnection('127.0.0.1', port, timeout=delai)
     entetes = {'Host': f'127.0.0.1:{port}'}
+    biscuit = cookie(port)
+    if biscuit:
+        entetes['Cookie'] = biscuit
     brut = None
     if corps is not None:
         brut = json.dumps(corps).encode('utf-8')

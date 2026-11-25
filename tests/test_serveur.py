@@ -15,6 +15,7 @@ dans le dossier » sont essayés dans ce processus, les appels à Windows étant
 import base64
 import http.client
 import json
+import logging
 import os
 import shutil
 import socket
@@ -45,10 +46,27 @@ INCONNU = 987654321
 SANS_FENETRE = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
 
-def requete(methode, chemin, corps=None, entetes=None, brut=None, hote=HOTE, port=PORT, delai=60):
-    """(statut, en-têtes en minuscules, corps). Host et tous les en-têtes sont exactement ceux donnés."""
+DONNEES_PAR_PORT = {}                    # port -> données du serveur d'essai (lancer_serveur) : son jeton d'accès
+
+
+def jeton_essai(port=PORT):
+    """Jeton d'accès du serveur d'essai de ce port (fichier « jeton » de ses données, réécrit à chaque lancement)."""
+    dossier = DONNEES_PAR_PORT.get(port)
+    try:
+        return (Path(dossier) / 'jeton').read_text(encoding='ascii').strip() if dossier else None
+    except OSError:
+        return None
+
+
+def requete(methode, chemin, corps=None, entetes=None, brut=None, hote=HOTE, port=PORT, delai=60, jeton=True):
+    """(statut, en-têtes en minuscules, corps). Host et tous les en-têtes sont exactement ceux donnés, plus le cookie
+    du jeton d'accès comme la page (jeton=True : celui du serveur d'essai de ce port ; une chaîne : celle-ci ;
+    False : aucun cookie). Un en-tête Cookie donné dans `entetes` remplace celui-ci."""
     c = http.client.HTTPConnection('127.0.0.1', port, timeout=delai)
     e = {'Host': hote}
+    valeur = jeton_essai(port) if jeton is True else jeton
+    if valeur:
+        e['Cookie'] = f'myphotos-{port}={valeur}'
     if corps is not None:
         brut = json.dumps(corps).encode('utf-8')
         e['Content-Type'] = 'application/json'
@@ -95,6 +113,7 @@ def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
     env.pop('MYPHOTOS_TELECHARGEMENT_FACTICE', None)
     env.update(variables)
     Path(donnees).mkdir(parents=True, exist_ok=True)
+    DONNEES_PAR_PORT[port] = Path(donnees)
     sortie = open(Path(donnees) / 'essai-serveur.err', 'ab')
     lancement = ['-c', 'import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
                        's.dossier_images = lambda: None; sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
@@ -370,6 +389,184 @@ class TestSecurite(EssaiServeur):
                     self.assertIn(k, e)
                 self.assertFalse(any(k.startswith('access-control-') for k in e))
         self.vivant()
+
+
+class TestJeton(EssaiServeur):
+    """0.4.0 : jeton d'accès exigé par TOUTE requête (page, API, miniatures, photos, routes inconnues ou à venir),
+    contrôlé à un seul endroit du serveur (Gestionnaire._acces). Problème connu de la 0.3.0 : une personne connectée
+    en même temps sur un autre compte Windows du PC affichait la page de MyPhotos en tapant son adresse locale."""
+
+    REFUS = 'Ouvrez MyPhotos depuis son raccourci.'
+    GET = ('/', '/index.html', '/api/etat', '/api/photos', '/api/recherche?q=chien', '/api/dossiers',
+           '/api/materiel', '/api/copie', '/api/doublons', f'/miniature/{INCONNU}', f'/photo/{INCONNU}',
+           f'/api/photo/{INCONNU}', '/favicon.ico', '/inconnu', '/api/maj', '/api/maj/etat')
+    POST = ('/api/quitter', '/api/analyse/pause', '/api/dossiers/choisir', '/api/supprimer', '/api/assistant',
+            '/api/inconnue', '/api/maj/installer')
+    NAVIGATION = {'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document'}
+
+    def faux_jetons(self):
+        j = jeton_essai()
+        self.assertRegex(j or '', r'^[A-Za-z0-9_-]{43}$')                 # 256 bits, sans caractère à échapper
+        autre = ('A' if j[0] != 'A' else 'B') + j[1:]
+        return (False, '', 'x', autre, j[:-1], j + 'x', j.lower() if j != j.lower() else j.upper(), f'"{autre}"',
+                j + ' ' + j)
+
+    def assert_refus(self, statut, e, corps, chemin):
+        self.assertEqual(statut, 403, chemin)
+        self.assertNotIn('set-cookie', e)
+        self.assertEqual(e['cache-control'], 'no-store')
+        self.assertIn("default-src 'none'", e['content-security-policy'])
+        if chemin.startswith('/api/'):
+            self.assertEqual(json.loads(corps), {'erreur': self.REFUS, 'jeton': 'requis'}, chemin)
+        else:
+            self.assertTrue(e['content-type'].startswith('text/html'), chemin)
+            from myphotos import config
+            texte = corps.decode('utf-8')
+            self.assertIn(self.REFUS, texte)
+            self.assertLess(len(corps), 300)                                # une petite page, rien d'autre
+            for secret in ('<script', 'version', 'compte', 'jeton', config.VERSION, str(DONNEES), 'etat'):
+                self.assertNotIn(secret.lower(), texte.lower())
+
+    def test_sans_jeton_tout_est_refuse(self):
+        for jeton in self.faux_jetons():
+            for chemin in self.GET:
+                with self.subTest(jeton=jeton, chemin=chemin):
+                    self.assert_refus(*requete('GET', chemin, entetes=self.NAVIGATION if chemin == '/' else None,
+                                               jeton=jeton), chemin.split('?')[0])
+            for chemin in self.POST:
+                with self.subTest(jeton=jeton, chemin=chemin):
+                    statut, e, corps = requete('POST', chemin, {'ids': [1], 'confirme': True},
+                                               {'X-MyPhotos': '1', 'Origin': f'http://{HOTE}',
+                                                'Sec-Fetch-Site': 'same-origin'}, jeton=jeton)
+                    self.assert_refus(statut, e, corps, chemin)
+        self.vivant()                                                       # /api/quitter sans jeton : rien
+        # Le bon jeton sous le nom de cookie d'un AUTRE port (une autre MyPhotos) ne vaut rien ici, et inversement
+        # les cookies des autres programmes de 127.0.0.1 ne gênent pas.
+        j = jeton_essai()
+        self.assert_refus(*requete('GET', '/api/etat', entetes={'Cookie': f'myphotos-{PORT + 1}={j}'}), '/api/etat')
+        self.assertEqual(requete('GET', '/api/etat', entetes={
+            'Cookie': f'session=abc; myphotos-{PORT + 1}=x; myphotos-{PORT}={j}; autre="y"'})[0], 200)
+        # Le jeton dans l'adresse n'ouvre rien d'autre que la page (ni l'API, ni les photos).
+        for chemin in ('/api/etat', f'/miniature/{INCONNU}', '/api/photos'):
+            with self.subTest(chemin=chemin):
+                self.assert_refus(*requete('GET', f'{chemin}?jeton={j}', jeton=False), chemin)
+        self.assert_refus(*requete('POST', f'/?jeton={j}', {}, {'X-MyPhotos': '1'}, jeton=False), '/')
+        self.vivant()
+
+    def test_adresse_d_entree(self):
+        """La fenêtre, Edge, le navigateur et la relance ouvrent « /?jeton=… » : cookie HttpOnly, SameSite=Strict,
+        Path=/, sans date (le temps de la séance), puis « / » sans le jeton dans l'adresse."""
+        j = jeton_essai()
+        for page in ('/', '/index.html'):
+            with self.subTest(page=page):
+                statut, e, corps = requete('GET', f'{page}?jeton={j}', entetes=self.NAVIGATION, jeton=False)
+                self.assertEqual((statut, e['location'], corps), (303, '/', b''))
+                self.assertEqual(e['cache-control'], 'no-store')
+                self.assertEqual(e['referrer-policy'], 'no-referrer')
+                morceaux = [m.strip() for m in e['set-cookie'].split(';')]
+                self.assertEqual(morceaux[0], f'myphotos-{PORT}={j}')
+                self.assertEqual(set(morceaux[1:]), {'Path=/', 'HttpOnly', 'SameSite=Strict'})
+                biscuit = morceaux[0].split('=', 1)[1]
+                statut, _, corps = requete('GET', '/', entetes=self.NAVIGATION, jeton=biscuit)
+                self.assertEqual(statut, 200)
+                self.assertIn(b'<title>MyPhotos</title>', corps)
+                self.assertNotIn(j.encode(), corps)                         # jamais dans la page
+        # Mauvais jeton dans l'adresse : la petite page, sans cookie.
+        for faux in self.faux_jetons()[1:]:
+            with self.subTest(faux=faux):
+                self.assert_refus(*requete('GET', '/?' + urllib.parse.urlencode({'jeton': faux}),
+                                           entetes=self.NAVIGATION, jeton=False), '/')
+        # Adresse d'entrée périmée (historique) avec un cookie valable : « / », sans nouveau cookie.
+        statut, e, _ = requete('GET', '/?jeton=perime', entetes=self.NAVIGATION)
+        self.assertEqual((statut, e['location']), (303, '/'))
+        self.assertNotIn('set-cookie', e)
+        # Un autre site peut mener à l'adresse d'entrée, mais sans le jeton il n'obtient que la petite page.
+        self.assert_refus(*requete('GET', '/?jeton=devine', jeton=False, entetes=dict(
+            self.NAVIGATION, **{'Sec-Fetch-Site': 'cross-site'})), '/')
+        self.vivant()
+
+    def test_jamais_dans_le_journal(self):
+        j = jeton_essai()
+        journal = DONNEES / 'journal.log'
+        avant = journal.stat().st_size if journal.exists() else 0
+        requete('GET', f'/?jeton={j}', entetes=self.NAVIGATION, jeton=False)
+        requete('GET', f'/?jeton={j}&' + '&'.join(f'a{i}=1' for i in range(30)), jeton=False)   # refus simple (400)
+        requete('GET', f'/api/recherche?q=chien&jeton={j}')
+        requete('POST', '/api/assistant', entetes={'X-MyPhotos': '1', 'Content-Type': 'application/json'},
+                brut=b'{pas du json')
+        requete('GET', f'/photo/{INCONNU}?jeton={j}', jeton=j)
+        self.vivant()
+        ajout = journal.read_bytes()[avant:].decode('utf-8', 'replace') if journal.exists() else ''
+        self.assertNotIn(j, ajout)
+        self.assertNotIn(j, journal.read_text(encoding='utf-8', errors='replace') if journal.exists() else '')
+
+    def test_simple_connexion_tcp(self):
+        """L'outil local qui regarde si MyPhotos tourne ouvre une connexion au port, sans requête : toujours possible,
+        sans erreur dans le journal."""
+        for _ in range(3):
+            with socket.create_connection(('127.0.0.1', PORT), timeout=5):
+                pass
+        self.vivant()
+        self.assertEqual(api('/api/etat')[0], 200)
+
+    def test_etat_instance(self):
+        """Relance (serveur.etat_instance) : avec le jeton des données, l'état ; sans lui, « jeton_refuse » (MyPhotos
+        d'un autre compte Windows : message, rien n'est ouvert), sans rien de son état."""
+        from myphotos import serveur
+        e = serveur.etat_instance(PORT, jeton_essai())
+        self.assertEqual((e['nom'], e['acces_par_jeton']), ('MyPhotos', True))
+        for faux in ('', 'faux', jeton_essai() + 'x'):
+            self.assertEqual(serveur.etat_instance(PORT, faux), {'nom': 'MyPhotos', 'jeton_refuse': True})
+        with mock.patch.object(serveur.config, 'JETON', DONNEES / 'jeton'):
+            self.assertEqual(serveur.etat_instance(PORT)['acces_par_jeton'], True)   # lu dans les données
+        self.assertIsNone(serveur.etat_instance(PORT + 37, jeton_essai()))          # personne sur ce port
+
+
+class TestJetonFonctions(unittest.TestCase):
+    """Jeton d'accès, sans serveur : fichier écrit d'un coup, relu avec prudence, comparé en temps constant, masqué
+    dans le journal."""
+
+    def test_creer_et_lire(self):
+        from myphotos import serveur
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'sous-dossier' / 'jeton'
+            j = serveur.creer_jeton(chemin)
+            self.assertRegex(j, r'^[A-Za-z0-9_-]{43}$')
+            self.assertEqual(serveur.lire_jeton(chemin), j)
+            self.assertEqual(sorted(p.name for p in chemin.parent.iterdir()), ['jeton'])
+            self.assertNotEqual(serveur.creer_jeton(chemin), j)                 # un nouveau à chaque lancement
+            for abime in (b'', b'court', b'\xff\xfe' + b'a' * 40, b'a' * 40 + b'<script>', b'a b' * 20):
+                chemin.write_bytes(abime)
+                self.assertIsNone(serveur.lire_jeton(chemin), abime)
+            self.assertIsNone(serveur.lire_jeton(Path(d) / 'absent'))
+            # Dossier de données impossible à écrire : MyPhotos marche quand même (seule la relance ne rouvrira rien).
+            with mock.patch.object(Path, 'write_text', side_effect=PermissionError('refusé')):
+                self.assertRegex(serveur.creer_jeton(Path(d) / 'autre'), r'^[A-Za-z0-9_-]{43}$')
+
+    def test_comparaison(self):
+        from myphotos import serveur
+        j = 'a' * 43
+        self.assertTrue(serveur.jeton_egal(j, j))
+        for donne in ('a' * 42, 'a' * 44, 'b' + 'a' * 42, '', None, 12, 'é' * 43, '\udcff' * 43):
+            self.assertFalse(serveur.jeton_egal(donne, j), donne)
+        self.assertFalse(serveur.jeton_egal('', ''))
+        self.assertFalse(serveur.jeton_egal(j, None))
+        self.assertEqual(serveur.adresse_entree(7796, j), f'http://127.0.0.1:7796/?jeton={j}')
+        self.assertEqual(serveur.nom_cookie(7796), 'myphotos-7796')
+
+    def test_journal_masque_le_jeton(self):
+        from myphotos import serveur
+        j = 'Zx9_-' * 9
+        forme = serveur._FormatSansJeton('%(message)s')
+        for message in (f'chargement de http://127.0.0.1:7796/?jeton={j}', f'Cookie: myphotos-7796={j}; autre=1'):
+            r = logging.LogRecord('pywebview', logging.DEBUG, '', 0, message, None, None)
+            self.assertNotIn(j, forme.format(r))
+        try:
+            raise ValueError(f'/?jeton={j}')
+        except ValueError:
+            import sys as _sys
+            r = logging.LogRecord('myphotos', logging.ERROR, '', 0, 'erreur', None, _sys.exc_info())
+        self.assertNotIn(j, forme.format(r))
 
 
 class TestSelectionHttp(EssaiServeur):
@@ -817,6 +1014,49 @@ class TestInstances(unittest.TestCase):
             arreter_essai(proc)
             proc.sortie.close()
         self.assertTrue(port_libre(self.PORT2))
+
+    def test_jeton_neuf_a_chaque_lancement(self):
+        """0.4.0 : un nouveau jeton à chaque lancement (l'ancien ne vaut plus rien) ; des requêtes sans le jeton
+        (programme d'un autre compte Windows qui interroge le port chaque seconde) ne gardent pas MyPhotos éveillé ;
+        une seconde instance ne remplace jamais le jeton de celle qui tourne."""
+        if not port_libre(self.PORT2):
+            self.skipTest(f'port {self.PORT2} déjà pris')
+        donnees = DONNEES / 'essai-jeton'
+        hote = f'127.0.0.1:{self.PORT2}'
+        jetons = []
+        for tour in range(2):
+            proc = lancer_serveur(donnees, self.PORT2, neutre=True, MYPHOTOS_INACTIVITE_S='4')
+            try:
+                attendre_serveur(proc, self.PORT2)
+                jetons.append(jeton_essai(self.PORT2))
+                self.assertEqual(requete('GET', '/api/etat', hote=hote, port=self.PORT2)[0], 200)
+                if tour == 0:
+                    second = lancer_serveur(donnees, self.PORT2, neutre=True)       # voit MyPhotos, s'arrête
+                    try:
+                        self.assertEqual(second.wait(timeout=60), 0)
+                    finally:
+                        arreter_essai(second)
+                        second.sortie.close()
+                    self.assertEqual(jeton_essai(self.PORT2), jetons[0])          # jeton inchangé
+                    self.assertIsNone(proc.poll())
+                else:
+                    self.assertNotEqual(jetons[1], jetons[0])
+                    self.assertEqual(requete('GET', '/api/etat', hote=hote, port=self.PORT2, jeton=jetons[0])[0], 403)
+                debut = time.monotonic()
+                while proc.poll() is None and time.monotonic() - debut < 20:
+                    for chemin, jeton in (('/', False), ('/api/etat', False), ('/api/etat', 'faux'),
+                                          (f'/?jeton={jetons[0] if tour else "faux"}', False)):
+                        try:
+                            requete('GET', chemin, hote=hote, port=self.PORT2, delai=5, jeton=jeton)
+                        except (OSError, http.client.HTTPException):
+                            pass                                   # déjà arrêté, ou en train de s'arrêter
+                    time.sleep(1.0)
+                self.assertIsNotNone(proc.poll(), 'des requêtes sans jeton gardent MyPhotos lancé')
+                self.assertEqual(proc.wait(timeout=60), 0)
+            finally:
+                arreter_essai(proc)
+                proc.sortie.close()
+            self.assertTrue(port_libre(self.PORT2))
 
 
 class TestActionsWindows(unittest.TestCase):
@@ -1989,9 +2229,12 @@ class TestOutils(unittest.TestCase):
         """Une requête qui bute sur « database is locked » répond en français, sans le message brut."""
         import sqlite3
         from myphotos import serveur
+        import email.message
         g = serveur.Gestionnaire.__new__(serveur.Gestionnaire)
-        g.server = types.SimpleNamespace(hotes={'h'})
-        g.headers = {'Host': 'h'}
+        g.server = types.SimpleNamespace(hotes={'h'}, jeton='j' * 43, server_port=1)
+        g.headers = email.message.Message()
+        g.headers['Host'] = 'h'
+        g.headers['Cookie'] = 'myphotos-1=' + 'j' * 43                 # jeton d'accès (0.4.0)
         g.path = '/api/etat'
         g.close_connection = False
         envoye = []

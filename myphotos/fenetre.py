@@ -65,6 +65,12 @@ bureau Windows invisible, piloté par le protocole DevTools : MYPHOTOS_DEBUG=1 g
 Une relance depuis un AUTRE compte Windows du même PC (le port 127.0.0.1 est commun à la machine) : /api/etat donne
 l'empreinte du compte (« compte ») ; message, et la page de l'autre compte ne s'ouvre pas. Mutex config.MUTEX tenu
 toute la vie du processus (installateur).
+
+Jeton d'accès (0.4.0, voir serveur.py) : la fenêtre, Edge et le navigateur ouvrent l'adresse d'entrée
+http://127.0.0.1:<port>/?jeton=… (Hote.adresse) ; le serveur pose son cookie et redirige vers « / », seule adresse que
+la fenêtre garde ensuite (navigation() permet les deux : même chemin « / »). Une relance lit le jeton dans les
+données (config.JETON) pour interroger /api/etat et rouvrir la page ; un autre compte n'a pas ce fichier : la MyPhotos
+déjà lancée le refuse (etat « jeton_refuse »), message AUTRE_COMPTE.
 """
 import ctypes
 import json
@@ -239,9 +245,14 @@ def autre_compte(etat, moi=None):
 
 def relancer(etat, adresse, port, demande, ouvrir_page, informer, etat_actuel=None):
     """Seconde instance : MyPhotos répond déjà sur ce port. Rend le code de sortie (0), ou None si l'instance
-    signalée s'arrête en fait (fenêtre fermée à l'instant) : main() attend alors qu'elle libère le port."""
-    if autre_compte(etat):
-        journal.warning('MyPhotos est déjà ouvert par un autre compte de cet ordinateur : rien n\'est ouvert')
+    signalée s'arrête en fait (fenêtre fermée à l'instant) : main() attend alors qu'elle libère le port.
+
+    adresse : celle de sa page, avec le jeton d'accès de ses données pour une 0.4.0 ou plus (serveur.adresse_entree).
+    etat['jeton_refuse'] (serveur.etat_instance) : une MyPhotos 0.4.0 ou plus a refusé notre jeton ; ses données, donc
+    elle-même, sont à un autre compte Windows (ou à d'autres données) : même message que pour un autre compte."""
+    if etat.get('jeton_refuse') or autre_compte(etat):
+        journal.warning('MyPhotos est déjà ouvert par un autre compte de cet ordinateur (ou avec d\'autres données) : '
+                        'rien n\'est ouvert')
         if demande != SANS_PAGE:
             informer(AUTRE_COMPTE)
         return 0
@@ -889,7 +900,7 @@ class Hote:
     def __init__(self, app, serveur, adresse, debug=False):
         self.app = app
         self.serveur = serveur
-        self.adresse = adresse
+        self.adresse = adresse                   # adresse d'entrée, avec le jeton d'accès (serveur.adresse_entree)
         self.port = serveur.server_address[1]
         self.debug = debug
         self.webview = None                      # FenetreWebView2

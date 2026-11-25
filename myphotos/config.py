@@ -33,6 +33,9 @@ MODELE_A_COTE = EXE_DOSSIER / 'modele'
 BASE = DONNEES / 'index.db'
 MINIATURES = DONNEES / 'miniatures.db'
 JOURNAL = DONNEES / 'journal.log'
+# Jeton d'accès au serveur local, tiré à chaque lancement (serveur.creer_jeton) : dans les données, privées au compte
+# Windows ; une relance le lit pour rouvrir la page. Jamais dans le journal.
+JETON = DONNEES / 'jeton'
 
 # Formats lus en version 1 (HEIC et vidéos : plus tard).
 EXTENSIONS = {'.jpg', '.jpeg', '.jfif', '.png', '.webp', '.bmp', '.gif', '.tif', '.tiff'}
