@@ -1,4 +1,11 @@
 {
+ "0.4.1": [
+  "« Plus comme celle-ci » : dans la visionneuse, les photos qui ressemblent le plus à celle affichée.",
+  "Diaporama en plein écran, depuis la visionneuse (3, 5 ou 10 secondes par photo).",
+  "Taille du texte réglable dans les Réglages : Normale, Grande ou Très grande.",
+  "Doublons : les copies tournées ou retournées en miroir sont reconnues.",
+  "Réglages : « Copier pour demander de l’aide », un message prêt à envoyer en cas de souci."
+ ],
  "0.4.0": [
   "MyPhotos peut vous proposer ses nouvelles versions et s’installer en un clic, si vous le voulez.",
   "Plus sûr sur un PC partagé : la page de MyPhotos ne s’ouvre plus depuis un autre compte Windows.",

@@ -100,7 +100,9 @@ def controles_prealables(version, essai):
         raise Arret('ARRÊT : des fichiers ne sont pas commités')
     lancer('git', 'fetch', '--quiet', 'origin', 'main')
     if lancer('git', 'rev-parse', 'HEAD') != lancer('git', 'rev-parse', 'origin/main'):
-        raise Arret('ARRÊT : main n\'est pas identique à origin/main (envoyer d\'abord, ou récupérer)')
+        if not essai:
+            raise Arret('ARRÊT : main n\'est pas identique à origin/main (envoyer d\'abord, ou récupérer)')
+        print('Attention : main n\'est pas encore envoyé sur GitHub (permis en essai seulement)')
     etiquette = f'v{version}'
     if lancer('git', 'tag', '--list', etiquette):
         raise Arret(f'ARRÊT : l\'étiquette {etiquette} existe déjà ici')
