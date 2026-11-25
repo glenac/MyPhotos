@@ -222,7 +222,8 @@ Type: dirifempty; Name: "{app}"
 
   MyPhotos range l'analyse des photos (index.db), les miniatures (miniatures.db), son journal, le moteur
   téléchargé (modele\), la place de sa fenêtre (fenetre.json) et les profils de la fenêtre (webview2\ pour
-  WebView2, edge\ pour le repli sur Edge) dans son dossier de données : %LOCALAPPDATA%\MyPhotos, ou
+  WebView2, edge\ pour le repli sur Edge) et, depuis la 0.4.0, les installateurs téléchargés par la mise à jour
+  proposée (mises-a-jour\) dans son dossier de données : %LOCALAPPDATA%\MyPhotos, ou
   MYPHOTOS_DOSSIER s'il est défini (comme myphotos/config.py ; MYPHOTOS_MODELES n'est jamais touché). Une fois
   le programme désinstallé, on propose de supprimer ces données, Non par défaut. Garde-fous :
   - chemin complet, sans « .. » ; ni racine de disque, ni dossier de l'utilisateur ou du système (ni l'un de
@@ -232,7 +233,7 @@ Type: dirifempty; Name: "{app}"
   - seuls les éléments que MyPhotos y crée (NomDeMyPhotos, noms exacts) sont supprimés : tout autre fichier est
     gardé, et le dossier avec ; aucun lien (jonction, lien symbolique) n'est jamais suivi (DelTree retire le lien
     lui-même sans descendre dedans) ;
-  - les dossiers modele\, webview2\ et edge\ ne partent que si leur contenu est bien celui de MyPhotos
+  - les dossiers modele\, webview2\, edge\ et mises-a-jour\ ne partent que si leur contenu est bien celui de MyPhotos
     (ContenuDeMyPhotos) : des photos rangées par l'utilisateur dans un « modele » ou un « Edge » restent.
   Les dossiers protégés sont reconnus par leur chemin écrit, puis par leur identité (volume et numéro de fichier,
   comme os.stat : st_dev, st_ino) : un autre chemin vers le même dossier (nom court 8.3, partage \\localhost\C$,
@@ -283,8 +284,10 @@ function CloseHandle(Objet: THandle): BOOL;
   - journal.log et ses copies (journal.log.1, .2 : serveur.JOURNAL_COPIES) ;
   - fenetre.json (et fenetre.json.part pendant son écriture) : taille et place de la fenêtre ;
   - webview2\ : profil WebView2 de la fenêtre (mode privé : effacé à la fermeture, reste après un plantage) ;
-  - edge\ : profil d'Edge en mode application (repli quand WebView2 manque).
-  Les trois dossiers ne sont supprimés que si leur contenu est bien celui de MyPhotos (ContenuDeMyPhotos). }
+  - edge\ : profil d'Edge en mode application (repli quand WebView2 manque) ;
+  - mises-a-jour\ : installateurs téléchargés par la mise à jour proposée et journaux de leur installation
+    (0.4.0, myphotos/mise_a_jour.py).
+  Les quatre dossiers ne sont supprimés que si leur contenu est bien celui de MyPhotos (ContenuDeMyPhotos). }
 function NomDeMyPhotos(const Nom: String): Boolean;
 var
   N: String;
@@ -297,7 +300,7 @@ begin
     or (N = 'miniatures.db-journal') or WildcardMatch(N, 'miniatures.db.abimee-*')
     or (N = 'journal.log') or (N = 'journal.log.1') or (N = 'journal.log.2')
     or (N = 'fenetre.json') or (N = 'fenetre.json.part')
-    or (N = 'webview2') or (N = 'edge');
+    or (N = 'webview2') or (N = 'edge') or (N = 'mises-a-jour');
 end;
 
 function ParametrePresent(const Nom: String): Boolean;
@@ -540,10 +543,41 @@ end;
   - modele\ : seulement des fichiers du moteur (SeulementLeMoteur) ;
   - webview2\ : WebView2 n'y crée que EBWebView\ ;
   - edge\ : un profil d'Edge commence par son fichier « Local State » ;
+  - mises-a-jour\ : seulement des installateurs de MyPhotos et leurs journaux (SeulementLesMisesAJour) ;
   - vide : supprimé. }
 function DossierVide(const Dossier: String): Boolean;
 begin
   Result := SeulementLeSousDossier(Dossier, '');      { aucun élément ne s'appelle '' : vrai seulement s'il est vide }
+end;
+
+{ Fichiers que la mise à jour proposée range dans mises-a-jour\ (myphotos/mise_a_jour.py) : installateurs
+  « MyPhotos-<version>-installation.exe » (et « .part » pendant le téléchargement), journaux
+  « installation-<version>.log ». }
+function FichierDeMiseAJour(const Nom: String): Boolean;
+var
+  N: String;
+begin
+  N := Lowercase(Nom);
+  Result := WildcardMatch(N, 'myphotos-*-installation.exe') or WildcardMatch(N, 'myphotos-*-installation.exe.part')
+    or WildcardMatch(N, 'installation-*.log');
+end;
+
+{ Vrai si le dossier ne contient que des fichiers de la mise à jour : ni sous-dossier, ni lien, ni autre fichier. }
+function SeulementLesMisesAJour(const Dossier: String): Boolean;
+var
+  R: TFindRec;
+begin
+  Result := True;
+  if FindFirst(Dossier + '\*', R) then
+  try
+    repeat
+      if (R.Name <> '.') and (R.Name <> '..') then
+        Result := ((R.Attributes and (FILE_ATTRIBUTE_DIRECTORY or FILE_ATTRIBUTE_REPARSE_POINT)) = 0)
+                  and FichierDeMiseAJour(R.Name);
+    until (not Result) or (not FindNext(R));
+  finally
+    FindClose(R);
+  end;
 end;
 
 function ContenuDeMyPhotos(const Chemin, Nom: String): Boolean;
@@ -557,6 +591,8 @@ begin
     Result := SeulementLeSousDossier(Chemin, 'EBWebView')
   else if N = 'edge' then
     Result := FichierOrdinaire(Chemin + '\Local State') or DossierVide(Chemin)
+  else if N = 'mises-a-jour' then
+    Result := SeulementLesMisesAJour(Chemin)
   else
     Result := DossierVide(Chemin);                     { autre nom de MyPhotos en dossier : seulement s'il est vide }
 end;

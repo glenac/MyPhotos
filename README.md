@@ -23,7 +23,8 @@ Inutile d'avoir rangé, renommé ou étiqueté vos photos : MyPhotos comprend l
 
 - **Tout est local.** La reconnaissance et la recherche se font sur votre ordinateur, avec sa carte graphique ou son processeur. MyPhotos s'ouvre dans sa propre fenêtre, qui affiche une page servie par MyPhotos lui-même à une adresse locale (`http://127.0.0.1:7796`), inaccessible depuis Internet comme depuis les autres appareils de votre réseau.
 - **Aucun compte**, aucune inscription, aucune publicité, aucune télémétrie : MyPhotos ne collecte rien et n'envoie rien.
-- **Un seul téléchargement** : le moteur de reconnaissance, au premier lancement, depuis Hugging Face. C'est une version figée, dont chaque fichier est contrôlé par son empreinte SHA-256. Ensuite, MyPhotos n'a plus besoin d'Internet.
+- **Un téléchargement au premier lancement** : le moteur de reconnaissance, depuis Hugging Face. C'est une version figée, dont chaque fichier est contrôlé par son empreinte SHA-256. Ensuite, MyPhotos n'a plus besoin d'Internet.
+- **Les nouvelles versions, si vous le voulez.** Au premier lancement, MyPhotos vous demande s'il doit vous proposer ses nouvelles versions. Si vous acceptez, il demande une fois par jour au site GitHub, où il est publié, le numéro de la dernière version. Rien d'autre n'est envoyé : ni vos photos, ni vos recherches, ni aucun identifiant. Une nouvelle version ne s'installe que si vous cliquez sur **Mettre à jour**, et seulement si elle porte la signature du projet ([Les mises à jour](#les-mises-à-jour)).
 - **Vos photos ne sont jamais modifiées.** MyPhotos ne les supprime que si vous le lui demandez, après confirmation, et alors vers la **Corbeille de Windows**, d'où vous pouvez les restaurer : jamais de suppression définitive (un disque sans Corbeille, comme une clé USB ou un disque réseau, est refusé). Ce qu'il retient de vos photos (miniatures, dates, description chiffrée de chaque photo) reste dans son propre dossier, sur votre ordinateur.
 
 À savoir : le moteur tourne grâce à ONNX Runtime et DirectML, deux bibliothèques de Microsoft. Leurs versions officielles peuvent émettre des événements de diagnostic Windows, que Windows ne transmet à Microsoft que si vous l'y avez autorisé (Paramètres > Confidentialité et sécurité > Diagnostics et commentaires). Détails dans [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -36,7 +37,7 @@ Inutile d'avoir rangé, renommé ou étiqueté vos photos : MyPhotos comprend l
 | Mémoire vive | 4 Go (moteurs Rapide et Standard) | 8 Go ; 16 Go pour le moteur Précis |
 | Carte graphique | facultative | compatible DirectX 12 ; 6 Go de mémoire pour le moteur Précis |
 | Disque | le moteur (de 749 Mo à 2,1 Go), plus environ 35 Ko par photo | |
-| Internet | une seule fois, pour télécharger le moteur | |
+| Internet | une fois, pour télécharger le moteur | pour les nouvelles versions, si vous les acceptez |
 | Affichage | WebView2 et .NET Framework 4.7.2, fournis avec Windows 11 et la plupart des Windows 10 | |
 
 Sans carte graphique utilisable, le processeur fait tout le travail : c'est plus lent, mais cela fonctionne. Si WebView2 manque, MyPhotos s'ouvre dans Microsoft Edge en mode application, et à défaut dans votre navigateur (voir [Questions fréquentes](#myphotos-souvre-dans-edge-ou-dans-mon-navigateur)).
@@ -65,7 +66,7 @@ MyPhotos s'ouvre dans sa propre fenêtre, comme un logiciel ordinaire, et vous g
 
 1. **Votre ordinateur.** MyPhotos examine votre PC (système, processeur, mémoire, carte graphique, place libre) et vous conseille un moteur de reconnaissance, marqué « Conseillé pour cet ordinateur ». Il annonce la taille du téléchargement, la durée prévue de l'analyse et ce qui fera le travail : « la carte graphique » ou « le processeur ». Cliquez sur **Télécharger** (la taille est indiquée sur le bouton), ou sur **Autres choix** pour prendre un autre moteur. Dès que le téléchargement a commencé, vous pouvez cliquer sur **Continuer** : il se poursuit pendant que vous choisissez vos photos.
 2. **Vos photos.** Choisissez les dossiers où se trouvent vos photos. MyPhotos propose votre dossier **Images** (et **Images de OneDrive** s'il existe), avec le nombre approximatif de photos qu'il contient : cliquez sur **Ajouter**. Pour un autre dossier, un disque externe par exemple, cliquez sur **Ajouter un dossier…**, ou tapez son emplacement sous « Ou tapez l'emplacement du dossier ». Avant d'ajouter un dossier, MyPhotos compte en quelques secondes les photos de ses plus gros sous-dossiers et les présente dans une liste à cocher. Les dossiers de **captures d'écran** et de **fonds d'écran** (« Captures d'écran », « Screenshots », « Wallpapers », « Fonds d'écran »…) sont décochés d'office, avec la raison ; tout le reste est coché. Décochez ce qui ne contient pas vos photos, puis cliquez sur **Ajouter ce dossier** : les sous-dossiers décochés sont exclus (voir les Réglages), et rien n'est supprimé de votre ordinateur. Les dossiers retenus apparaissent sous « Dossiers choisis ». Cliquez ensuite sur **Continuer**.
-3. **Analyse.** MyPhotos regarde chacune de vos photos une seule fois, en commençant par les plus récentes. Une barre de progression indique où il en est et le temps restant. Vous pouvez cliquer tout de suite sur **Commencer à chercher** : les résultats s'enrichissent au fur et à mesure.
+3. **Analyse.** MyPhotos regarde chacune de vos photos une seule fois, en commençant par les plus récentes. Une barre de progression indique où il en est et le temps restant. Sous « Nouvelles versions de MyPhotos », répondez **Oui, me la proposer** ou **Non merci** ([Les mises à jour](#les-mises-à-jour)). Vous pouvez cliquer tout de suite sur **Commencer à chercher** : les résultats s'enrichissent au fur et à mesure.
 
 L'analyse continue en arrière-plan. Le bandeau en haut de la page permet de la mettre en **Pause** puis de la **Reprendre**. Si vous arrêtez MyPhotos, elle reprendra où elle en était au lancement suivant.
 
@@ -153,6 +154,24 @@ Il vérifie ensuite que la mémoire et la place libre suffisent. **Très précis
 **Changer de moteur.** Dans les Réglages, cliquez sur **Changer de moteur** : la fenêtre « Changer de moteur de reconnaissance » présente les quatre moteurs. Cliquez sur **Choisir ce moteur**, puis confirmez. MyPhotos télécharge le moteur s'il n'est pas déjà sur l'ordinateur, puis analyse de nouveau toutes vos photos. Pendant ce temps, vous pouvez continuer à chercher, mais les résultats restent incomplets jusqu'à la fin de l'analyse.
 
 **Sans Internet.** Pour un PC hors ligne, posez à côté de MyPhotos.exe un dossier `modele` qui contient le moteur, rangé comme MyPhotos le range lui-même : le plus simple est de copier le dossier `%LOCALAPPDATA%\MyPhotos\modele` d'un PC où le moteur a déjà été téléchargé. Quand vous cliquez sur **Télécharger**, MyPhotos recopie ce dossier au lieu de passer par Internet, après avoir contrôlé la taille et l'empreinte SHA-256 de chaque fichier. Les sous-dossiers s'appellent `rapide`, `base` (Standard), `precis` et `tres_precis`.
+
+## Les mises à jour
+
+Depuis la 0.4.0, MyPhotos peut vous proposer ses nouvelles versions et s'installer lui-même, en un clic. Il ne le fait qu'avec votre accord : la question est posée à l'étape **Analyse** du premier lancement ou, si vous venez d'une version plus ancienne, dans un bandeau en haut de la page. Pour changer d'avis : **Réglages**, section « Nouvelles versions », case **Me proposer les nouvelles versions de MyPhotos**. Le bouton **Rechercher une nouvelle version** vérifie tout de suite, même si la case est décochée.
+
+**Quand une nouvelle version sort**, un bandeau l'annonce en haut de la page :
+
+- **Mettre à jour** : MyPhotos résume les nouveautés et demande confirmation. Il télécharge la nouvelle version (environ 40 Mo ; une barre montre l'avancement, et **Annuler** l'arrête), la contrôle, se ferme, l'installe (une petite fenêtre d'avancement s'affiche) puis se rouvre tout seul. Vos photos, leur analyse, le moteur et vos réglages sont gardés, et une analyse en cours reprend où elle en était. Au lancement suivant, un bandeau confirme la nouvelle version, ou dit que la mise à jour n'a pas abouti : rien n'a changé alors.
+- **Nouveautés** ouvre la page de la version dans votre navigateur.
+- **Plus tard** cache le bandeau jusqu'au lendemain. La mise à jour reste proposée dans les Réglages.
+
+Une copie de photos en cours doit d'abord se terminer. **MyPhotos.exe seul** (sans installation) ne se met pas à jour lui-même : son bandeau propose **Télécharger**, qui ouvre la page de la nouvelle version.
+
+**Ce qui est envoyé.** Une fois par jour au plus, MyPhotos lit le petit fichier `MyPhotos-mise-a-jour.json` de la dernière version publiée sur GitHub, en HTTPS. Comme pour toute visite d'un site, GitHub voit l'adresse IP de votre connexion ; MyPhotos n'envoie ni vos photos, ni vos recherches, ni identifiant, ni même son numéro de version. L'installateur n'est téléchargé que lorsque vous cliquez sur **Mettre à jour**.
+
+**Sécurité.** Ce fichier est signé avec une clé qui reste sur l'ordinateur du projet, jamais sur GitHub, et MyPhotos contient de quoi vérifier cette signature : un fichier non signé, abîmé ou modifié est ignoré. Même un compte GitHub volé ne suffirait donc pas à envoyer un faux MyPhotos. Le fichier donne la taille et l'empreinte SHA-256 exactes de l'installateur, contrôlées après le téléchargement, puis encore une fois juste avant l'installation. MyPhotos ne propose jamais de revenir à une version plus ancienne.
+
+**Depuis la 0.3.0 ou plus ancienne**, installez la 0.4.0 à la main, une dernière fois, avec `MyPhotos-0.4.0-installation.exe` : vos données sont gardées. Les versions suivantes se proposeront d'elles-mêmes.
 
 ## Questions fréquentes
 
@@ -261,6 +280,7 @@ python -m venv .venv
 | `MYPHOTOS_DEBUG=1` | outils de développement de la fenêtre (depuis les sources ; MyPhotos.exe demande en plus l'option `--essai-debogage`) |
 | `MYPHOTOS_INACTIVITE_S` | dans le navigateur, délai d'arrêt automatique sans page ouverte (180 s par défaut) |
 | `MYPHOTOS_TELECHARGEMENT_FACTICE=1` | simule le téléchargement du moteur, pour essayer l'interface |
+| `MYPHOTOS_ESSAI_MANIFESTE`, `MYPHOTOS_ESSAI_CLE_MAJ` | avec `MYPHOTOS_TELECHARGEMENT_FACTICE=1` seulement : manifeste de mise à jour lu dans ce fichier local et vérifié avec cette clé publique d'essai (base64) ; téléchargement et installation simulés |
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
@@ -300,7 +320,9 @@ Le flux : **matériel → moteur → analyse → recherche**. Au premier lancem
 | `myphotos/doublons.py` | doublons : copies identiques, copies retouchées, rafales |
 | `myphotos/fenetre.py` | la fenêtre de MyPhotos (pywebview, WebView2), ses replis (Edge en mode application, navigateur), la relance et la fermeture |
 | `myphotos/raccourci.py` | raccourcis du Bureau et du menu Démarrer (MyPhotos.exe seul) |
-| `myphotos/config.py` | version, port, emplacement des données, nom du mutex de l'installateur |
+| `myphotos/mise_a_jour.py` | mise à jour proposée : manifeste signé de la dernière version, téléchargement contrôlé, installation et relance |
+| `myphotos/signature.py` | vérification des signatures (ECDSA P-256 par la cryptographie de Windows) |
+| `myphotos/config.py` | version, port, emplacement des données, nom du mutex de l'installateur, clé publique des mises à jour |
 | `construction/MyPhotos.iss` | l'installateur (Inno Setup) : installation pour l'utilisateur seul, mise à jour, désinstallation et question sur les données |
 
 Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Un mode d'emploi d'une page, à imprimer, est disponible en [PDF](docs/MyPhotos_mode_emploi.pdf).
@@ -328,9 +350,9 @@ Des idées pour les versions suivantes, sans date promise :
 
 **Find your photos by typing what they show.** Type "dog" (or, preferably, the French « chien ») and every photo with a dog appears. MyPhotos runs entirely on your Windows PC: your photos are never uploaded anywhere. The interface is in French.
 
-**Privacy.** Recognition and search run locally, on your graphics card or processor. MyPhotos opens in its own window (WebView2, built into Windows), which shows a page served by MyPhotos itself at `http://127.0.0.1:7796`, unreachable from the Internet or from your local network. Without WebView2, it opens in Microsoft Edge in app mode, or else in your browser. No account, no ads, no telemetry from MyPhotos. The only download is the recognition engine, once, from Hugging Face (pinned revision, every file checked against its SHA-256 hash). Your photos are never modified. MyPhotos only deletes them when you ask it to, after confirmation, and then to the Windows Recycle Bin, never permanently (drives without a Recycle Bin, such as USB sticks or network drives, are refused). Note: ONNX Runtime and DirectML, the Microsoft libraries that run the engine, may emit Windows diagnostic events, which Windows only sends to Microsoft if your diagnostic data settings allow it (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+**Privacy.** Recognition and search run locally, on your graphics card or processor. MyPhotos opens in its own window (WebView2, built into Windows), which shows a page served by MyPhotos itself at `http://127.0.0.1:7796`, unreachable from the Internet or from your local network. Without WebView2, it opens in Microsoft Edge in app mode, or else in your browser. No account, no ads, no telemetry from MyPhotos. The only download is the recognition engine, once, from Hugging Face (pinned revision, every file checked against its SHA-256 hash). Since 0.4.0, MyPhotos can also offer its new versions, only if you agree (it asks on first launch, and « Réglages » can change it): it then reads, once a day, a small signed file from the latest GitHub release, sending nothing else (no photos, searches, identifier or even its version), and installs a new version only when you click « Mettre à jour », after checking its signature (the signing key never leaves the project's computer), size and SHA-256 hash. Your photos are never modified. MyPhotos only deletes them when you ask it to, after confirmation, and then to the Windows Recycle Bin, never permanently (drives without a Recycle Bin, such as USB sticks or network drives, are refused). Note: ONNX Runtime and DirectML, the Microsoft libraries that run the engine, may emit Windows diagnostic events, which Windows only sends to Microsoft if your diagnostic data settings allow it (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
-**Requirements.** Windows 10 64-bit (version 1809 or later) or Windows 11; 4 GB of RAM (8 GB recommended, 16 GB for the "Précis" engine); WebView2 and .NET Framework 4.7.2 (built into Windows 11 and most Windows 10 PCs); an optional DirectX 12 graphics card; the engine (749 MB to 2.1 GB) plus about 35 KB per photo of disk space; Internet access once. Supported formats: JPEG, PNG, WebP, BMP, GIF, TIFF (no HEIC, video or RAW yet).
+**Requirements.** Windows 10 64-bit (version 1809 or later) or Windows 11; 4 GB of RAM (8 GB recommended, 16 GB for the "Précis" engine); WebView2 and .NET Framework 4.7.2 (built into Windows 11 and most Windows 10 PCs); an optional DirectX 12 graphics card; the engine (749 MB to 2.1 GB) plus about 35 KB per photo of disk space; Internet access once (and, if you accept new versions, a daily check). Supported formats: JPEG, PNG, WebP, BMP, GIF, TIFF (no HEIC, video or RAW yet).
 
 **Installation.** The recommended way is **MyPhotos-<version>-installation.exe** from the [Releases](https://github.com/glenac/MyPhotos/releases) page: it installs MyPhotos for the current user only, without administrator rights, in `%LOCALAPPDATA%\Programs\MyPhotos`, with a Start menu shortcut and an optional desktop icon. The installed version starts about three times faster (about 0.5 s instead of 1.6 s), and running a newer installer updates it in place, keeping your data. **MyPhotos.exe** (a single file, nothing to install) and the **MyPhotos-<version>-windows.zip** archive are still published. Silent install: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (add `/MERGETASKS="!desktopicon"` or `/NOICONS` to skip the shortcuts). If Microsoft Defender SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway** (MyPhotos is not signed with a paid certificate).
 

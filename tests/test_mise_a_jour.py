@@ -532,6 +532,18 @@ class Publication(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, 'aucune nouveauté'):
                 self.construire.manifeste(sortie=self.d, cle_privee=self.privee)
 
+    def test_desinstallateur_connait_le_dossier(self):
+        # « Supprimer aussi les données » doit pouvoir retirer mises-a-jour\ : le désinstallateur connaît son nom et
+        # les noms des fichiers que mise_a_jour.py y range (installateurs, fichiers partiels, journaux).
+        iss = (Path(__file__).resolve().parent.parent / 'construction' / 'MyPhotos.iss').read_text(encoding='utf-8')
+        self.assertIn(f"(N = '{M.DOSSIER}')", iss)
+        for motif in ("'myphotos-*-installation.exe'", "'myphotos-*-installation.exe.part'", "'installation-*.log'"):
+            self.assertIn(motif, iss)
+        nom = M.nom_installateur(SUIVANTE).lower()
+        self.assertTrue(nom.startswith('myphotos-') and nom.endswith('-installation.exe'))
+        p = Path('x') / f'installation-{SUIVANTE}.log'
+        self.assertEqual(p.name, f'installation-{SUIVANTE}.log')          # nom employé par lancer_installation
+
     def test_nouveautes_de_la_version(self):
         # Chaque version publiée a ses nouveautés, acceptées par MyPhotos (longueur, nombre, caractères).
         lignes = self.construire.nouveautes(config.VERSION)

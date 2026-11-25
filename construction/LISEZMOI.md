@@ -187,7 +187,33 @@ jamais sur le vrai Bureau. L'essai réel du dépôt, à la demande : `MYPHOTOS_E
 `tests/test_construction.py`).
 
 À publier, en plus de `MyPhotos.exe` et de l'archive `.zip` : `MyPhotos-<version>-installation.exe` et son
-`.sha256`.
+`.sha256`, puis, depuis la 0.4.0, `MyPhotos-mise-a-jour.json` et son `.sha256` (voir plus bas).
+
+## Le manifeste de mise à jour (0.4.0)
+
+Les MyPhotos installés lisent, avec l'accord de l'utilisateur, le fichier `MyPhotos-mise-a-jour.json` de la
+dernière Release (`releases/latest/download/…`) pour proposer la nouvelle version (`myphotos/mise_a_jour.py`).
+Il se fait après l'installateur, dont il donne la taille et l'empreinte :
+
+```
+construction\construire.ps1 --manifeste [--sortie <dossier>]
+```
+
+Les nouveautés affichées par MyPhotos viennent de `construction\nouveautes.json` (une entrée par version, 8 lignes
+au plus, 300 caractères au plus chacune, sans caractère de contrôle) : la construction s'arrête si la version n'y
+est pas. Le manifeste est signé avec la **clé privée du projet**, puis relu avec les règles de MyPhotos et la clé
+publique qu'il contient (`config.CLE_MISE_A_JOUR`) : une clé qui ne correspond pas arrête tout.
+
+**La clé privée** n'est jamais dans le dépôt ni sur GitHub : `%APPDATA%\MyPhotos-publication\cle-signature-privee.txt`
+(ou le fichier désigné par `MYPHOTOS_CLE_SIGNATURE`). Elle a été créée une fois, le 25/11/2026, par
+`construction\cle_signature.py --creer`, qui refuse d'en remplacer une ; `--verifier` dit si celle de ce PC
+correspond à MyPhotos. En garder une copie hors du PC (clé USB rangée). Perdue, plus aucune mise à jour en un
+clic : il faudrait publier une version avec une nouvelle clé publique, que chacun installerait à la main. Pour
+publier depuis un autre PC, y recopier ce fichier au même endroit.
+
+Après la publication, `MyPhotos-mise-a-jour.json` doit être joint à la Release **avant** qu'elle devienne la
+dernière (« latest ») : sinon, pendant quelques minutes, les MyPhotos qui vérifient ne trouvent rien (sans
+conséquence : ils réessaient le lendemain).
 
 ## Ce qui est embarqué
 
