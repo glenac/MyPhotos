@@ -2,7 +2,7 @@
  "0.4.0": [
   "MyPhotos peut vous proposer ses nouvelles versions et s’installer en un clic, si vous le voulez.",
   "Plus sûr sur un PC partagé : la page de MyPhotos ne s’ouvre plus depuis un autre compte Windows.",
-  "Deux disques qui échangent leur lettre : plus aucune photo oubliée par erreur.",
-  "Choix d’un dossier par la fenêtre habituelle de Windows."
+  "Deux disques qui échangent leur lettre, sous-dossier renommé, dossier Images vidé par OneDrive : plus aucune photo oubliée par erreur.",
+  "Choix d’un dossier par la fenêtre habituelle de Windows, et MyPhotos.exe plus léger."
  ]
 }

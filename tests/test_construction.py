@@ -606,6 +606,7 @@ class TestInstallateur(unittest.TestCase):
         O.donnees_du_port(port, donnees)                 # jeton d'accès lu dans ses données
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
         env.update(MYPHOTOS_PORT=str(port), MYPHOTOS_DOSSIER=str(donnees), MYPHOTOS_SANS_PAGE='1',
+                   MYPHOTOS_ESSAI_NEUTRE='1',          # aucun dossier d'images de l'ordinateur parcouru
                    PYTHONIOENCODING='utf-8')            # sans MYPHOTOS_MODELES : modele\ dans les données
         code = ('import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
                 's.dossier_images = lambda: None; sys.exit(s.main())')
@@ -751,8 +752,10 @@ class TestInstallateurReel(unittest.TestCase):
     def executer(self, arguments, **env_plus):
         """Installateur ou désinstallateur, sur le bureau invisible, dans un Job Object à lui : code de sortie."""
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
-        # Un MyPhotos lancé par l'installateur d'essai tient le mutex de l'essai, jamais celui de la vraie MyPhotos.
+        # Un MyPhotos lancé par l'installateur d'essai tient le mutex de l'essai, jamais celui de la vraie MyPhotos,
+        # et ne parcourt aucun dossier d'images de l'ordinateur (MYPHOTOS_ESSAI_NEUTRE).
         env.update(TEMP=str(self.temp), TMP=str(self.temp), MYPHOTOS_ESSAI_MUTEX=MUTEX_ESSAI,
+                   MYPHOTOS_ESSAI_NEUTRE='1',
                    **{k: str(v) for k, v in env_plus.items()})
         job = self.P.Job()
         pid, h = self.O.lancer([str(a) for a in arguments], self.bureau, str(self.d), env, job)

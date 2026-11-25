@@ -444,7 +444,13 @@ def dossier_images():
 
 
 def dossiers_proposes():
-    """Dossiers proposés au premier lancement : Images, puis OneDrive\\Images s'il existe (sans doublon)."""
+    """Dossiers proposés au premier lancement : Images, puis OneDrive\\Images s'il existe (sans doublon).
+
+    Essais (MYPHOTOS_ESSAI_NEUTRE=1) : aucun, pour qu'un MyPhotos.exe lancé tel quel par un essai (l'installateur
+    réel) ne parcoure jamais les dossiers d'images de l'ordinateur, même pour compter ; comme neutre=True dans
+    tests/test_serveur.py."""
+    if os.environ.get('MYPHOTOS_ESSAI_NEUTRE') == '1':
+        return []
     vus, res = set(), []
 
     def ajouter(chemin, nom):

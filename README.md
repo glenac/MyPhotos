@@ -286,10 +286,10 @@ python -m venv .venv
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (292 essais) :
+**Tests** (377 essais) :
 
 ```powershell
-.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre
+.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature
 ```
 
 `test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`, `--dossier`, `--installateur`) et les règles de l'installateur (`construction/MyPhotos.iss`) ; son essai réel (compilation, installation dans un dossier d'essai, mise à jour, désinstallations) ne tourne qu'à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`). `test_fenetre` essaie la fenêtre et ses replis (Edge, navigateur), la relance et la fermeture ; ses essais réels, sur un bureau Windows invisible et pilotés par le protocole DevTools, ne tournent qu'à la demande (`MYPHOTOS_ESSAI_FENETRE=1`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
