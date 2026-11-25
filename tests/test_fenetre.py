@@ -1220,12 +1220,34 @@ def _port_libre(port):
 
 ENFANT_CHOIX = '''\
 """Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON. Avec un 3e argument
-(délai en secondes) : deux demandes de serveur.ChoixDossier, laissées sans réponse au-delà de ce délai."""
-import json, os, sys, time
+(délai en secondes) : deux demandes de serveur.ChoixDossier, laissées sans réponse au-delà de ce délai. Avec
+« poignees N » : N demandes fermées au bout d'une demi-seconde, et le nombre de handles du processus après chacune."""
+import ctypes, gc, json, os, sys, time
 sys.path.insert(0, os.environ['MYPHOTOS_ESSAI_RACINE'])
 from myphotos import dialogue, serveur
 try:
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 4 and sys.argv[3] == 'poignees':
+        from myphotos.raccourci import _methode
+        k32, u32 = ctypes.WinDLL('kernel32'), ctypes.WinDLL('user32')
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        k32.GetProcessHandleCount.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        u32.GetGuiResources.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        sortie = {'poignees': [], 'user': [], 'chemins': [], 'comptes_com': []}
+
+        def liberer(*objets):                       # Release rend le compte de références restant : 0 attendu
+            for o in objets:
+                if o and o.value:
+                    sortie['comptes_com'].append(_methode(o, 2)())
+        dialogue._liberer = liberer
+        choix = serveur.ChoixDossier()
+        for _ in range(int(sys.argv[4])):
+            sortie['chemins'].append(choix.demander(initial=sys.argv[2], delai=0.5, titre=sys.argv[1]))
+            gc.collect()
+            n = ctypes.c_uint32()
+            k32.GetProcessHandleCount(k32.GetCurrentProcess(), ctypes.byref(n))
+            sortie['poignees'].append(n.value)
+            sortie['user'].append(u32.GetGuiResources(k32.GetCurrentProcess(), 1))
+    elif len(sys.argv) > 3:
         choix = serveur.ChoixDossier()
         sortie = {'demandes': []}
         for _ in range(2):
@@ -1368,6 +1390,45 @@ class TestChoixDossierReel(unittest.TestCase):
             self.assertEqual([x['chemin'] for x in d['demandes']], [None, None], d)
             for x in d['demandes']:
                 self.assertTrue(3 <= x['duree_s'] < 3 + 6, d)                   # délai, puis fermeture (5 s au plus)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
+        finally:
+            if hproc is not None and O.code_sortie(hproc) is None:
+                job.terminer()
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
+
+    def test_handles_rien_de_notre_fait(self):
+        """0.4.1 : handles gardés à chaque ouverture (environ 7, vus en 0.4.0). Mesuré le 25/11/2026 (Windows 11, 25
+        à 60 ouvertures) : les 3 premières prennent ~800 handles (DLL du shell, leurs fils) ; ensuite, quand la fenêtre
+        s'ouvre dans un vrai dossier (le dossier proposé : SetFolder), Windows en garde 5 à 6 par ouverture fermée
+        aussitôt, 12 à 15 si elle reste ouverte une demi-seconde ; sans dossier proposé, ~2, rendus par paquets. Les
+        mêmes chiffres dans un fil neuf ou dans le même fil, avec ou sans fenêtre hôte, sans SetClientGuid, en
+        laissant tourner les messages après la fermeture : c'est Windows (caches du dossier parcouru), pas MyPhotos.
+        L'essai vérifie ce qui est de notre fait : chaque objet COM libéré jusqu'au bout (compte de références 0),
+        la fenêtre hôte détruite (objets USER stables), et rien de plus grossier que les chiffres mesurés."""
+        O = self.O
+        import processus_essai
+        sortie = self.dossier / 'sortie-poignees.json'
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
+        env.update(MYPHOTOS_ESSAI_RACINE=str(RACINE), MYPHOTOS_ESSAI_SORTIE=str(sortie))
+        nom_bureau = f'MyPhotosPoignees{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        job = processus_essai.Job()
+        hproc = None
+        try:
+            _pid, hproc = O.lancer([sys.executable, str(self.dossier / 'enfant.py'), self.TITRE, str(self.propose),
+                                    'poignees', '40'], nom_bureau, str(self.dossier), env, job)
+            self.assertTrue(O.attendre_processus(hproc, 240), 'trop long')
+            self.assertEqual(O.code_sortie(hproc), 0)
+            d = json.loads(sortie.read_text(encoding='utf-8'))
+            self.assertEqual(d.get('chemins'), [None] * 40, d)
+            self.assertGreaterEqual(len(d['comptes_com']), 80)                 # la fenêtre et le dossier proposé…
+            self.assertEqual(set(d['comptes_com']), {0}, d['comptes_com'])     # … libérés jusqu'au bout
+            u = d['user'][9:]
+            self.assertLessEqual(max(u) - min(u), 10, d['user'])              # fenêtres hôtes détruites
+            h = d['poignees'][9:]
+            self.assertLess((h[-1] - h[0]) / (len(h) - 1), 25, d['poignees'])
             self.assertTrue(job.attendre_vide(10), O.du_job(job))
         finally:
             if hproc is not None and O.code_sortie(hproc) is None:
