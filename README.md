@@ -256,7 +256,7 @@ Pour chaque photo, le moteur estime la probabilité qu'elle corresponde à votre
 
 ### Mes photos sont sur un disque externe ou sur le réseau.
 
-Ajoutez le dossier comme les autres. Si le disque est débranché ou le dossier injoignable, MyPhotos garde ce qu'il en sait et reprend quand le dossier revient.
+Ajoutez le dossier comme les autres. Si le disque est débranché ou le dossier injoignable, MyPhotos garde ce qu'il en sait et reprend quand le dossier revient. Depuis la 0.4.0, il reconnaît aussi le disque lui-même (son numéro de série) : si un autre disque prend la même lettre, par exemple deux disques USB qui échangent leurs lettres, le dossier est simplement traité comme débranché, et rien n'est oublié. Un disque recopié ou cloné, qui porte les mêmes photos aux mêmes endroits, est reconnu et repris tel quel.
 
 ## Développement
 
