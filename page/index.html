@@ -441,7 +441,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 .r-fin { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .r-fin .note { margin: 0; }
 .r-fin .r-fermeture { flex-basis: 100%; }
-#r-raccourci { white-space: normal; max-width: 100%; text-align: left; }
+#r-raccourci, #r-aide { white-space: normal; max-width: 100%; text-align: left; }
 
 /* ------------------------------------------------ visionneuse */
 .visionneuse {
@@ -1026,6 +1026,11 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
         <button id="r-nv-verifier" class="bouton petit actualiser" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg><span>Rechercher une nouvelle version</span></button>
         <button id="r-nv-installer" class="bouton petit principal" type="button" hidden>Mettre à jour</button>
       </div>
+    </section>
+    <section aria-labelledby="r-t-aide">
+      <h3 id="r-t-aide">Besoin d’aide ?</h3>
+      <p id="r-aide-explication" class="note">Ce bouton copie un petit texte qui décrit MyPhotos et votre ordinateur. Collez-le (Ctrl+V) dans un e-mail ou un message WhatsApp à la personne qui vous aide. Il contient les noms de vos dossiers de photos : à n’envoyer qu’à quelqu’un de confiance.</p>
+      <button id="r-aide" class="bouton" type="button" aria-describedby="r-aide-explication"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Copier pour demander de l’aide</button>
     </section>
     <section class="r-fin">
       <button id="r-quitter" class="bouton danger" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Arrêter MyPhotos</button>
@@ -3910,6 +3915,20 @@ async function creerRaccourci(bouton) {
   }
 }
 
+// Réglages, « Copier pour demander de l'aide » (0.4.1) : le serveur compose le texte et le met dans le presse-papiers
+// de Windows (la page n'a pas besoin de l'API Clipboard, ni de voir le journal).
+async function copierAide(bouton) {
+  bouton.disabled = true;
+  try {
+    await api('/api/aide/copier', {});
+    annoncer('Texte copié. Collez-le (Ctrl+V) dans un e-mail ou un message à la personne qui vous aide.');
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+  } finally {
+    bouton.disabled = false;
+  }
+}
+
 // ---------------- changer de moteur
 async function ouvrirChoixMoteur() {
   const d = $('#moteurs');
@@ -4216,6 +4235,7 @@ function brancher() {
   $('#actualiser').addEventListener('click', actualiser);
   $('#r-changer').addEventListener('click', ouvrirChoixMoteur);
   $('#r-raccourci').addEventListener('click', (ev) => creerRaccourci(ev.currentTarget));
+$('#r-aide').addEventListener('click', (ev) => copierAide(ev.currentTarget));
   $('#r-quitter').addEventListener('click', quitter);
   for (const r of document.querySelectorAll('input[name="taille-texte"]')) {
     r.addEventListener('change', () => { if (r.checked) choisirTaille(r.value); });

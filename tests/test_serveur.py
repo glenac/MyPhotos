@@ -968,6 +968,16 @@ class TestReponses(EssaiServeur):
         finally:
             api('/api/taille-texte', {'taille': 'normale'})
 
+    def test_08_aide_protegee(self):
+        """« Copier pour demander de l'aide » (0.4.1) : POST protégé comme les autres. Seuls des refus sont essayés
+        ici : le serveur d'essai toucherait sinon le vrai presse-papiers (le texte est essayé dans TestSelection)."""
+        self.assertEqual(requete('POST', '/api/aide/copier', {})[0], 403)                       # sans X-MyPhotos
+        self.assertEqual(requete('POST', '/api/aide/copier', {},
+                                 {'X-MyPhotos': '1', 'Origin': 'http://evil.example'})[0], 403)
+        self.assertEqual(api('/api/aide/copier', {}, jeton=False)[0], 403)
+        self.assertEqual(api('/api/aide/copier')[0], 404)                                         # pas de GET
+        self.vivant()
+
 
 @unittest.skipUnless(PHOTOS and Path(PHOTOS).is_dir(), 'MYPHOTOS_ESSAI_PHOTOS : dossier d\'images publiques')
 class TestBoutEnBout(EssaiServeur):
@@ -1473,6 +1483,66 @@ class TestSelection(unittest.TestCase):
                 self.app.copier([self.ids['vert.jpg']])
         self.assertIn('occupé par un autre programme', str(e.exception))
         self.assertIn('exemple.exe', journal.output[0])                          # le journal dit qui le gardait
+
+    def test_copier_pour_demander_de_l_aide(self):
+        """0.4.1 : Réglages, « Copier pour demander de l'aide » : texte au presse-papiers (simulé ici) avec la version,
+        Windows, l'affichage, le moteur, les photos et les dossiers, l'analyse, la mise à jour et les 150 dernières
+        lignes du journal ; jamais le jeton, jamais une recherche tapée."""
+        jeton = 'Zq3' + 'x7Yb' * 10
+        (self.tmp / 'jeton').write_text(jeton, encoding='ascii')
+        journal_f = self.tmp / 'journal.log'
+        lignes = [f'2026-11-25 10:00:{i % 60:02d} INFO    myphotos.serveur : ligne {i}' for i in range(200)]
+        lignes[-3] = f'2026-11-25 10:00:00 INFO    myphotos.fenetre : page /?jeton={jeton} ouverte'
+        lignes[-2] = f'2026-11-25 10:00:00 INFO    myphotos.serveur : cookie myphotos-7796={jeton}'
+        lignes[-1] = f'2026-11-25 10:00:00 INFO    myphotos.serveur : jeton brut {jeton}'
+        journal_f.write_text('\n'.join(lignes) + '\n', encoding='utf-8')
+        (self.tmp / 'journal.log.1').write_text('ancienne ligne\n', encoding='utf-8')
+        recus = []
+        with mock.patch.object(self.serveur.config, 'JETON', self.tmp / 'jeton'), \
+                mock.patch.object(self.serveur.config, 'JOURNAL', journal_f), \
+                mock.patch.object(self.serveur, 'mettre_texte_au_presse_papiers', side_effect=recus.append), \
+                mock.patch.object(self.serveur, 'mettre_au_presse_papiers') as fichiers:
+            try:
+                self.app.chercher('anniversaire de mamie', 0, 10)
+            except self.serveur.Refus:
+                pass
+            r = self.app.copier_aide()
+        fichiers.assert_not_called()
+        self.assertEqual(len(recus), 1)
+        texte = recus[0]
+        self.assertTrue(r['ok'])
+        self.assertIn(f'MyPhotos {self.serveur.config.VERSION}', texte)
+        for attendu in ('Windows : ', 'Affichage : navigateur', 'Moteur : ', 'Photos : 4 dont', 'Dossiers suivis : 1',
+                        str(self.photos), 'Analyse : ', 'Mise à jour : ', 'Les 150 dernières lignes du journal',
+                        'ligne 196', 'ligne 50'):
+            self.assertIn(attendu, texte)
+        self.assertNotIn('ligne 49', texte)                  # 150 lignes, pas plus
+        self.assertNotIn('ancienne ligne', texte)            # la copie précédente seulement s'il en manque
+        self.assertNotIn(jeton, texte)
+        self.assertNotIn('anniversaire', texte)
+        # Presse-papiers occupé : refus lisible, rien de plus.
+        occupe = self.serveur.PressePapiersOccupe('presse-papiers gardé ouvert par exemple.exe')
+        with mock.patch.object(self.serveur.config, 'JOURNAL', self.tmp / 'absent.log'), \
+                mock.patch.object(self.serveur, 'mettre_texte_au_presse_papiers', side_effect=occupe), \
+                self.assertLogs('myphotos.serveur', 'WARNING'):
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.copier_aide()
+        self.assertEqual(e.exception.statut, 409)
+        self.assertIn('occupé par un autre programme', str(e.exception))
+        # Journal absent : le texte se copie quand même.
+        with mock.patch.object(self.serveur.config, 'JOURNAL', self.tmp / 'absent.log'), \
+                mock.patch.object(self.serveur, 'mettre_texte_au_presse_papiers', side_effect=recus.append):
+            self.app.copier_aide()
+        self.assertIn('(journal vide ou illisible)', recus[-1])
+
+    def test_texte_au_format_du_presse_papiers(self):
+        """CF_UNICODETEXT : UTF-16, fins de ligne de Windows, terminé par un zéro (fonction de Windows simulée)."""
+        poses = []
+        with mock.patch.object(self.serveur, '_remplir_presse_papiers',
+                               side_effect=lambda remplir, *a: remplir('u32', 'k32')), \
+                mock.patch.object(self.serveur, '_poser', side_effect=lambda u, k, f, o: poses.append((f, o))):
+            self.serveur.mettre_texte_au_presse_papiers('été\nligne 2\r\nfin')
+        self.assertEqual(poses, [(13, 'été\r\nligne 2\r\nfin\0'.encode('utf-16-le'))])
 
     # ---------------------------------------------------------------- copier dans un dossier
 

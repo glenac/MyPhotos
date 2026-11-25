@@ -682,6 +682,7 @@ class GardeDossiers:
 # ---------------------------------------------------------------- presse-papiers de Windows
 
 CF_HDROP = 15
+CF_UNICODETEXT = 13
 _GMEM = 0x0002 | 0x0040                    # GMEM_MOVEABLE | GMEM_ZEROINIT
 _HWND_MESSAGE = -3                         # fenêtre « message-only » : jamais affichée
 _DROPEFFECT_COPY = 1
@@ -691,6 +692,21 @@ PRESSE_PAPIERS_PAUSE_S = 0.05              # … espacés de 50 ms (5 s : un ges
 
 class PressePapiersOccupe(OSError):
     """Un autre programme garde le presse-papiers ouvert."""
+
+
+AIDE_LIGNES = 150                          # « Copier pour demander de l'aide » : dernières lignes du journal
+
+
+def _sur_aide(fonction):
+    """fonction(), ou None si elle échoue (le texte d'aide doit toujours pouvoir être copié)."""
+    try:
+        return fonction()
+    except Exception:
+        return None
+
+
+def _nombre_aide(n):
+    return f'{int(n or 0):,}'.replace(',', ' ')
 
 
 def _programme_de(fenetre):
@@ -753,6 +769,24 @@ def mettre_au_presse_papiers(chemins, essais=PRESSE_PAPIERS_ESSAIS, pause=PRESSE
 
     Une fenêtre invisible en est la propriétaire le temps de l'écriture, puis elle est détruite : les données restent,
     et aucun autre programme n'attendra jamais qu'elle réponde (elle n'a pas de boucle de messages)."""
+    def remplir(user32, kernel32):
+        _poser(user32, kernel32, CF_HDROP, dropfiles(chemins))
+        effet = user32.RegisterClipboardFormatW('Preferred DropEffect')
+        if effet:
+            _poser(user32, kernel32, effet, struct.pack('<I', _DROPEFFECT_COPY))
+    _remplir_presse_papiers(remplir, essais, pause)
+
+
+def mettre_texte_au_presse_papiers(texte, essais=PRESSE_PAPIERS_ESSAIS, pause=PRESSE_PAPIERS_PAUSE_S):
+    """Met ce texte dans le presse-papiers (CF_UNICODETEXT, fins de ligne de Windows) : un Ctrl+V le colle dans un
+    e-mail, WhatsApp ou un document (« Copier pour demander de l'aide », 0.4.1)."""
+    octets = (texte.replace('\r\n', '\n').replace('\n', '\r\n') + '\0').encode('utf-16-le')
+    _remplir_presse_papiers(lambda user32, kernel32: _poser(user32, kernel32, CF_UNICODETEXT, octets), essais, pause)
+
+
+def _remplir_presse_papiers(remplir, essais, pause):
+    """Ouvre le presse-papiers (réessaie s'il est tenu par un autre programme), le vide, puis remplir(user32,
+    kernel32) y pose les données ; voir mettre_au_presse_papiers."""
     if os.name != 'nt':
         raise OSError('presse-papiers de Windows indisponible')
     user32, kernel32 = _dll('user32'), _dll('kernel32')
@@ -769,10 +803,7 @@ def mettre_au_presse_papiers(chemins, essais=PRESSE_PAPIERS_ESSAIS, pause=PRESSE
         try:
             if not user32.EmptyClipboard():
                 raise ctypes.WinError(ctypes.get_last_error())
-            _poser(user32, kernel32, CF_HDROP, dropfiles(chemins))
-            effet = user32.RegisterClipboardFormatW('Preferred DropEffect')
-            if effet:
-                _poser(user32, kernel32, effet, struct.pack('<I', _DROPEFFECT_COPY))
+            remplir(user32, kernel32)
         finally:
             user32.CloseClipboard()
     finally:
@@ -788,25 +819,41 @@ class PressePapiers:
         self._verrou = threading.Lock()
 
     def copier(self, chemins, delai=30):
+        """Fichiers (comme « Copier » dans l'Explorateur) ; rend leur nombre."""
+        chemins = list(chemins)
+
+        def faire():
+            mettre_au_presse_papiers(chemins)
+            return len(chemins)
+        return self._demander(faire, delai)
+
+    def copier_texte(self, texte, delai=30):
+        """Texte (CF_UNICODETEXT) ; rend son nombre de caractères."""
+        def faire():
+            mettre_texte_au_presse_papiers(texte)
+            return len(texte)
+        return self._demander(faire, delai)
+
+    def _demander(self, faire, delai):
         with self._verrou:
             if self._fil is None or not self._fil.is_alive():
                 self._fil = threading.Thread(target=self._boucle, name='myphotos-presse-papiers', daemon=True)
                 self._fil.start()
         reponse = concurrent.futures.Future()
-        self._demandes.put((reponse, list(chemins)))
+        self._demandes.put((reponse, faire))
         return reponse.result(timeout=delai)
 
     def _boucle(self):
         while True:
-            reponse, chemins = self._demandes.get()
+            reponse, faire = self._demandes.get()
             if not reponse.set_running_or_notify_cancel():
                 continue
             try:
-                mettre_au_presse_papiers(chemins)
+                r = faire()
             except BaseException as e:
                 reponse.set_exception(e)
             else:
-                reponse.set_result(len(chemins))
+                reponse.set_result(r)
 
 
 # ---------------------------------------------------------------- Corbeille de Windows
@@ -2425,6 +2472,82 @@ class Application:
             'taille_texte': self.taille_texte(),
         }
 
+    # ------------------------------------------------ « Copier pour demander de l'aide » (0.4.1)
+
+    def texte_aide(self):
+        """Message à coller dans un e-mail ou WhatsApp pour demander de l'aide : version, Windows, affichage, moteur,
+        photos et dossiers suivis, analyse, mise à jour, puis les AIDE_LIGNES dernières lignes du journal. Jamais une
+        recherche (le journal n'en contient pas), jamais le jeton (masqué ici encore, comme dans le journal). Contient
+        les noms des dossiers de photos : la page le dit avant la copie."""
+        e = self.etat()
+        lignes = ["Bonjour, j'ai besoin d'aide avec MyPhotos. Voici ce qu'il indique :", '',
+                  f'MyPhotos {config.VERSION}']
+        s = _sur_aide(materiel._systeme) or {}
+        nom = s.get('edition') or s.get('nom') or 'Windows (version inconnue)'
+        details = ', '.join(x for x in (
+            s.get('mise_a_jour'), f"build {s['build']}.{s.get('revision') or 0}" if s.get('build') else None,
+            s.get('architecture')) if x)
+        lignes.append(f'Windows : {nom}' + (f' ({details})' if details else ''))
+        lignes.append('Affichage : ' + {fenetre.FENETRE: 'fenêtre de MyPhotos', fenetre.EDGE: 'Microsoft Edge (mode '
+                                        'application)', fenetre.NAVIGATEUR: 'navigateur'}.get(e['mode'], str(e['mode'])))
+        m = e['moteur']
+        if m:
+            lignes.append(f"Moteur : {m['nom']} ({m['cle']}), {m.get('materiel') or 'matériel inconnu'}"
+                          + ('' if m.get('pret') else ', en préparation'))
+        else:
+            t = e['telechargement'] or {}
+            lignes.append('Moteur : aucun' + (f" (téléchargement : {t.get('etat')})" if t.get('etat') else ''))
+        p = e['photos']
+        lignes.append(f"Photos : {_nombre_aide(p['total'])} dont {_nombre_aide(p['analysees'])} analysées, "
+                      f"{_nombre_aide(p['a_faire'])} à analyser, {_nombre_aide(p['erreurs'])} illisibles, "
+                      f"{_nombre_aide(p['indisponibles'])} sur un disque débranché")
+        dossiers = _sur_aide(self.base.dossiers) or []
+        lignes.append(f'Dossiers suivis : {len(dossiers)}')
+        for d in dossiers:
+            lignes.append(f"  - {d['chemin']} : {_nombre_aide(d['photos'])} photos"
+                          + ('' if d['disponible'] else ', injoignable'))
+        a = e['analyse'] or {}
+        lignes.append(f"Analyse : {a.get('phase') or 'arrêtée'}" + (f" ({a['message']})" if a.get('message') else ''))
+        u = e['mise_a_jour'] or {}
+        maj = {True: 'acceptée', False: 'refusée'}.get(u.get('accord'), 'pas encore demandée')
+        lignes.append(f"Mise à jour : vérification {maj}, état {u.get('etat') or 'inconnu'}"
+                      + (f", version {u['version']} proposée" if u.get('version') else '')
+                      + (f" ({u['message']})" if u.get('message') else ''))
+        lignes += ['', f'--- Les {AIDE_LIGNES} dernières lignes du journal ---']
+        lignes += self._fin_du_journal(AIDE_LIGNES) or ['(journal vide ou illisible)']
+        texte = '\n'.join(lignes) + '\n'
+        jeton = _sur_aide(lambda: Path(config.JETON).read_text(encoding='ascii').strip())
+        texte = _FormatSansJeton._MOTIF.sub(r'\1…', texte)
+        if jeton and len(jeton) >= 16:
+            texte = texte.replace(jeton, '…')
+        return texte
+
+    @staticmethod
+    def _fin_du_journal(n):
+        """Les n dernières lignes du journal (le fichier courant, puis la copie précédente s'il en manque)."""
+        lignes = []
+        for chemin in (Path(f'{config.JOURNAL}.1'), Path(config.JOURNAL)):
+            try:
+                lignes += chemin.read_text(encoding='utf-8', errors='replace').splitlines()
+            except OSError:
+                pass
+        return lignes[-n:]
+
+    def copier_aide(self):
+        """POST /api/aide/copier : met texte_aide() dans le presse-papiers de Windows (texte)."""
+        texte = self.texte_aide()
+        try:
+            self.presse_papiers.copier_texte(texte)
+        except PressePapiersOccupe as e:
+            journal.warning('%s', e)
+            raise Refus('Le presse-papiers de Windows est occupé par un autre programme : réessayez dans un instant.',
+                        409)
+        except (OSError, concurrent.futures.TimeoutError) as e:
+            journal.warning('presse-papiers : %r', e)
+            raise Refus('Windows n\'a pas pu copier ce texte. Réessayez dans un instant.', 409)
+        journal.info('texte pour demander de l\'aide copié dans le presse-papiers (%d lignes)', texte.count('\n'))
+        return {'ok': True, 'lignes': texte.count('\n')}
+
     def action_mise_a_jour(self, action, corps):
         """POST /api/mise-a-jour/<action> : reglage {oui}, verifier, installer, annuler, reporter, vu, page."""
         g = self.mises_a_jour
@@ -3589,6 +3712,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             r = app.regler_taille_texte(corps.get('taille'))
         elif chemin.startswith('/api/mise-a-jour/') and chemin.count('/') == 3:
             r = app.action_mise_a_jour(chemin.rsplit('/', 1)[1], corps)
+        elif chemin == '/api/aide/copier':
+            r = app.copier_aide()
         elif chemin == '/api/quitter':
             journal.info('arrêt demandé par la page')
             app.arreter()
