@@ -1186,12 +1186,21 @@ def _port_libre(port):
 
 
 ENFANT_CHOIX = '''\
-"""Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON."""
-import json, os, sys
+"""Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON. Avec un 3e argument
+(délai en secondes) : deux demandes de serveur.ChoixDossier, laissées sans réponse au-delà de ce délai."""
+import json, os, sys, time
 sys.path.insert(0, os.environ['MYPHOTOS_ESSAI_RACINE'])
-from myphotos import dialogue
+from myphotos import dialogue, serveur
 try:
-    sortie = {'chemin': dialogue.ouvrir_devant(sys.argv[1], sys.argv[2])}
+    if len(sys.argv) > 3:
+        choix = serveur.ChoixDossier()
+        sortie = {'demandes': []}
+        for _ in range(2):
+            debut = time.monotonic()
+            r = choix.demander(initial=sys.argv[2], delai=float(sys.argv[3]), titre=sys.argv[1])
+            sortie['demandes'].append({'chemin': r, 'duree_s': round(time.monotonic() - debut, 1)})
+    else:
+        sortie = {'chemin': dialogue.ouvrir_devant(sys.argv[1], sys.argv[2])}
 except Exception as e:
     sortie = {'erreur': repr(e)}
 with open(os.environ['MYPHOTOS_ESSAI_SORTIE'], 'w', encoding='utf-8') as f:
@@ -1290,6 +1299,49 @@ class TestChoixDossierReel(unittest.TestCase):
         self.assertLess(abs((x1 + x2) // 2 - (g + d) // 2), (d - g) // 8, c)   # … et au milieu
         self.assertLess(abs((y1 + y2) // 2 - (h + b) // 2), (b - h) // 8, c)
         self.assertEqual(c['code'], 0)
+
+    def test_delai_depasse_la_fenetre_se_ferme(self):
+        """Relecture adverse (déjà en 0.3.0) : au bout du délai, la vraie fenêtre est fermée comme par « Annuler »
+        (avant, elle restait ouverte et le choix fait ensuite était perdu) ; la demande suivante s'ouvre aussitôt,
+        sans « déjà ouverte ». Rien n'est touché par l'essai : elle se ferme d'elle-même."""
+        O = self.O
+        import processus_essai
+        sortie = self.dossier / 'sortie-delai.json'
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
+        env.update(MYPHOTOS_ESSAI_RACINE=str(RACINE), MYPHOTOS_ESSAI_SORTIE=str(sortie))
+        nom_bureau = f'MyPhotosChoixDelai{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        fil = O.FilBureau(hbureau)
+        job = processus_essai.Job()
+        hproc = None
+        try:
+            _pid, hproc = O.lancer([sys.executable, str(self.dossier / 'enfant.py'), self.TITRE, str(self.propose),
+                                    '3'], nom_bureau, str(self.dossier), env, job)
+            vues = set()
+
+            def boite():
+                return next((f['hwnd'] for f in fil.faire(lambda: O.fenetres(set(job.pids())))
+                             if f['classe'] == '#32770' and f['visible']), None)
+            fin = time.monotonic() + 60
+            while O.code_sortie(hproc) is None and time.monotonic() < fin:
+                h = boite()
+                if h:
+                    vues.add(h)
+                time.sleep(0.2)
+            self.assertTrue(O.attendre_processus(hproc, 5), 'les fenêtres ne se ferment pas d\'elles-mêmes')
+            self.assertEqual(O.code_sortie(hproc), 0)
+            self.assertEqual(len(vues), 2, vues)                                # deux fenêtres, l'une après l'autre
+            d = json.loads(sortie.read_text(encoding='utf-8'))
+            self.assertEqual([x['chemin'] for x in d['demandes']], [None, None], d)
+            for x in d['demandes']:
+                self.assertTrue(3 <= x['duree_s'] < 3 + 6, d)                   # délai, puis fermeture (5 s au plus)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
+        finally:
+            if hproc is not None and O.code_sortie(hproc) is None:
+                job.terminer()
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
 
     def test_annuler_puis_choisir(self):
         sortie, constats = self.ouvrir('annuler')

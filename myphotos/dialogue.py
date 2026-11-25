@@ -51,6 +51,7 @@ WS_EX_TOPMOST, WS_EX_LAYERED = 0x8, 0x80000
 LWA_ALPHA = 0x2
 SW_SHOWNA = 8
 WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
+WM_CLOSE = 0x0010
 IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
 SM_CXSMICON, SM_CYSMICON, SM_CXICON, SM_CYICON = 49, 50, 11, 12
 SPI_GETWORKAREA = 0x0030
@@ -58,6 +59,7 @@ MONITOR_DEFAULTTONEAREST = 2
 DPI_PAR_ECRAN_V2 = -4                                  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 
 _DLL = {}
+_ENUM_FENETRES = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 
 def _dll(nom):
@@ -76,8 +78,10 @@ def _dll(nom):
                        'AttachThreadInput': ([u, u, b], b), 'SetForegroundWindow': ([v], b),
                        'BringWindowToTop': ([v], b), 'SetThreadDpiAwarenessContext': ([v], v),
                        'MonitorFromPoint': ([wintypes.POINT, u], v),
+                       'EnumThreadWindows': ([u, _ENUM_FENETRES, wintypes.LPARAM], b),
+                       'GetClassNameW': ([v, w, i], i), 'PostMessageW': ([v, u, wintypes.WPARAM, wintypes.LPARAM], b),
                        'GetMonitorInfoW': ([v, ctypes.POINTER(_MONITORINFO)], b)},
-            'kernel32': {'GetCurrentThreadId': ([], u)},
+            'kernel32': {'GetCurrentThreadId': ([], u), 'GetCurrentProcessId': ([], u)},
             'shell32': {'SHCreateItemFromParsingName': ([w, v, ctypes.POINTER(_GUID), ctypes.POINTER(v)],
                                                         ctypes.c_long)},
             'ole32': {'CoInitializeEx': ([v, u], ctypes.c_long), 'CoUninitialize': ([], None)},
@@ -256,6 +260,28 @@ def premier_plan(hwnd):
     finally:
         if attache:
             u32.AttachThreadInput(moi, fil_devant, False)
+
+
+def fermer(fil):
+    """Ferme, comme « Annuler » (WM_CLOSE), les boîtes de dialogue (#32770) de CE processus ouvertes par ce fil
+    (identifiant Windows, threading.get_native_id) : la fenêtre « Choisir un dossier » restée ouverte au-delà du délai
+    (serveur.ChoixDossier), et une question qu'elle poserait par-dessus. Depuis n'importe quel fil. Rend leur nombre."""
+    u32 = _dll('user32')
+    moi = _dll('kernel32').GetCurrentProcessId()
+    boites = []
+
+    def rappel(hwnd, _donnee):
+        pid = wintypes.DWORD()
+        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        classe = ctypes.create_unicode_buffer(16)
+        u32.GetClassNameW(hwnd, classe, 16)
+        if pid.value == moi and classe.value == '#32770':         # jamais la fenêtre d'un autre programme
+            boites.append(hwnd)
+        return True
+    u32.EnumThreadWindows(int(fil), _ENUM_FENETRES(rappel), 0)
+    for h in boites:
+        u32.PostMessageW(h, WM_CLOSE, 0, 0)
+    return len(boites)
 
 
 class Sta:

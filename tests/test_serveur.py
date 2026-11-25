@@ -2389,11 +2389,46 @@ class TestChoixDossier(unittest.TestCase):
         self.assertIsNone(self.appels[-1][2])
 
     def test_delai_depasse(self):
-        """Fenêtre laissée ouverte au-delà du délai : la requête répond « annulé » ; la fenêtre, toujours ouverte, en
-        refuse une seconde jusqu'à sa fermeture."""
-        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
-        self.reponses = ['E:\\Tard']
+        """Relecture adverse (déjà en 0.3.0) : au bout du délai, la requête répondait « annulé » mais la fenêtre
+        restait ouverte, et le dossier choisi ensuite était perdu. Désormais elle est fermée comme par « Annuler »,
+        par son fil (dialogue.fermer) ; la demande suivante est acceptée aussitôt."""
+        fermes = []
+
+        def fermer(fil):
+            fermes.append(fil)
+            self.reponses[:] = [None]                       # la fenêtre de Windows rend « annulé »
+            self.relacher.set()
+            return 1
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=fermer)
+        self.reponses = ['E:\Tard']
         self.assertIsNone(choix.demander(delai=0.2))
+        self.assertEqual(len(set(fermes)), 1)
+        self.assertIsInstance(fermes[0], int)               # le fil de la fenêtre (identifiant Windows)
+        self.assertFalse(choix._ouverte.is_set())
+        self.relacher.clear()
+        self.reponses = ['E:\Ensuite']
+        threading.Timer(0.2, self.relacher.set).start()
+        self.assertEqual(choix.demander(delai=10), 'E:\Ensuite')   # la suivante, sans « déjà ouverte »
+
+    def test_choix_fait_au_moment_du_delai(self):
+        """Dossier choisi à l'instant où le délai expire : il est rendu, pas perdu."""
+        def fermer(_fil):
+            self.relacher.set()                             # la fenêtre rend le dossier choisi, pas « annulé »
+            return 1
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=fermer)
+        self.reponses = ['E:\Juste à temps']
+        self.assertEqual(choix.demander(delai=0.2), 'E:\Juste à temps')
+
+    def test_fenetre_qui_ne_se_ferme_pas(self):
+        """Elle ne se ferme pas (FERMETURE_S) : la page l'apprend (« toujours ouverte », 409), et en refuse une
+        seconde jusqu'à sa fermeture."""
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=lambda _fil: 0)
+        self.reponses = ['E:\Tard']
+        with mock.patch.object(self.serveur, 'FERMETURE_S', 0.3):
+            with self.assertRaises(self.serveur.Refus) as e:
+                choix.demander(delai=0.2)
+        self.assertEqual(e.exception.statut, 409)
+        self.assertIn('toujours ouverte', str(e.exception))
         with self.assertRaises(self.serveur.Refus):
             choix.demander()
         self.relacher.set()

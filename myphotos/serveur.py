@@ -174,6 +174,7 @@ MATERIEL_VALIDITE_S = 600
 COTE_CONVERSION = 2560             # TIFF : converti en JPEG de 2560 px au plus pour la visionneuse
 MARGE_DISQUE = 200 * 1024 * 1024
 CHOIX_DOSSIER_S = 900              # la fenêtre « Choisir un dossier » attend au plus 15 minutes
+FERMETURE_S = 5.0                  # … puis elle est fermée (comme « Annuler ») ; 5 s au plus pour qu'elle le soit
 ATTENTE_ARRET_S = 60               # relance pendant qu'une MyPhotos s'arrête : on attend qu'elle libère le port
 PORT_LIBERE_S = 10                 # port tenu sans réponse (MyPhotos qui finit de s'arrêter) : on réessaie 10 s
 ORDRE_MOTEURS = ('rapide', 'base', 'precis', 'tres_precis')
@@ -1116,12 +1117,19 @@ class ChoixDossier:
     au-dessus, posée au milieu de la fenêtre de MyPhotos (zone : celle d'Edge, donnée par fenetre.FenetreEdge) quand
     on la connaît. Une seule à la fois ; annuler renvoie None. Depuis la 0.4.0, sans tkinter ni Tcl/Tk.
 
+    Délai dépassé (CHOIX_DOSSIER_S) : la fenêtre est fermée comme par « Annuler » (dialogue.fermer, par son fil),
+    pour qu'aucun choix fait ensuite ne se perde ; un choix fait à cet instant est rendu. Si elle ne se ferme pas
+    (FERMETURE_S), la page l'apprend (« toujours ouverte », 409). Avant : la requête répondait « annulé », la fenêtre
+    restait ouverte, et le dossier choisi ensuite était perdu.
+
     Modes « edge » et « navigateur » seulement : dans la fenêtre de MyPhotos, fenetre.ChoixDossierFenetre la
     remplace (la même fenêtre de Windows, qui appartient alors à la fenêtre MyPhotos)."""
 
-    def __init__(self, ouvrir=None):
+    def __init__(self, ouvrir=None, fermer=None):
         self._ouvrir = ouvrir or dialogue.ouvrir_devant    # (titre, initial, zone) -> chemin ou None
+        self._fermer = fermer or dialogue.fermer           # (identifiant Windows du fil) -> fenêtres fermées
         self.zone = None                                   # () -> (gauche, haut, droite, bas) ou None
+        self._fil_id = None                                # fil de la fenêtre ouverte (identifiant Windows)
         self._ouverte = threading.Event()
         self._verrou = threading.Lock()
 
@@ -1141,10 +1149,28 @@ class ChoixDossier:
         try:
             return reponse.result(timeout=delai)
         except concurrent.futures.TimeoutError:
-            return None
+            return self._expirer(reponse, delai)
+
+    def _expirer(self, reponse, delai):
+        journal.info('fenêtre « Choisir un dossier » ouverte depuis %d s : fermée', delai)
+        fin = time.monotonic() + FERMETURE_S
+        while True:
+            fil = self._fil_id
+            if fil:
+                try:
+                    self._fermer(fil)
+                except Exception:
+                    journal.debug('fenêtre « Choisir un dossier » impossible à fermer', exc_info=True)
+            try:
+                return reponse.result(timeout=0.25)        # fermée : None ; choisie à l'instant : le dossier
+            except concurrent.futures.TimeoutError:
+                if time.monotonic() >= fin:
+                    raise Refus("La fenêtre de choix d'un dossier est toujours ouverte : choisissez-y un dossier ou "
+                                "fermez-la, puis réessayez.", 409)
 
     def _fil(self, reponse, initial, titre):
         resultat = erreur = None
+        self._fil_id = threading.get_native_id()
         try:
             zone = None
             if self.zone is not None:
@@ -1158,6 +1184,7 @@ class ChoixDossier:
             journal.exception('fenêtre de choix de dossier')
             erreur = Refus("La fenêtre de choix d'un dossier n'a pas pu s'ouvrir.", 503)
         # La fenêtre est fermée avant que la réponse parte : la demande suivante est acceptée.
+        self._fil_id = None
         self._ouverte.clear()
         if erreur is not None:
             reponse.set_exception(erreur)
