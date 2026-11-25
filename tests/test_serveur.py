@@ -2055,9 +2055,19 @@ class TestDossiersEtActualiser(unittest.TestCase):
             os.replace(self.photos / 'Fonds d’écran' / 'f.jpg', self.photos / 'Vacances' / 'f.jpg')  # existant
             os.replace(self.photos / 'Vacances' / 'b.jpg', self.photos / 'Vacances' / 'Coucher de soleil.jpg')
             self.fichiers['Captures d\u2019écran/c1.png'].unlink()                               # vraiment supprimée
-            for nom in ('a.jpg', 'Fonds d’écran/f.jpg', 'Vacances/b.jpg', 'Captures d\u2019écran/c1.png'):
-                self.assertEqual(self.app.verifier_photo(ids[nom])['etat'], 'deplacee', nom)
-                self.assertIsNotNone(self.app.base.photo(ids[nom]), nom)
+            # Le tour demandé par la visionneuse est retenu le temps des quatre vérifications, puis transmis : sinon,
+            # sur un PC chargé, il pouvait finir avant la 4e et oublier (à juste titre) la photo supprimée, que
+            # l'essai croyait encore là (vu le 25/11/2026 dans un passage complet des essais).
+            demandes = []
+            ix.relancer = lambda erreurs=False, dossiers=None: demandes.append(dossiers)
+            try:
+                for nom in ('a.jpg', 'Fonds d’écran/f.jpg', 'Vacances/b.jpg', 'Captures d\u2019écran/c1.png'):
+                    self.assertEqual(self.app.verifier_photo(ids[nom])['etat'], 'deplacee', nom)
+                    self.assertIsNotNone(self.app.base.photo(ids[nom]), nom)
+            finally:
+                del ix.relancer                                  # la vraie méthode de l'indexeur
+            self.assertEqual(demandes, [[d['id']]] * 4)          # un tour de CE dossier seulement, à chaque fois
+            ix.relancer(dossiers=[d['id']])
             self.assertTrue(ix.attendre(60), 'tour du dossier trop long')
             for nom, ici in (('a.jpg', 'Plage/a.jpg'), ('Fonds d’écran/f.jpg', 'Vacances/f.jpg'),
                              ('Vacances/b.jpg', 'Vacances/Coucher de soleil.jpg')):
