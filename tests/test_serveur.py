@@ -1321,6 +1321,26 @@ class TestSelection(unittest.TestCase):
         self.assertIsNotNone(b.photo(self.ids['bleu.png']))
         self.assertTrue(self.fichiers['bleu.png'].exists())
 
+    def test_selection_ancienne_jamais_une_autre_photo(self):
+        """Une sélection restée dans la page désigne ses photos par leur identifiant. Une photo supprimée dans
+        l'Explorateur est oubliée par l'inventaire, puis une nouvelle photo arrive : elle ne reprend jamais cet
+        identifiant, et « Mettre à la Corbeille » sur l'ancienne sélection ne l'envoie pas à la Corbeille à sa place
+        (0.3.0 : SQLite redonnait le plus haut identifiant libéré, et la nouvelle photo partait)."""
+        from PIL import Image
+        dernier = max(self.ids.values())
+        nom = next(n for n, i in self.ids.items() if i == dernier)
+        self.fichiers[nom].unlink()
+        self.app.base.oublier_photos([dernier])                                 # l'inventaire l'oublie
+        nouvelle = self.photos / 'nouvelle.jpg'
+        Image.new('RGB', (160, 120), (90, 90, 90)).save(nouvelle)
+        self.assertNotEqual(self.ajouter([nouvelle])['nouvelle.jpg'], dernier)
+        infos, mettre = self.corbeille_simulee()
+        with infos, mettre:
+            r = self.app.supprimer([dernier], True)
+        self.assertEqual((r['supprimees'], r['refusees']), ([], [{'id': dernier, 'raison': self.serveur.INTROUVABLE}]))
+        self.assertEqual(self.envois, [])
+        self.assertTrue(nouvelle.exists())
+
     def test_disque_sans_corbeille(self):
         infos, mettre = self.corbeille_simulee(ok=False)
         with infos, mettre as m:

@@ -410,6 +410,33 @@ class TestBase(EssaiAvecImages):
         self.assertEqual(problemes, [])
         self.assertEqual(self.base.compter()['analysees'], self.ok())
 
+    def test_identifiants_jamais_redonnes(self):
+        """Une photo oubliée ne laisse jamais son identifiant à une autre (SQLite redonnait le plus haut identifiant
+        libéré) : la page, les doublons et le cache des miniatures désignent les photos par leur identifiant. Le plus
+        haut identifiant donné est gardé dans meta ; une base 0.3.0 (sans cette clé) repart du plus haut présent."""
+        d = self.base.ajouter_dossier(self.photos)
+        ligne = lambda nom: (str(self.photos / nom), 1, 1, None)              # noqa: E731
+        self.base.ajouter_photos(d['id'], [ligne('a.jpg'), ligne('b.jpg'), ligne('c.jpg')])
+        ids = {os.path.basename(ch): v[0] for ch, v in self.base.connus(d['id']).items()}
+        self.base.oublier_photos([ids['c.jpg'], ids['b.jpg']])                # les plus hauts identifiants
+        self.base.ajouter_photos(d['id'], [ligne('d.jpg')])
+        n = self.base.connus(d['id'])[str(self.photos / 'd.jpg')][0]
+        self.assertGreater(n, ids['c.jpg'])
+        # Fiche vierge supprimée par un déplacement (deplacer_photos) : son identifiant n'est pas redonné non plus.
+        self.base.ajouter_photos(d['id'], [ligne('e.jpg')])
+        e = self.base.connus(d['id'])[str(self.photos / 'e.jpg')][0]
+        self.base.deplacer_photos([(ids['a.jpg'], str(self.photos / 'e.jpg'))])
+        self.base.fermer()
+        self.base = Base(self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db')
+        self.base.ajouter_photos(d['id'], [ligne('f.jpg')])
+        self.assertGreater(self.base.connus(d['id'])[str(self.photos / 'f.jpg')][0], e)
+        # Ce que la 0.3.0 laisse (pas de clé dans meta) : on repart du plus haut identifiant présent.
+        with self.base._transaction() as c:
+            c.execute("DELETE FROM meta WHERE cle = 'photo_id_max'")
+        haut = max(v[0] for v in self.base.connus(d['id']).values())
+        self.base.ajouter_photos(d['id'], [ligne('g.jpg')])
+        self.assertEqual(self.base.connus(d['id'])[str(self.photos / 'g.jpg')][0], haut + 1)
+
 
 class TestParcours(EssaiAvecImages):
 

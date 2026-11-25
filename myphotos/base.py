@@ -806,7 +806,13 @@ class Base:
             'SELECT id, chemin, taille, modifie FROM photos WHERE dossier_id = ?', (dossier_id,))}
 
     def ajouter_photos(self, dossier_id, lignes):
-        """Nouvelles photos [(chemin, taille, modifie, date_fichier)]. Renvoie le nombre ajouté."""
+        """Nouvelles photos [(chemin, taille, modifie, date_fichier)]. Renvoie le nombre ajouté.
+
+        Chaque photo reçoit un identifiant jamais donné auparavant. Laissé à lui-même, SQLite redonne le plus haut
+        identifiant libéré (photo oubliée, fiche vierge d'un déplacement) : une sélection restée dans la page, un groupe
+        de doublons ou une miniature en cache désignaient alors une AUTRE photo (et « Mettre à la Corbeille » l'aurait
+        envoyée à la Corbeille). Le plus haut identifiant donné est gardé dans meta (photo_id_max) : une 0.3.0 l'ignore,
+        et une base 0.3.0, qui n'en a pas, repart du plus haut identifiant présent."""
         quand = maintenant()
         with self._transaction() as c:
             if not c.execute('SELECT 1 FROM dossiers WHERE id = ?', (dossier_id,)).fetchone():
@@ -816,11 +822,21 @@ class Base:
                                                             (dossier_id,))]
             if exclus:
                 lignes = [x for x in lignes if not any(dedans(cle_chemin(x[0]), kx) for kx in exclus)]
+            if not lignes:
+                return 0
+            m = c.execute("SELECT valeur FROM meta WHERE cle = 'photo_id_max'").fetchone()
+            plancher = max(int(m[0] or 0) if m else 0,
+                           c.execute('SELECT COALESCE(MAX(id), 0) FROM photos').fetchone()[0],
+                           c.execute('SELECT COALESCE(MAX(id), 0) FROM mini.miniatures').fetchone()[0])
             avant = c.total_changes
-            c.executemany('INSERT INTO photos(chemin, dossier_id, taille, modifie, date_fichier, vu) '
-                          'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chemin) DO NOTHING',
-                          [(ch, dossier_id, t, m, df, quand) for ch, t, m, df in lignes])
-            return c.total_changes - avant
+            c.executemany('INSERT INTO photos(id, chemin, dossier_id, taille, modifie, date_fichier, vu) '
+                          'VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chemin) DO NOTHING',
+                          [(plancher + 1 + i, ch, dossier_id, t, m, df, quand)
+                           for i, (ch, t, m, df) in enumerate(lignes)])
+            ajoutees = c.total_changes - avant
+            c.execute("INSERT INTO meta(cle, valeur) VALUES ('photo_id_max', ?) "
+                      'ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur', (plancher + len(lignes),))
+            return ajoutees
 
     def marquer_modifiees(self, lignes):
         """Fichiers changés [(id, taille, modifie, date_fichier)] : à analyser de nouveau. La miniature reste
