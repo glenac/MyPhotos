@@ -154,6 +154,7 @@ PORT_PRIS = ('MyPhotos ne peut pas démarrer : le port {port} est déjà utilis�
 PAGE_REFUS = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
               f'<p>{JETON_REFUSE}</p></html>').encode('utf-8')
 _JETON = re.compile(r'[A-Za-z0-9_-]{32,128}')
+JETON_ESSAIS, JETON_PAUSE_S = 20, 0.05     # fichier « jeton » lu à l'instant par une relance : 1 s pour le remplacer
 PAGES = ('/', '/index.html')
 CORPS_MAX = 64 * 1024              # corps JSON d'un POST
 LISTE_MAX = 500                    # photos par page de résultats
@@ -1004,10 +1005,30 @@ def creer_jeton(chemin=None):
     try:
         chemin.parent.mkdir(parents=True, exist_ok=True)
         provisoire.write_text(jeton, encoding='ascii')
-        os.replace(provisoire, chemin)
+        remplacer_fichier(provisoire, chemin)
     except OSError:
         journal.warning('jeton d\'accès impossible à écrire dans les données : une relance ne rouvrira pas la page')
+        try:
+            provisoire.unlink(missing_ok=True)           # pas de jeton qui traîne à côté
+        except OSError:
+            pass
     return jeton
+
+
+def remplacer_fichier(source, cible, essais=None, pause=None):
+    """os.replace, réessayé un moment (JETON_ESSAIS × JETON_PAUSE_S) : Windows refuse de remplacer un fichier qu'un
+    autre programme lit à cet instant (une relance qui lit le jeton, un antivirus). Relecture adverse de la 0.4.0 :
+    sans cela, l'ancien jeton restait dans le fichier, et chaque relance de la séance se croyait face à un autre
+    compte."""
+    essais = JETON_ESSAIS if essais is None else essais
+    pause = JETON_PAUSE_S if pause is None else pause
+    for i in range(max(1, essais)):
+        try:
+            return os.replace(source, cible)
+        except PermissionError:
+            if i >= essais - 1:
+                raise
+            time.sleep(pause)
 
 
 def lire_jeton(chemin=None):

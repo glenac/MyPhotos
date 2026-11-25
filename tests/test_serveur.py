@@ -543,6 +543,38 @@ class TestJetonFonctions(unittest.TestCase):
             with mock.patch.object(Path, 'write_text', side_effect=PermissionError('refusé')):
                 self.assertRegex(serveur.creer_jeton(Path(d) / 'autre'), r'^[A-Za-z0-9_-]{43}$')
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_jeton_lu_pendant_son_remplacement(self):
+        """Relecture adverse de la 0.4.0 : une relance lit « jeton » à l'instant où la MyPhotos qui démarre le remplace,
+        et Windows refuse le remplacement. Avant : l'ancien jeton restait, et chaque relance de la séance se croyait
+        face à un autre compte. Le remplacement est réessayé (1 s) : le nouveau jeton est écrit dès la fin de la
+        lecture."""
+        from myphotos import serveur
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            ancien = serveur.creer_jeton(chemin)
+            lecture = open(chemin, encoding='ascii')
+            minuteur = threading.Timer(0.3, lecture.close)
+            minuteur.start()
+            try:
+                nouveau = serveur.creer_jeton(chemin)
+            finally:
+                minuteur.join(5)
+                lecture.close()
+            self.assertNotEqual(nouveau, ancien)
+            self.assertEqual(serveur.lire_jeton(chemin), nouveau)
+            # Lecture tenue plus longtemps : MyPhotos démarre quand même (jeton rendu), l'ancien reste dans le fichier,
+            # et aucun jeton ne traîne dans un « .part ».
+            lecture = open(chemin, encoding='ascii')
+            try:
+                with mock.patch.object(serveur, 'JETON_PAUSE_S', 0.01):
+                    troisieme = serveur.creer_jeton(chemin)
+            finally:
+                lecture.close()
+            self.assertRegex(troisieme, r'^[A-Za-z0-9_-]{43}$')
+            self.assertEqual(serveur.lire_jeton(chemin), nouveau)
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['jeton'])
+
     def test_comparaison(self):
         from myphotos import serveur
         j = 'a' * 43
