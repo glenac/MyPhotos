@@ -1120,6 +1120,24 @@ class TestPage(unittest.TestCase):
                         "E.serveur.mode === 'fenetre'"):
             self.assertIn(attendu, page)
 
+    def test_aucune_navigation_sortante(self):
+        """Relecture adverse de la 0.4.0 : le cookie du jeton part vers tous les ports de 127.0.0.1. En mode Edge
+        (profil à part), aucune navigation ne doit quitter la page : aucun lien vers une autre adresse, aucun
+        window.open, location.assign/replace ni formulaire envoyé ; les liens des miniatures restent dans la page
+        (« # ») ; « Nouveautés » et « Télécharger » passent par le serveur ; un dépôt (lien glissé) est refusé en mode
+        Edge comme dans la fenêtre."""
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        import re
+        for motif in (r'href\s*=\s*["\'](?!#|data:image/)', r'window\.open\s*\(', r'location\.(assign|replace)\s*\(',
+                      r'location\.href\s*=', r'location\s*=[^=]', r'target\s*=\s*["\']_', r'<form[^>]*\baction\s*=',
+                      r'\.submit\s*\(', r'https?://'):
+            trouves = [m.group(0) for m in re.finditer(motif, page)]
+            self.assertEqual(trouves, [], motif)
+        for lien in re.findall(r"href: *([^,}]+)", page):
+            self.assertTrue(lien.startswith(('adresse(', '`#')), lien)        # miniatures : un fragment de la page
+        self.assertIn("E.serveur.mode === 'fenetre' || E.serveur.mode === 'edge'", page)   # enFenetre : dépôts refusés
+        self.assertIn("ev.preventDefault();\n      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';", page)
+
     def test_recherche_ne_garde_pas_les_anciennes_cases(self):
         """Constat R4 : avant de vider les grilles, chaque recherche désabonne leurs cases de l'observateur des
         miniatures (sinon ~31 nœuds et 5 écouteurs restent en mémoire à chaque recherche, toute la séance ; mesuré
