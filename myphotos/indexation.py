@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import re
+import stat
 import threading
 import time
 import unicodedata
@@ -24,7 +25,8 @@ import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
 from . import config, modele
-from .base import chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, iso_depuis_ns, maintenant
+from .base import (chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, identite_volume, iso_depuis_ns,
+                   maintenant, sous_le_dossier)
 
 journal = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ COTE_MINIATURE = 360
 QUALITE_MINIATURE = 80
 PAQUET_INVENTAIRE = 500
 ECHECS_AVANT_CONTROLE = 3      # erreurs de lecture d'affilée avant de vérifier que le dossier répond
+ECHANTILLON_VOLUME = 20        # photos connues cherchées quand le disque d'un dossier suivi a changé (memes_photos)
 
 # Formats lus (ceux de config.EXTENSIONS), quel que soit le nom du fichier. Pillow en connaît d'autres, dont EPS, qui
 # lance Ghostscript, un programme extérieur : un « .jpg » qui serait en fait un PostScript ne doit pas y arriver.
@@ -67,6 +70,9 @@ NOMS_IGNORES = {'$recycle.bin', 'system volume information', 'recycler', 'recycl
 # À la racine d'un disque seulement : Windows et les programmes, pleins d'images qui ne sont pas des photos.
 NOMS_SYSTEME_RACINE = {'windows', 'windows.old', 'program files', 'program files (x86)', 'programdata',
                        'perflogs', 'recovery', 'msocache', 'intel', 'amd', 'nvidia', 'drivers', 'boot', 'efi'}
+# Ce que Windows (ou un Mac) range de lui-même dans un dossier, sans que ce soit du contenu : un dossier qui ne contient
+# que cela est vide (voir dossier_vide).
+NOMS_SANS_CONTENU = {'desktop.ini', 'thumbs.db', 'ehthumbs.db', 'ehthumbs_vista.db', '.ds_store'}
 
 
 # Sous-dossiers que l'assistant propose de laisser de côté (décochés d'office) : captures d'écran et fonds d'écran.
@@ -120,6 +126,44 @@ def _racine_de_disque(chemin):
     return bool(lecteur) and reste in ('', '\\', '/')
 
 
+def _sans_contenu(e):
+    """Élément d'un dossier qui ne compte pas comme du contenu : desktop.ini, Thumbs.db… (NOMS_SANS_CONTENU), ou élément
+    caché ou système (« System Volume Information », corbeille), que l'inventaire ne regarde jamais."""
+    if e.name.lower() in NOMS_SANS_CONTENU:
+        return True
+    try:
+        return bool(getattr(e.stat(follow_symlinks=False), 'st_file_attributes', 0) & (_CACHE | _SYSTEME))
+    except OSError:
+        return False
+
+
+def dossier_vide(chemin):
+    """Vrai si le dossier ne contient rien, ou seulement ce que Windows y range de lui-même (_sans_contenu) : un dossier
+    Images vidé, ou que OneDrive n'a pas encore rempli, garde son desktop.ini. Lève OSError s'il est injoignable."""
+    with os.scandir(chemin_systeme(chemin)) as it:
+        return all(_sans_contenu(e) for e in it)
+
+
+def memes_photos(connus, n=ECHANTILLON_VOLUME):
+    """Le volume d'un dossier suivi a changé (autre numéro) : y trouve-t-on ses photos connues ({chemin: (id, taille,
+    modifie)}) ? Vrai si la plupart d'un échantillon de n photos est là, même chemin et même taille : disque recopié ou
+    cloné, partage remonté, numéro lu autrement. Faux pour un autre disque qui a pris la même lettre. Sans photo connue,
+    il n'y a rien à perdre : vrai."""
+    if not connus:
+        return True
+    chemins = sorted(connus)
+    echantillon = chemins[::max(1, len(chemins) // n)][:n]
+    trouvees = 0
+    for ch in echantillon:
+        try:
+            st = os.stat(chemin_systeme(ch))
+        except (OSError, ValueError):
+            continue
+        if stat.S_ISREG(st.st_mode) and st.st_size == connus[ch][1]:
+            trouvees += 1
+    return 2 * trouvees > len(echantillon)
+
+
 class Parcours:
     """Liste les images sous un dossier : itération -> (chemin, taille, modifie_ns).
 
@@ -136,7 +180,7 @@ class Parcours:
         # Sous-dossiers exclus (clés de cle_chemin) : jamais parcourus.
         self.exclus = frozenset(exclus)
         self.echecs = []           # clés (cle_chemin) des sous-dossiers illisibles, terminées par os.sep
-        self.vide = False          # le dossier ne contient strictement rien
+        self.vide = False          # le dossier ne contient rien, ou seulement desktop.ini et autres (dossier_vide)
         self.courant = racine      # dossier en cours de lecture (pour l'affichage)
         self.sautes = 0            # fichiers et dossiers au nom impossible à enregistrer
 
@@ -159,7 +203,7 @@ class Parcours:
                 self.echecs.append(k if k.endswith(os.sep) else k + os.sep)
                 continue
             if premier:
-                self.vide, premier = not entrees, False
+                self.vide, premier = all(_sans_contenu(e) for e in entrees), False
             self.courant = chemin_affiche(d)
             racine_disque = _racine_de_disque(d)
             for e in entrees:
@@ -786,14 +830,38 @@ class Indexeur:
             self._inventorier(d)
             self._comptes_perimes()
 
+    def _exclus(self, did, racine):
+        """Clés des sous-dossiers exclus d'un dossier suivi. Une exclusion enregistrée par la 0.3.0 à travers une
+        jonction ou par un nom court (8.3) compte aussi pour le vrai dossier (sous_le_dossier), le seul que le parcours
+        voit : elle était sans effet."""
+        cles = set()
+        for x in self.base.exclusions(did):
+            cles.add(cle_chemin(x['chemin']))
+            reel = sous_le_dossier(x['chemin'], racine)
+            if reel:
+                cles.add(cle_chemin(reel))
+        return cles
+
     def _inventorier(self, d):
         did, racine = d['id'], d['chemin']
         self._changer(dossier_courant=racine, trouvees=0)
         connus = self.base.connus(did)
-        parcours = Parcours(racine, exclus={cle_chemin(x['chemin']) for x in self.base.exclusions(did)})
         bilan = self._bilan_courant if self._bilan_courant is not None else {
             'nouvelles': 0, 'retirees': 0, 'injoignables': [], 'dossiers': 0}
         bilan['dossiers'] += 1
+        # Autre numéro de volume qu'au dernier passage : un autre disque a pris la lettre de celui du dossier (deux
+        # disques USB qui échangent leur lettre). Ses photos ne sont pas supprimées : le dossier est inaccessible, comme
+        # un disque débranché, et rien du disque inconnu n'est ajouté. Sauf si les photos connues sont là (memes_photos :
+        # disque recopié ou cloné, partage remonté) : ce volume est adopté. Numéro inconnu (base 0.3.0) : appris ici.
+        volume = identite_volume(racine)
+        if volume is not None and d.get('volume') is not None and volume != d['volume']:
+            if not memes_photos(connus):
+                journal.info('autre disque à la place de %s : considéré injoignable, ses photos sont gardées', racine)
+                self.base.marquer_dossier(did, disponible=False)
+                bilan['injoignables'].append(racine)
+                return
+            journal.info('%s : nouveau numéro de volume, avec les mêmes photos : adopté', racine)
+        parcours = Parcours(racine, exclus=self._exclus(did, racine))
         ajoutees = 0
         nouveaux, modifies, vus = [], [], set()
         par_empreinte = {}                       # (taille, modifie) -> nouveaux chemins (déplacements)
@@ -841,7 +909,9 @@ class Indexeur:
             bilan['nouvelles'] += ajoutees
             return                               # arrêt demandé : rien n'est déclaré disparu
         if parcours.vide and connus:
-            # Un partage réseau monté sans son disque paraît vide : prudence, on garde tout.
+            # Un partage réseau monté sans son disque paraît vide ; un dossier Images que OneDrive n'a pas encore rempli
+            # ne contient que desktop.ini : prudence, on garde tout. (Des photos supprimées d'un dossier qui garde un
+            # autre contenu, même un simple document ou un sous-dossier, sont bien retirées.)
             journal.info('dossier vide alors que des photos y étaient connues, considéré injoignable : %s', racine)
             self.base.marquer_dossier(did, disponible=False)
             bilan['injoignables'].append(racine)
@@ -865,7 +935,7 @@ class Indexeur:
                 self.base.oublier_photos(oublies)
                 bilan['retirees'] += len(oublies)
         bilan['nouvelles'] += max(0, ajoutees)
-        self.base.marquer_dossier(did, disponible=True, vu=maintenant())
+        self.base.marquer_dossier(did, disponible=True, vu=maintenant(), volume=volume)
 
     # ------------------------------------------------ analyse
 

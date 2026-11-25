@@ -1536,12 +1536,17 @@ class TestDossiersEtActualiser(unittest.TestCase):
         self.fichiers['a.jpg'].unlink()
         self.assertEqual(v(ids['a.jpg']), {'etat': 'retiree', 'message': self.serveur.PHOTO_RETIREE})
         self.assertIsNone(self.app.base.photo(ids['a.jpg']))
-        # Sous-dossier entier supprimé (comme les captures du testeur) : oubliée aussi.
+        # Sous-dossier entier disparu (supprimé, ou renommé : on ne peut pas le savoir d'ici) : rien n'est oublié sur
+        # place ; un tour de ce dossier est demandé, qui retrouvera la photo sous son nouveau nom ou l'oubliera.
+        ix = FauxIndexeur()
+        self.app.indexeur = ix
         shutil.rmtree(self.photos / 'Vacances')
         with self.assertRaises(self.serveur.Refus) as e:
             self.app.montrer(ids['Vacances/b.jpg'])
-        self.assertEqual(e.exception.statut, 410)
-        self.assertIsNone(self.app.base.photo(ids['Vacances/b.jpg']))
+        self.assertEqual((e.exception.statut, str(e.exception)), (404, self.serveur.PHOTO_DEPLACEE))
+        self.assertIsNotNone(self.app.base.photo(ids['Vacances/b.jpg']))
+        self.assertEqual(ix.demandes, [[d['id']]])
+        self.assertEqual(v(ids['Vacances/b.jpg']), {'etat': 'deplacee', 'message': self.serveur.PHOTO_DEPLACEE})
         self.fichiers['Captures d\u2019écran/c1.png'].unlink()
         with mock.patch.object(self.serveur, 'mettre_au_presse_papiers') as presse:
             with self.assertRaises(self.serveur.Refus) as e:
@@ -1565,6 +1570,77 @@ class TestDossiersEtActualiser(unittest.TestCase):
             if self.photos.exists():
                 self.photos.rmdir()
             os.replace(self.tmp / 'debranche', self.photos)
+
+    def test_sous_dossier_renomme_puis_visionneuse(self):
+        """Sous-dossier renommé, puis l'une de ses photos ouverte dans la visionneuse avant toute actualisation : rien
+        n'est oublié (0.3.0 : la photo était oubliée, puis retrouvée comme nouvelle et analysée de nouveau). Le tour du
+        dossier demandé aussitôt la retrouve sous son nouveau nom : même identifiant, analyse gardée, rien de refait."""
+        from myphotos.indexation import Indexeur
+        from tests.test_doublons import CLE, MoteurPixels
+
+        class Moteur(MoteurPixels):
+            images = 0
+
+            def vecteurs_images(self, lot):
+                Moteur.images += len(lot)
+                return super().vecteurs_images(lot)
+
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ix = Indexeur(self.app.base, lambda materiel='auto': Moteur(), CLE, fils_decodage=2)
+        self.app.indexeur = ix
+        try:
+            ix.relancer()
+            self.assertTrue(ix.attendre(60), 'analyse trop longue')
+            pid = {Path(ch).relative_to(self.photos).as_posix(): v[0]
+                   for ch, v in self.app.base.connus(d['id']).items()}['Vacances/b.jpg']
+            self.assertTrue(self.app.base.photo(pid)['analysee'])
+            analysees = Moteur.images
+            os.rename(self.photos / 'Vacances', self.photos / 'Vacances 2021')
+            self.assertEqual(self.app.verifier_photo(pid)['etat'], 'deplacee')
+            self.assertIsNotNone(self.app.base.photo(pid))
+            self.assertTrue(ix.attendre(60), 'tour du dossier trop long')
+            p = self.app.base.photo(pid)
+            self.assertEqual(p['chemin'], str(self.photos / 'Vacances 2021' / 'b.jpg'))
+            self.assertTrue(p['analysee'] and p['miniature'])
+            self.assertEqual(Moteur.images, analysees)
+            self.assertEqual(self.app.verifier_photo(pid)['etat'], 'presente')
+        finally:
+            ix.arreter()
+
+    def test_photo_introuvable_autre_disque(self):
+        """Visionneuse, fichier absent : rien n'est oublié quand un autre disque a pris la lettre de celui du dossier
+        suivi (autre numéro de volume que celui retenu à l'ajout)."""
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ids = self.connaitre(d['id'])
+        self.fichiers['a.jpg'].unlink()
+        with mock.patch.object(self.serveur, 'identite_volume', lambda chemin: 0x1234):
+            self.assertEqual(self.app.verifier_photo(ids['a.jpg'])['etat'], 'injoignable')
+            with self.assertRaises(self.serveur.Refus) as e:
+                self.app.ouvrir(ids['a.jpg'])
+            self.assertEqual(e.exception.statut, 404)
+        self.assertIsNotNone(self.app.base.photo(ids['a.jpg']))
+        self.assertEqual(self.app.verifier_photo(ids['a.jpg'])['etat'], 'retiree')        # le bon disque
+
+    def test_photo_introuvable_desktop_ini(self):
+        """Visionneuse, fichier absent : rien n'est oublié quand le dossier suivi ne contient plus que desktop.ini
+        (dossier Images que OneDrive n'a pas encore rempli) ; avec un vrai contenu en plus, la photo est retirée."""
+        import images_essai as ie
+        d = self.app.base.ajouter_dossier(str(self.photos))
+        ids = self.connaitre(d['id'])
+        # Le dossier suivi ne contient plus que desktop.ini (caché et système, comme Windows le pose).
+        ailleurs = self.tmp / 'ailleurs'
+        ailleurs.mkdir()
+        for x in list(self.photos.iterdir()):
+            os.replace(x, ailleurs / x.name)
+        ini = self.photos / 'desktop.ini'
+        ini.write_text('[.ShellClassInfo]\r\n', encoding='utf-8')
+        ie.attribut(ini, ie.CACHE | ie.SYSTEME)
+        for nom in ('a.jpg', 'Vacances/b.jpg'):
+            self.assertEqual(self.app.verifier_photo(ids[nom])['etat'], 'injoignable', nom)
+            self.assertIsNotNone(self.app.base.photo(ids[nom]))
+        # Le même dossier avec un vrai contenu en plus : la photo supprimée est bien retirée.
+        (self.photos / 'notes.txt').write_text('liste de courses', encoding='utf-8')
+        self.assertEqual(self.app.verifier_photo(ids['a.jpg'])['etat'], 'retiree')
 
 
 class TestDoublons(unittest.TestCase):

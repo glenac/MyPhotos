@@ -21,6 +21,12 @@ Table exclusions (0.3.0) : sous-dossiers d'un dossier suivi que MyPhotos ne rega
 d'écran…). Rien n'est supprimé du disque : leurs photos sont seulement oubliées, et l'inventaire ne les parcourt plus.
 Table à part, créée à l'ouverture si elle manque : une base 0.2.0 est reprise sans perte (user_version reste 1 ; une
 0.2.0 rouverte sur une base 0.3.0 ignore simplement cette table).
+
+Colonne dossiers.volume (0.4.0) : numéro de série du volume (disque, clé USB, partage) où se trouvait chaque dossier
+suivi la dernière fois qu'il a été vu (identite_volume). Si un autre disque prend la lettre d'un disque débranché, le
+numéro diffère : le dossier est inaccessible, ses photos ne sont pas « supprimées ». Ajoutée à l'ouverture si elle
+manque, de la même façon : NULL (inconnu) pour une base 0.3.0, appris au tour suivant ; une 0.3.0 ou une 0.2.0 rouverte
+sur une base 0.4.0 ne lit que les colonnes qu'elle connaît et ajoute ses dossiers sans numéro.
 """
 import os
 import sqlite3
@@ -86,7 +92,9 @@ _SCHEMA_MINIATURES = (
 )
 
 _COLONNES_PHOTO = ('p.id, p.chemin, p.dossier_id, p.taille, p.modifie, p.largeur, p.hauteur, p.date_prise, '
-                   'p.date_fichier, p.lat, p.lon, p.modele, p.erreur, p.vu, p.miniature, d.chemin, d.disponible')
+                   'p.date_fichier, p.lat, p.lon, p.modele, p.erreur, p.vu, p.miniature, d.chemin, d.disponible, '
+                   'd.volume')
+_COLONNES_DOSSIER = 'id, chemin, ajoute, disponible, vu, volume'
 
 _ABIMEE = (11, 26)                    # SQLITE_CORRUPT, SQLITE_NOTADB : fichier qui n'est plus une base lisible
 
@@ -165,6 +173,41 @@ def chemin_affiche(chemin):
 def cle_chemin(chemin):
     """Clé de comparaison de deux chemins (Windows ne distingue pas majuscules et minuscules)."""
     return os.path.normcase(chemin_affiche(chemin))
+
+
+def identite_volume(chemin):
+    """Numéro de série du volume (disque, clé USB, partage réseau) où se trouve ce chemin, ou None si on ne peut pas le
+    lire. Sous Windows, st_dev est ce numéro ; seuls ses 32 bits bas sont gardés, ceux que montre la commande « vol » :
+    selon les versions de Windows et de Python, st_dev en a 32 ou 64, et le numéro retenu ne doit pas changer pour
+    autant."""
+    try:
+        numero = os.stat(chemin_systeme(chemin)).st_dev & 0xFFFFFFFF
+    except (OSError, ValueError):
+        return None
+    return numero or None
+
+
+def chemin_reel(chemin):
+    """Emplacement réel d'un dossier existant, en chemin habituel : noms longs (pas « PROGRA~1 »), liens et jonctions
+    résolus (os.path.realpath, par GetFinalPathNameByHandleW). None si Windows ne le donne pas."""
+    try:
+        return chemin_affiche(os.path.realpath(chemin_systeme(chemin), strict=True))
+    except (OSError, ValueError):
+        return None
+
+
+def sous_le_dossier(chemin, racine):
+    """Le dossier `chemin` vu depuis le dossier suivi `racine`, quand son emplacement réel est sous celui de `racine` :
+    racine suivie des vrais noms des dossiers en dessous. Sert pour un chemin saisi par un nom court (8.3) ou à travers
+    une jonction, que l'inventaire ne voit jamais (il ne connaît que les noms longs et ne suit aucune jonction). None
+    sinon. Comparaison élément par élément, sans os.path.relpath, qui retirerait le point final de « Vacances. »."""
+    reel, reelle = chemin_reel(chemin), chemin_reel(racine)
+    if not reel or not reelle:
+        return None
+    pc, pr = reel.rstrip(os.sep).split(os.sep), reelle.rstrip(os.sep).split(os.sep)
+    if len(pc) <= len(pr) or [os.path.normcase(x) for x in pc[:len(pr)]] != [os.path.normcase(x) for x in pr]:
+        return None
+    return os.path.join(racine, *pc[len(pr):])
 
 
 def dedans(enfant, parent):
@@ -406,6 +449,20 @@ class Base:
                 c.execute('ROLLBACK')
                 raise
             c.execute('COMMIT')
+        # 0.4.0 : numéro de volume des dossiers suivis (voir l'en-tête), même principe ; revérifié sous le verrou.
+        if not self._a_colonne(c, 'dossiers', 'volume'):
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                if not self._a_colonne(c, 'dossiers', 'volume'):
+                    c.execute('ALTER TABLE dossiers ADD COLUMN volume INTEGER')
+            except BaseException:
+                c.execute('ROLLBACK')
+                raise
+            c.execute('COMMIT')
+
+    @staticmethod
+    def _a_colonne(c, table, colonne):
+        return any(l[1] == colonne for l in c.execute(f'PRAGMA table_info({table})'))
 
     @staticmethod
     def _nouvelle_generation(c):
@@ -447,22 +504,23 @@ class Base:
 
     @staticmethod
     def _dossier_dict(ligne, stats):
-        did, chemin, ajoute, disponible, vu = ligne
+        did, chemin, ajoute, disponible, vu, volume = ligne
         n, a, e = stats.get(did, (0, 0, 0))
         return {'id': did, 'chemin': chemin, 'ajoute': ajoute, 'disponible': bool(disponible), 'vu': vu,
-                'photos': n, 'analysees': a, 'erreurs': e, 'a_faire': n - a - e}
+                'volume': volume, 'photos': n, 'analysees': a, 'erreurs': e, 'a_faire': n - a - e}
 
     def dossiers(self):
-        """Dossiers suivis, par ordre alphabétique, avec leurs comptes de photos."""
+        """Dossiers suivis, par ordre alphabétique, avec leurs comptes de photos (et 'volume' : numéro du volume où
+        chacun a été vu la dernière fois, None si inconnu)."""
         with self._lecture() as c:
             stats = self._stats_dossiers(c)
-            lignes = c.execute('SELECT id, chemin, ajoute, disponible, vu FROM dossiers '
+            lignes = c.execute(f'SELECT {_COLONNES_DOSSIER} FROM dossiers '
                                'ORDER BY chemin COLLATE NOCASE').fetchall()
         return [self._dossier_dict(l, stats) for l in lignes]
 
     def dossier(self, dossier_id):
         with self._lecture() as c:
-            l = c.execute('SELECT id, chemin, ajoute, disponible, vu FROM dossiers WHERE id = ?',
+            l = c.execute(f'SELECT {_COLONNES_DOSSIER} FROM dossiers WHERE id = ?',
                           (dossier_id,)).fetchone()
             stats = self._stats_dossiers(c) if l else {}
         return self._dossier_dict(l, stats) if l else None
@@ -476,10 +534,11 @@ class Base:
         """
         p = self.verifier_dossier(chemin)
         k = cle_chemin(p)
+        volume = identite_volume(p)
         with self._transaction() as c:
             remplaces = self._place_du_dossier(c, k)
-            nid = c.execute('INSERT INTO dossiers(chemin, ajoute, disponible) VALUES (?, ?, 1)',
-                            (p, maintenant())).lastrowid
+            nid = c.execute('INSERT INTO dossiers(chemin, ajoute, disponible, volume) VALUES (?, ?, 1, ?)',
+                            (p, maintenant(), volume)).lastrowid
             for did, _ in remplaces:
                 c.execute('UPDATE photos SET dossier_id = ? WHERE dossier_id = ?', (nid, did))
                 # Les sous-dossiers exclus d'un dossier absorbé restent exclus du nouveau.
@@ -556,7 +615,9 @@ class Base:
         empreintes des doublons) et l'inventaire ne le parcourt plus. Les fichiers ne sont JAMAIS touchés.
 
         Le chemin se compare comme partout (normaliser_chemin, casse_reelle, cle_chemin : « Vacances. » reste
-        « Vacances. »). Lève DossierRefuse (message clair) s'il n'est pas DANS le dossier suivi, s'il est déjà exclu ou
+        « Vacances. »). Saisi par un nom court (8.3) ou à travers une jonction, il est d'abord ramené au vrai dossier vu
+        depuis le dossier suivi (sous_le_dossier), le seul chemin que l'inventaire connaît : sinon l'exclusion restait
+        sans effet. Lève DossierRefuse (message clair) s'il n'est pas DANS le dossier suivi, s'il est déjà exclu ou
         introuvable. Les exclusions qu'il contient sont remplacées par lui. Renvoie {id, dossier_id, chemin, dossier,
         photos (nombre oublié), remplacees (chemins)}."""
         p = normaliser_chemin(chemin)
@@ -565,6 +626,10 @@ class Base:
         if not os.path.isdir(chemin_systeme(p)):
             raise DossierRefuse(f'Ce dossier est introuvable : « {p} ».')
         p = casse_reelle(p)
+        l = self._cnx().execute('SELECT chemin FROM dossiers WHERE id = ?', (dossier_id,)).fetchone()
+        reel = sous_le_dossier(p, l[0]) if l else None
+        if reel and enregistrable(reel):
+            p = reel
         k = cle_chemin(p)
         with self._transaction() as c:
             l = c.execute('SELECT chemin FROM dossiers WHERE id = ?', (dossier_id,)).fetchone()
@@ -632,9 +697,9 @@ class Base:
     @staticmethod
     def _photo_dict(l):
         (pid, chemin, did, taille, modifie, largeur, hauteur, date_prise, date_fichier, lat, lon, mod, err, vu,
-         mini, dossier, dispo) = l
+         mini, dossier, dispo, volume) = l
         return {'id': pid, 'chemin': chemin, 'nom': os.path.basename(chemin), 'dossier_id': did,
-                'dossier': dossier, 'disponible': bool(dispo), 'taille': taille, 'modifie': modifie,
+                'dossier': dossier, 'disponible': bool(dispo), 'volume': volume, 'taille': taille, 'modifie': modifie,
                 'largeur': largeur, 'hauteur': hauteur, 'date_prise': date_prise, 'date_fichier': date_fichier,
                 'date': date_prise or date_fichier, 'lat': lat, 'lon': lon, 'modele': mod,
                 'analysee': mod is not None, 'erreur': err, 'vu': vu, 'miniature': bool(mini)}
@@ -786,14 +851,12 @@ class Base:
                           (chemin, l[1], l[2], ancien))
             self._nouvelle_generation(c)
 
-    def marquer_dossier(self, dossier_id, disponible, vu=None):
-        """Dossier joignable ou non (disque débranché, partage réseau éteint) ; ses photos restent connues."""
+    def marquer_dossier(self, dossier_id, disponible, vu=None, volume=None):
+        """Dossier joignable ou non (disque débranché, partage réseau éteint) ; ses photos restent connues. vu et volume
+        (numéro du volume où il vient d'être vu) ne changent que s'ils sont donnés."""
         with self._transaction() as c:
-            if vu is None:
-                c.execute('UPDATE dossiers SET disponible = ? WHERE id = ?', (int(bool(disponible)), dossier_id))
-            else:
-                c.execute('UPDATE dossiers SET disponible = ?, vu = ? WHERE id = ?',
-                          (int(bool(disponible)), vu, dossier_id))
+            c.execute('UPDATE dossiers SET disponible = ?, vu = COALESCE(?, vu), volume = COALESCE(?, volume) '
+                      'WHERE id = ?', (int(bool(disponible)), vu, volume, dossier_id))
 
     def a_analyser(self):
         """Photos à analyser dans les dossiers joignables, les plus récentes d'abord :

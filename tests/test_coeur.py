@@ -6,6 +6,7 @@ Images générées par Pillow dans un dossier temporaire (jamais de vraies photo
 import io
 import logging
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -22,6 +23,7 @@ import numpy as np                                     # noqa: E402
 from PIL import Image, ImageDraw                       # noqa: E402
 
 import images_essai as ie                              # noqa: E402
+from myphotos import base as base_mod                  # noqa: E402
 from myphotos import indexation, modele, recherche  # noqa: E402
 from myphotos.base import (Base, DossierRefuse, casse_reelle, chemin_affiche, chemin_systeme,  # noqa: E402
                               cle_chemin, dedans, normaliser_chemin)
@@ -1281,6 +1283,64 @@ class TestExclusions(EssaiAvecImages):
         d = self.base.dossiers()[0]
         self.assertEqual(self.base.ajouter_exclusion(d['id'], str(self.photos / 'vacances'))['photos'], 4)
 
+    @unittest.skipUnless(os.name == 'nt', 'noms courts (8.3) : Windows')
+    def test_nom_court(self):
+        """Exclusion saisie par un nom court (« VACANC~1 ») : c'est le vrai dossier qui est exclu (0.3.0 : le nom court
+        était enregistré tel quel, et l'inventaire, qui ne voit que les noms longs, ne l'excluait jamais)."""
+        long = self.photos / 'Vacances d\u2019été 2021'
+        for i in range(2):
+            ie.jpeg(long / f'v{i}.jpg', (200, 150))
+        court = nom_court(long)
+        if court is None:
+            self.skipTest('noms courts (8.3) désactivés sur ce disque')
+        ix, _ = self.indexer()
+        d = self.base.dossiers()[0]
+        r = self.base.ajouter_exclusion(d['id'], str(self.photos) + '\\' + os.path.basename(court))
+        self.assertEqual((r['chemin'], r['photos']), (str(long), 2))
+        self.relancer(ix)
+        self.assertEqual(self.sous(long), [])
+        # Tout le chemin en noms courts (comme « PROGRA~1 ») : accepté aussi (0.3.0 : « n'est pas dans »).
+        self.base.retirer_exclusion(r['id'])
+        self.assertEqual(self.base.ajouter_exclusion(d['id'], court)['chemin'], str(long))
+
+    @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
+    def test_jonction(self):
+        """Exclusion choisie à travers une jonction : le vrai dossier est exclu (l'inventaire ne suit jamais une jonction,
+        il ne voit que le vrai dossier). Une exclusion enregistrée ainsi par la 0.3.0 devient efficace au tour suivant."""
+        import _winapi
+        vacances = self.photos / 'vacances'
+        raccourci = self.photos / 'Raccourci vers vacances'          # jonction dans le dossier suivi
+        dehors = self.tmp / 'Lien vers photos'                       # jonction hors du dossier suivi, qui y mène
+        _winapi.CreateJunction(str(vacances), str(raccourci))
+        _winapi.CreateJunction(str(self.photos), str(dehors))
+        try:
+            ix, _ = self.indexer()
+            d = self.base.dossiers()[0]
+            r = self.base.ajouter_exclusion(d['id'], str(raccourci))
+            self.assertEqual((r['chemin'], r['photos']), (str(vacances), 4))
+            self.relancer(ix)
+            self.assertEqual(self.sous(vacances), [])
+            # Par la jonction du dehors : 0.3.0 refusait (« n'est pas dans »).
+            self.base.retirer_exclusion(r['id'])
+            self.assertEqual(self.base.ajouter_exclusion(d['id'], str(dehors / 'vacances'))['chemin'], str(vacances))
+            # Exclusion écrite par la 0.3.0, avec le chemin de la jonction : le tour suivant exclut le vrai dossier.
+            for x in self.base.exclusions(d['id']):
+                self.base.retirer_exclusion(x['id'])
+            self.relancer(ix)
+            self.assertEqual(len(self.sous(vacances)), 4)
+            with self.base._transaction() as c:
+                c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
+                          (d['id'], str(raccourci), '2026-11-24T12:00:00'))
+            self.relancer(ix)
+            self.assertEqual(self.sous(vacances), [])
+            self.assertEqual(ix.etat()['bilan']['retirees'], 4)
+        finally:
+            for j in (raccourci, dehors):
+                try:
+                    os.rmdir(j)                                      # la jonction seule, pas ce qu'elle désigne
+                except OSError:
+                    pass
+
 
 class TestActualisation(EssaiAvecImages):
     """Bouton « Actualiser » : un inventaire numéroté, avec son bilan (nouvelles, retirées, dossiers injoignables)."""
@@ -1375,3 +1435,171 @@ class TestExamen(unittest.TestCase):
         self.assertEqual(ex['total'], 256)
         with self.assertRaises(OSError):
             indexation.examiner_dossier(str(self.tmp / 'absent'))
+
+
+# ---------------------------------------------------------------- 0.4.0 : disque changé, dossier presque vide
+
+def nom_court(chemin):
+    """Nom court (8.3) d'un dossier existant, ou None si ce disque n'en crée pas."""
+    if os.name != 'nt':
+        return None
+    import ctypes
+    tampon = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(chemin), tampon, len(tampon))
+    court = tampon.value if 0 < n < len(tampon) else None
+    return court if court and os.path.basename(court).lower() != os.path.basename(str(chemin)).lower() else None
+
+
+class TestDisqueChange(EssaiAvecImages):
+    """Deux disques qui échangent leur lettre : un autre disque à la place d'un dossier suivi (autre numéro de volume)
+    le rend inaccessible, ses photos sont gardées ; revenu, rien n'est refait. Le numéro de volume du dossier suivi est
+    simulé (on ne branche pas de disque pendant un essai) ; les fichiers, la base et l'inventaire sont réels."""
+
+    def setUp(self):
+        super().setUp()
+        self.disque = self.tmp / 'F'
+        ie.jpeg(self.disque / 'a.jpg', (200, 150), ie.ROUGE)
+        ie.jpeg(self.disque / 'sous' / 'b.jpg', (200, 150), ie.BLEU)
+        self.numero = 0xA1
+        vrai = base_mod.identite_volume
+
+        def simule(chemin):
+            if cle_chemin(str(chemin)) != cle_chemin(str(self.disque)):
+                return vrai(chemin)
+            return self.numero if os.path.isdir(self.disque) else None
+        for module in (base_mod, indexation):
+            c = mock.patch.object(module, 'identite_volume', simule)
+            c.start()
+            self.addCleanup(c.stop)
+
+    def test_autre_disque_sur_la_meme_lettre(self):
+        d = self.base.ajouter_dossier(self.disque)
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)          # retenu dès l'ajout
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        self.assertEqual(len(avant), 2)
+        # Le disque A est débranché ; le disque B prend sa lettre, avec d'autres photos.
+        os.rename(self.disque, self.tmp / 'disque-A')
+        ie.jpeg(self.disque / 'c.jpg', (200, 150), ie.VERT)
+        self.numero = 0xB2
+        n = ix.relancer()
+        self.assertTrue(ix.attendre(60))
+        b = ix.etat()['bilan']
+        self.assertEqual((b['numero'], b['retirees'], b['nouvelles'], b['injoignables']),
+                         (n, 0, 0, [str(self.disque)]))
+        self.assertEqual(self.ids(), avant)                                 # gardées, et rien du disque B
+        self.assertFalse(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)
+        # Le disque A revient à sa lettre : tout est là, rien n'est refait.
+        shutil.rmtree(self.disque)
+        os.rename(self.tmp / 'disque-A', self.disque)
+        self.numero = 0xA1
+        self.relancer(ix)
+        self.assertTrue(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.ids(), avant)
+        self.assertEqual(f.images, 2)
+
+    def test_disque_recopie_adopte(self):
+        """Les mêmes photos sur un nouveau disque (recopié, cloné, partage remonté) : son numéro est adopté, rien n'est
+        retiré ni refait ; seule une vraie nouvelle photo est analysée."""
+        d = self.base.ajouter_dossier(self.disque)
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        os.rename(self.disque, self.tmp / 'ancien-disque')
+        shutil.copytree(self.tmp / 'ancien-disque', self.disque)            # dates de modification gardées
+        ie.jpeg(self.disque / 'neuve.jpg', (200, 150), ie.VERT)
+        self.numero = 0xC3
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['nouvelles'], b['injoignables']), (0, 1, []))
+        self.assertTrue(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xC3)
+        self.assertEqual({k: v for k, v in self.ids().items() if k in avant}, avant)
+        self.assertEqual(f.images, 3)
+
+    def test_base_0_3_0_sans_numero(self):
+        """Base 0.3.0 (sans la colonne volume) : rouverte sans rien perdre ni changer user_version ; le numéro est
+        appris au tour suivant. La 0.3.0 ne lit que les colonnes qu'elle connaît : la colonne ajoutée ne la gêne pas."""
+        d = self.base.ajouter_dossier(self.disque)
+        ix, _ = self.indexer(dossier=False)
+        ix.arreter()
+        avant = self.base.compter()
+        self.base.fermer()
+        c = sqlite3.connect(self.tmp / 'donnees' / 'index.db')
+        c.execute('ALTER TABLE dossiers DROP COLUMN volume')
+        c.commit()
+        c.close()
+        self.base = Base(self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db')
+        self.indexeurs = []
+        self.assertEqual(self.base.compter(), avant)
+        self.assertIsNone(self.base.dossier(d['id'])['volume'])
+        self.assertEqual(self.base._cnx().execute('PRAGMA user_version').fetchone()[0], 1)
+        ix, f = self.indexer(dossier=False)
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)
+        self.assertEqual(f.images, 0)
+        # Ce que la 0.3.0 écrit (dossier ajouté sans la colonne) : numéro inconnu, appris au tour suivant.
+        autre = self.tmp / 'autre'
+        ie.jpeg(autre / 'x.jpg', (200, 150))
+        with self.base._transaction() as c:
+            nid = c.execute("INSERT INTO dossiers(chemin, ajoute, disponible) VALUES (?, '2026-11-24T12:00:00', 1)",
+                            (str(autre),)).lastrowid
+        self.assertIsNone(self.base.dossier(nid)['volume'])
+        self.relancer(ix)
+        self.assertEqual(self.base.dossier(nid)['volume'], base_mod.identite_volume(str(autre)))
+        self.assertEqual(self.base.dossier(nid)['photos'], 1)
+
+
+class TestDossierPresqueVide(EssaiAvecImages):
+    """Un dossier suivi qui ne contient plus que desktop.ini (dossier Images que OneDrive n'a pas encore rempli, ou
+    vidé) ou d'autres fichiers que Windows y range est traité comme un dossier vide : inaccessible, ses photos sont
+    gardées. Des photos vraiment supprimées d'un dossier qui a encore du contenu sont retirées, comme avant."""
+
+    def setUp(self):
+        super().setUp()
+        self.images = self.tmp / 'Images'
+        ie.jpeg(self.images / 'a.jpg', (200, 150), ie.ROUGE)
+        ie.jpeg(self.images / 'Pellicule' / 'b.jpg', (200, 150), ie.BLEU)
+        self.ini = self.images / 'desktop.ini'
+        self.ini.write_text('[.ShellClassInfo]\r\nLocalizedResourceName=@%SystemRoot%\\system32\\shell32.dll,-21779\r\n',
+                            encoding='utf-8')
+        ie.attribut(self.ini, ie.CACHE | ie.SYSTEME)
+        self.d = self.base.ajouter_dossier(self.images)
+        self.ailleurs = self.tmp / 'ailleurs'
+        self.ailleurs.mkdir()
+
+    def vider(self):
+        for nom in ('a.jpg', 'Pellicule'):
+            os.replace(self.images / nom, self.ailleurs / nom)
+
+    def test_seulement_desktop_ini(self):
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        self.vider()
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables']), (0, [str(self.images)]))
+        self.assertEqual(self.ids(), avant)
+        self.assertFalse(self.base.dossier(self.d['id'])['disponible'])
+        # desktop.ini sans ses attributs (recopié d'ailleurs) et Thumbs.db : pareil.
+        ie.attribut(self.ini, 0x80)                                         # FILE_ATTRIBUTE_NORMAL
+        (self.images / 'Thumbs.db').write_bytes(b'\0' * 16)
+        self.relancer(ix)
+        self.assertEqual(self.ids(), avant)
+        # Les photos reviennent (OneDrive a fini) : tout est là, rien n'est refait.
+        for nom in ('a.jpg', 'Pellicule'):
+            os.replace(self.ailleurs / nom, self.images / nom)
+        self.relancer(ix)
+        self.assertTrue(self.base.dossier(self.d['id'])['disponible'])
+        self.assertEqual(self.ids(), avant)
+        self.assertEqual(f.images, 2)
+
+    def test_photos_vraiment_supprimees(self):
+        """Toutes les photos supprimées, mais le dossier garde du contenu (un document) : elles sont retirées."""
+        (self.images / 'notes.txt').write_text('liste de courses', encoding='utf-8')
+        ix, _ = self.indexer(dossier=False)
+        self.vider()
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables']), (2, []))
+        self.assertEqual(self.base.compter()['total'], 0)
+        self.assertTrue(self.base.dossier(self.d['id'])['disponible'])
