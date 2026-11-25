@@ -744,6 +744,39 @@ class Publication(unittest.TestCase):
         source = (Path(__file__).resolve().parent.parent / 'construction' / 'cle_signature.py').read_text('utf-8')
         self.assertFalse([a for l in source.splitlines() for a in vp.Verificateur().analyser_ligne(l, 'c', 'code')])
 
+    def test_publier_notes(self):
+        # construction/publier.py remplit les repères des notes avec les vraies tailles et empreintes.
+        import publier
+        v = '9.9.9'
+        contenus = {}
+        for n in publier.noms(v):
+            contenus[n] = os.urandom(1_500_000 if n.endswith('.exe') else 2000)
+            (self.d / n).write_bytes(contenus[n])
+        texte = publier.completer_notes('{SHA_INST}  x\n{TAILLE_INST} Mo · {TAILLE_EXE} · {TAILLE_ZIP}\n{SHA_JSON}\n'
+                                        '{SHA_EXE} {SHA_ZIP} ({DATE_DEFENDER} / {DATE_DEFENDER_EN})', v, dist=self.d,
+                                        date='2026-12-01')
+        self.assertIn(hashlib.sha256(contenus['MyPhotos-9.9.9-installation.exe']).hexdigest() + '  x', texte)
+        self.assertIn('2 Mo · 2 · 0', texte)
+        self.assertIn('analyse du 01/12/2026 des quatre fichiers / scan of the four files, 2026-12-01', texte)
+        with self.assertRaises(SystemExit):
+            publier.completer_notes('{SHA_INCONNU}', v, dist=self.d)
+
+    def test_publier_essai_n_envoie_rien(self):
+        # --essai : contrôles, construction et contrôles des fichiers, mais jamais d'étiquette ni de Release.
+        import publier
+        v = config.VERSION
+        notes = self.d / f'NOTES-{v}.md'
+        notes.write_text('notes', encoding='utf-8')
+        with mock.patch.object(publier, 'controles_prealables', return_value=notes), \
+                mock.patch.object(publier, 'construire_tout'), mock.patch.object(publier, 'controles_fichiers'), \
+                mock.patch.object(publier, 'completer_notes', return_value='notes'), \
+                mock.patch.object(publier, 'DIST', self.d), \
+                mock.patch.object(publier, 'publier', side_effect=AssertionError('publié en essai')), \
+                mock.patch.object(publier, 'verifier_en_ligne', side_effect=AssertionError('vérifié en essai')), \
+                mock.patch.object(publier, 'lancer', side_effect=AssertionError('commande lancée')):
+            self.assertEqual(publier.main(['--essai']), 0)
+        self.assertTrue((self.d / f'NOTES-{v}.final.md').is_file())
+
     def test_nouveautes_de_la_version(self):
         # Chaque version publiée a ses nouveautés, acceptées par MyPhotos (longueur, nombre, caractères).
         lignes = self.construire.nouveautes(config.VERSION)
