@@ -26,7 +26,7 @@ from PIL import Image, ImageFile, UnidentifiedImageError
 
 from . import config, modele
 from .base import (chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, identite_volume, iso_depuis_ns,
-                   maintenant, sous_le_dossier)
+                   maintenant, nom_long)
 
 journal = logging.getLogger(__name__)
 
@@ -125,6 +125,16 @@ class MoteurIndisponible(RuntimeError):
 
 
 # ---------------------------------------------------------------- inventaire
+
+def _est_un_lien(chemin):
+    """Vrai si ce chemin est lui-même un lien symbolique ou une jonction (sans le suivre)."""
+    try:
+        st = os.lstat(chemin_systeme(chemin))
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISLNK(st.st_mode) or (bool(getattr(st, 'st_file_attributes', 0) & _LIEN)
+                                        and getattr(st, 'st_reparse_tag', 0) in _BALISES_LIENS)
+
 
 def _racine_de_disque(chemin):
     lecteur, reste = os.path.splitdrive(chemin_affiche(chemin))
@@ -910,15 +920,19 @@ class Indexeur:
             self._comptes_perimes()
 
     def _exclus(self, did, racine):
-        """Clés des sous-dossiers exclus d'un dossier suivi. Une exclusion enregistrée par la 0.3.0 à travers une
-        jonction ou par un nom court (8.3) compte aussi pour le vrai dossier (sous_le_dossier), le seul que le parcours
-        voit : elle était sans effet."""
+        """Clés des sous-dossiers exclus d'un dossier suivi. Une exclusion enregistrée par la 0.3.0 avec un nom court
+        (8.3) compte aussi sous ses noms longs (nom_long, qui ne traverse aucune jonction), les seuls que le parcours
+        voit : elle était sans effet. Une exclusion qui est elle-même un lien ou une jonction n'est jamais résolue : sans
+        effet en 0.3.0, la ramener à sa cible excluait en silence un autre vrai dossier, alors que la liste montrait
+        toujours la jonction. (Une NOUVELLE exclusion choisie par une jonction est ramenée au vrai dossier, enregistré et
+        affiché tel quel : voir Base.ajouter_exclusion.)"""
         cles = set()
         for x in self.base.exclusions(did):
             cles.add(cle_chemin(x['chemin']))
-            reel = sous_le_dossier(x['chemin'], racine)
-            if reel:
-                cles.add(cle_chemin(reel))
+            if not _est_un_lien(x['chemin']):
+                long = nom_long(x['chemin'])
+                if long:
+                    cles.add(cle_chemin(long))
         return cles
 
     def _retrouvees(self, racine, exclus, connus):

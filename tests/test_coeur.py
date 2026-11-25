@@ -1329,11 +1329,24 @@ class TestExclusions(EssaiAvecImages):
         # Tout le chemin en noms courts (comme « PROGRA~1 ») : accepté aussi (0.3.0 : « n'est pas dans »).
         self.base.retirer_exclusion(r['id'])
         self.assertEqual(self.base.ajouter_exclusion(d['id'], court)['chemin'], str(long))
+        # Exclusion écrite par la 0.3.0 avec le nom court : le tour suivant exclut le vrai dossier (noms longs par
+        # GetLongPathNameW, sans traverser de jonction).
+        for x in self.base.exclusions(d['id']):
+            self.base.retirer_exclusion(x['id'])
+        self.relancer(ix)
+        self.assertEqual(len(self.sous(long)), 2)
+        with self.base._transaction() as c:
+            c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
+                      (d['id'], os.path.join(str(self.photos), os.path.basename(court)), '2026-11-24T12:00:00'))
+        self.relancer(ix)
+        self.assertEqual(self.sous(long), [])
 
     @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
     def test_jonction(self):
-        """Exclusion choisie à travers une jonction : le vrai dossier est exclu (l'inventaire ne suit jamais une jonction,
-        il ne voit que le vrai dossier). Une exclusion enregistrée ainsi par la 0.3.0 devient efficace au tour suivant."""
+        """Exclusion choisie à travers une jonction : le vrai dossier est exclu, enregistré et affiché (l'inventaire ne
+        suit jamais une jonction, il ne voit que le vrai dossier). Mais une exclusion enregistrée par la 0.3.0 sur une
+        jonction reste sans effet, comme en 0.3.0 : la ramener à sa cible excluait en silence un autre vrai dossier,
+        alors que la liste montrait toujours la jonction (première 0.4.0)."""
         import _winapi
         vacances = self.photos / 'vacances'
         raccourci = self.photos / 'Raccourci vers vacances'          # jonction dans le dossier suivi
@@ -1350,7 +1363,7 @@ class TestExclusions(EssaiAvecImages):
             # Par la jonction du dehors : 0.3.0 refusait (« n'est pas dans »).
             self.base.retirer_exclusion(r['id'])
             self.assertEqual(self.base.ajouter_exclusion(d['id'], str(dehors / 'vacances'))['chemin'], str(vacances))
-            # Exclusion écrite par la 0.3.0, avec le chemin de la jonction : le tour suivant exclut le vrai dossier.
+            # Exclusion écrite par la 0.3.0, avec le chemin de la jonction : sans effet, comme en 0.3.0.
             for x in self.base.exclusions(d['id']):
                 self.base.retirer_exclusion(x['id'])
             self.relancer(ix)
@@ -1359,8 +1372,8 @@ class TestExclusions(EssaiAvecImages):
                 c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
                           (d['id'], str(raccourci), '2026-11-24T12:00:00'))
             self.relancer(ix)
-            self.assertEqual(self.sous(vacances), [])
-            self.assertEqual(ix.etat()['bilan']['retirees'], 4)
+            self.assertEqual(len(self.sous(vacances)), 4)
+            self.assertEqual(ix.etat()['bilan']['retirees'], 0)
         finally:
             for j in (raccourci, dehors):
                 try:
