@@ -188,6 +188,17 @@ def identite_volume(chemin):
     return numero or None
 
 
+def identite_fichier(chemin):
+    """(volume, numéro de fichier) d'un élément existant, liens et jonctions suivis : deux écritures du même dossier
+    (nom court 8.3, jonction, préfixe \\\\?\\) donnent la même identité. None si Windows ne la donne pas (certains
+    partages réseau) ou si l'élément est introuvable."""
+    try:
+        st = os.stat(chemin_systeme(chemin))
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino) if st.st_dev and st.st_ino else None
+
+
 def chemin_reel(chemin):
     """Emplacement réel d'un dossier existant, en chemin habituel : noms longs (pas « PROGRA~1 »), liens et jonctions
     résolus (os.path.realpath, par GetFinalPathNameByHandleW). None si Windows ne le donne pas."""
@@ -551,10 +562,9 @@ class Base:
         L'inventaire n'est pas lancé ici : appeler ensuite Indexeur.relancer().
         """
         p = self.verifier_dossier(chemin)
-        k = cle_chemin(p)
         volume = identite_volume(p)
         with self._transaction() as c:
-            remplaces = self._place_du_dossier(c, k)
+            remplaces = self._place_du_dossier(c, p)
             nid = c.execute('INSERT INTO dossiers(chemin, ajoute, disponible, volume) VALUES (?, ?, 1, ?)',
                             (p, maintenant(), volume)).lastrowid
             for did, _ in remplaces:
@@ -575,31 +585,54 @@ class Base:
                                 'renommez-le, puis recommencez.')
         if not os.path.isdir(chemin_systeme(p)):
             raise DossierRefuse(f'Ce dossier est introuvable : « {p} ».')
-        p = casse_reelle(p)
+        # 0.4.1 : noms longs (« VACANC~1 » -> « Vacances d'été 2021 »), sans traverser de jonction : c'est ainsi que
+        # l'inventaire le verra, et qu'il est comparé aux autres.
+        p = casse_reelle(nom_long(p) or p)
         with self._lecture() as c:
-            self._place_du_dossier(c, cle_chemin(p))
+            self._place_du_dossier(c, p)
         return p
 
     @staticmethod
-    def _place_du_dossier(c, k):
-        """Dossiers suivis que le nouveau dossier (clé k) contient [(id, chemin)]. DossierRefuse s'il est déjà suivi,
+    def _place_du_dossier(c, p):
+        """Dossiers suivis que le nouveau dossier `p` contient [(id, chemin)]. DossierRefuse s'il est déjà suivi,
         dans un dossier suivi, ou dans un sous-dossier exclu : un dossier suivi ne peut donc jamais se trouver dans un
-        sous-dossier exclu (le message dit quoi faire)."""
+        sous-dossier exclu (le message dit quoi faire).
+
+        Depuis la 0.4.1, la comparaison se fait aussi sur l'emplacement réel (chemin_reel : noms longs, jonctions
+        résolues) et sur l'identité du dossier (identite_fichier), pour les dossiers suivis joignables : le même
+        dossier écrit autrement (nom court, jonction, préfixe \\\\?\\) est reconnu. Un dossier vu à travers une jonction
+        est situé comme l'inventaire du dossier suivi le verrait (sous_le_dossier), puis comparé aux exclusions comme
+        l'inventaire les applique (écriture enregistrée et noms longs, jamais à travers une jonction). Un dossier qui
+        contient un dossier suivi sous une autre écriture est refusé (retirer d'abord l'autre) : l'absorber laisserait
+        ses exclusions sous l'ancienne écriture."""
+        k = cle_chemin(p)
+        reel = chemin_reel(p)
+        kr = cle_chemin(reel) if reel else None
+        identite = identite_fichier(p)
         remplaces = []
-        for did, ch in c.execute('SELECT id, chemin FROM dossiers').fetchall():
+        for did, ch, dispo in c.execute('SELECT id, chemin, disponible FROM dossiers').fetchall():
             ke = cle_chemin(ch)
-            if ke == k:
+            r = chemin_reel(ch) if dispo else None      # (un dossier injoignable n'est pas interrogé : partage éteint)
+            ker = cle_chemin(r) if r else None
+            if ke == k or (kr and ker == kr) or (identite and dispo and identite_fichier(ch) == identite):
                 raise DossierRefuse(f'Ce dossier est déjà dans MyPhotos : « {ch} ».')
-            if dedans(k, ke):
+            dans_texte = dedans(k, ke)
+            if dans_texte or (kr and ker and dedans(kr, ker)):
+                vu = p if dans_texte else (sous_le_dossier(p, ch) or p)
+                cles = {cle_chemin(vu), cle_chemin(nom_long(vu) or vu)}
                 for (ex,) in c.execute('SELECT chemin FROM exclusions WHERE dossier_id = ?', (did,)).fetchall():
-                    kx = cle_chemin(ex)
-                    if k == kx or dedans(k, kx):
+                    exclues = {cle_chemin(ex), cle_chemin(nom_long(ex) or ex)}
+                    if any(a == b or dedans(a, b) for a in cles for b in exclues):
                         raise DossierRefuse(
                             f'Ce dossier se trouve dans « {ex} », que vous avez exclu de MyPhotos. Pour voir ses '
                             'photos, choisissez « Ne plus exclure » pour ce sous-dossier, dans les Réglages.')
                 raise DossierRefuse(f'Ce dossier fait déjà partie de « {ch} », qui est dans MyPhotos.')
             if dedans(ke, k):
                 remplaces.append((did, ch))
+            elif kr and ker and dedans(ker, kr):
+                raise DossierRefuse(f'Ce dossier contient « {ch} », déjà dans MyPhotos sous une autre écriture (nom '
+                                    f'court ou raccourci de dossier). Retirez d\'abord « {ch} » dans les Réglages, '
+                                    'puis recommencez.')
         return remplaces
 
     def retirer_dossier(self, dossier_id):
