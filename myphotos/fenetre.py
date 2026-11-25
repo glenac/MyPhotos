@@ -29,6 +29,8 @@ Trois modes, dans cet ordre (/api/etat dit lequel : « fenetre », « edge » ou
        serveur) est bloqué. Ni nouvelle fenêtre, ni téléchargement, ni autorisation (caméra, position…) ;
      * aucun dépôt venu d'ailleurs (AllowExternalDrop) : un fichier ou un lien glissé ne fait pas naviguer ;
      * menu contextuel réduit au texte : annuler, rétablir, couper, copier, coller, tout sélectionner ;
+     * plein écran demandé par la page (API Fullscreen, diaporama de la 0.4.1) : la fenêtre passe en plein écran
+       (ContainsFullScreenElementChanged), et en revient avec la page ; jamais autrement ;
      * données de WebView2 en mode privé, dans DONNEES\\webview2. ATTENTION : en mode privé, pywebview efface TOUT
        ce dossier à la fermeture : il ne doit jamais désigner DONNEES lui-même ;
      * au démarrage, hors débogage, les variables WEBVIEW2_* et PYWEBVIEW_* (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
@@ -1273,6 +1275,7 @@ class FenetreWebView2:
         core.DownloadStarting += self._telechargement
         core.PermissionRequested += self._autorisation
         core.ProcessFailed += self._processus_arrete
+        core.ContainsFullScreenElementChanged += self._plein_ecran
         if not debug:
             core.ContextMenuRequested += self._menu
         if debug:
@@ -1341,9 +1344,30 @@ class FenetreWebView2:
             # aussitôt « arret » dans /api/etat et attend, au lieu de signaler une fenêtre qui n'existe plus.
             threading.Thread(target=self.hote.app.arreter, name='myphotos-arret-fenetre', daemon=True).start()
 
+    def _plein_ecran(self, sender, _args):
+        """La page demande le plein écran (diaporama) ou le quitte (Échap, fin du diaporama) : la fenêtre suit. Sans
+        cela, WebView2 n'agrandit l'élément qu'à la taille de la fenêtre."""
+        try:
+            voulu = bool(sender.ContainsFullScreenElement)
+            form = self.form
+            if form is None or form.IsDisposed or bool(getattr(form, 'is_fullscreen', False)) == voulu:
+                return
+            form.toggle_fullscreen()                  # BrowserForm de pywebview, sur le fil de la fenêtre
+        except Exception:
+            journal.warning('plein écran impossible', exc_info=True)
+
     def _retenir_placement(self):
         import System.Windows.Forms as WinForms
         form = self.form
+        if getattr(form, 'is_fullscreen', False):
+            # Fermée pendant le diaporama : on retient la place d'avant le plein écran (pywebview la garde).
+            x, y = form.old_location.X, form.old_location.Y
+            l, h = form.old_size.Width, form.old_size.Height
+            dpi = _dll('user32').GetDpiForWindow(self.hwnd) or 96
+            if l > 0 and h > 0:
+                ecrire_placement(config.DONNEES, {'x': x, 'y': y, 'l': l, 'h': h, 'dpi': int(dpi),
+                                                  'maximisee': form.old_state == WinForms.FormWindowState.Maximized})
+            return
         etat = form.WindowState
         b = form.Bounds if etat == WinForms.FormWindowState.Normal else form.RestoreBounds
         maximisee = etat == WinForms.FormWindowState.Maximized

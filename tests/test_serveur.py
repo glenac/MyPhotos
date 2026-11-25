@@ -908,7 +908,8 @@ class TestReponses(EssaiServeur):
         # Le logo de l'en-tête est l'icône de MyPhotos : son image de 64 px, une seule fois dans la page.
         self.assertNotIn('href="#logo"', page)
         self.assertEqual(page.count('class="logo"'), 4)
-        debut = '.logo {\n  display: inline-block; width: 40px; height: 40px; flex: none;\n  background: url("'
+        debut = ('.logo {\n  display: inline-block; width: calc(40px * var(--e)); height: calc(40px * var(--e)); '
+                 'flex: none;\n  background: url("')
         self.assertEqual(page.count(debut), 1)
         uri = page.split(debut, 1)[1].split('"', 1)[0]
         self.assertTrue(uri.startswith('data:image/png;base64,'))
@@ -919,6 +920,53 @@ class TestReponses(EssaiServeur):
         for texte in ('id="proches-voir"', 'Voir les photos les plus proches', '>Moins probables<',
                       'id="grille-proches"'):
             self.assertIn(texte, page)
+
+    def test_06_semblables_routes(self):
+        """« Plus comme celle-ci » (0.4.1) : GET /api/semblables/<id> passe par l'aiguillage commun (jeton, autre
+        site refusé) ; identifiant et bornes validés."""
+        self.assertEqual(api(f'/api/semblables/{INCONNU}')[0], 404)
+        for chemin in ('/api/semblables/abc', '/api/semblables/0', '/api/semblables/-3', '/api/semblables/',
+                       '/api/semblables/1/2', '/api/semblables/..%2Fphoto%2F1', '/api/semblables/C:%5Cx.jpg'):
+            with self.subTest(chemin=chemin):
+                statut, d = api(chemin)
+                self.assertEqual(statut, 404, d)
+                self.assertIn('erreur', d)
+        for params in ('debut=-1', 'debut=abc', 'n=1e3', 'n=-5', 'debut=9999999999'):
+            with self.subTest(params=params):
+                self.assertEqual(api(f'/api/semblables/{INCONNU}?{params}')[0], 400)
+        self.assertEqual(api(f'/api/semblables/{INCONNU}', jeton=False)[0], 403)
+        statut, _, _ = requete('GET', f'/api/semblables/{INCONNU}', entetes={'Sec-Fetch-Site': 'cross-site'})
+        self.assertEqual(statut, 403)
+        self.assertEqual(api(f'/api/semblables/{INCONNU}', {})[0], 404)          # pas de POST sur cette route
+        self.vivant()
+
+    def test_07_taille_du_texte(self):
+        """Taille du texte (0.4.1) : gardée par le serveur (table meta), donnée par /api/etat et posée sur <html> dès
+        l'envoi de la page ; POST protégé comme les autres, valeur contrôlée."""
+        try:
+            self.assertEqual(api('/api/etat')[1]['taille_texte'], 'normale')
+            for taille in ('grande', 'tres-grande', 'normale'):
+                statut, d = api('/api/taille-texte', {'taille': taille})
+                self.assertEqual((statut, d), (200, {'ok': True, 'taille_texte': taille}))
+                self.assertEqual(api('/api/etat')[1]['taille_texte'], taille)
+                page = requete('GET', '/')[2].decode('utf-8')
+                attendu = '<html lang="fr">' if taille == 'normale' else f'<html lang="fr" data-taille="{taille}">'
+                self.assertEqual(page.count(attendu), 1, taille)
+                self.assertEqual(page.count('<html lang='), 1)
+            for mauvais in ('enorme', '', None, 3, ['grande'], {'a': 1}, 'Grande', 'tres_grande', '"><script>'):
+                with self.subTest(mauvais=mauvais):
+                    statut, d = api('/api/taille-texte', {'taille': mauvais})
+                    self.assertEqual(statut, 400, d)
+            self.assertEqual(api('/api/etat')[1]['taille_texte'], 'normale')
+            # Sans l'en-tête X-MyPhotos, d'un autre site, ou sans le jeton : refusé, rien ne change.
+            corps = {'taille': 'grande'}
+            self.assertEqual(requete('POST', '/api/taille-texte', corps)[0], 403)
+            self.assertEqual(requete('POST', '/api/taille-texte', corps,
+                                     {'X-MyPhotos': '1', 'Origin': 'http://evil.example'})[0], 403)
+            self.assertEqual(api('/api/taille-texte', corps, jeton=False)[0], 403)
+            self.assertEqual(api('/api/etat')[1]['taille_texte'], 'normale')
+        finally:
+            api('/api/taille-texte', {'taille': 'normale'})
 
 
 @unittest.skipUnless(PHOTOS and Path(PHOTOS).is_dir(), 'MYPHOTOS_ESSAI_PHOTOS : dossier d\'images publiques')
@@ -1007,6 +1055,41 @@ class TestBoutEnBout(EssaiServeur):
         self.assertEqual(en_tetes['content-type'], 'image/jpeg')
         self.assertEqual(octets, original.read_bytes())
         self.assertEqual(en_tetes['cross-origin-resource-policy'], 'same-origin')
+
+        # « Plus comme celle-ci » : pour la première image de chaque sujet, les photos les plus proches montrent le
+        # même sujet ; la photo elle-même n'y est pas ; scores décroissants ; pages contiguës, sans doublon.
+        statut, p = api('/api/photos?n=500')
+        par_nom = {api(f'/api/photo/{x["id"]}')[1]['nom']: x['id'] for x in p['photos']}
+        justes, premieres, vues = 0, 0, {}
+        sujets = sorted({nom.rsplit('-', 1)[0] for nom in par_nom if nom.endswith('-1.jpg')})
+        for sujet in sujets:
+            ref = par_nom[f'{sujet}-1.jpg']
+            statut, s = api(f'/api/semblables/{ref}?n=3')
+            self.assertEqual(statut, 200, s)
+            self.assertEqual((s['mode'], s['id'], s['preparation'], s['non_analysee']), ('semblables', ref, False, False))
+            self.assertEqual(s['total'], e['photos']['analysees'] - 1)
+            noms = self.noms(s['photos'])
+            vues[sujet] = noms
+            justes += sum(n.startswith(sujet + '-') for n in noms)
+            premieres += bool(noms) and noms[0].startswith(sujet + '-')
+            self.assertNotIn(ref, [x['id'] for x in s['photos']])
+            scores = [x['score'] for x in s['photos']]
+            self.assertEqual(scores, sorted(scores, reverse=True))
+        # Mesuré le 25/11/2026 (moteur « base ») : 12 bonnes sur 24, la première juste pour 5 sujets sur 8 (neige et
+        # coucher de soleil se ressemblent) ; au hasard, 2 ou 3 sur 24.
+        self.assertGreaterEqual(justes, len(sujets), f'photos semblables peu ressemblantes : {vues}')
+        self.assertGreaterEqual(premieres, len(sujets) // 2, f'photos semblables peu ressemblantes : {vues}')
+        ref = par_nom['chien-1.jpg']
+        tout = [x['id'] for x in api(f'/api/semblables/{ref}?n=500')[1]['photos']]
+        self.assertEqual(len(tout), e['photos']['analysees'] - 1)
+        pages = []
+        for debut in range(0, len(tout) + 7, 7):
+            statut, s = api(f'/api/semblables/{ref}?debut={debut}&n=7')
+            self.assertEqual((statut, s['debut']), (200, debut))
+            self.assertEqual(s['suivant'], debut + len(s['photos']))
+            pages += [x['id'] for x in s['photos']]
+        self.assertEqual(pages, tout)
+        self.vivant()
 
         # Pagination : les pages se suivent sans doublon.
         r1, r2 = self.recherche('chien', 3), None
@@ -1182,6 +1265,55 @@ class TestInstances(unittest.TestCase):
                 arreter_essai(proc)
                 proc.sortie.close()
             self.assertTrue(port_libre(self.PORT2))
+
+
+class TestTailleTexteRelance(unittest.TestCase):
+    """La taille du texte choisie est gardée après une relance de MyPhotos (table meta), et la page arrive déjà à
+    cette taille (attribut posé par le serveur). Autre port, autres données."""
+
+    PORT5 = PORT + 4
+
+    def lancer(self, donnees):
+        proc = lancer_serveur(donnees, self.PORT5, neutre=True)
+        try:
+            attendre_serveur(proc, self.PORT5)
+        except Exception:
+            arreter_essai(proc)
+            proc.sortie.close()
+            raise
+        return proc
+
+    def arreter(self, proc):
+        try:
+            if proc.poll() is None:
+                api('/api/quitter', {}, hote=f'127.0.0.1:{self.PORT5}', port=self.PORT5)
+                proc.wait(timeout=90)
+        except Exception:
+            pass
+        finally:
+            arreter_essai(proc)
+            proc.sortie.close()
+
+    def test_gardee_apres_relance(self):
+        if not port_libre(self.PORT5):
+            self.skipTest(f'port {self.PORT5} déjà pris')
+        donnees = DONNEES / 'essai-taille-texte'
+        shutil.rmtree(donnees, ignore_errors=True)
+        kw = {'hote': f'127.0.0.1:{self.PORT5}', 'port': self.PORT5}
+        proc = self.lancer(donnees)
+        try:
+            self.assertEqual(api('/api/etat', **kw)[1]['taille_texte'], 'normale')
+            self.assertEqual(api('/api/taille-texte', {'taille': 'tres-grande'}, **kw)[0], 200)
+        finally:
+            self.arreter(proc)
+        self.assertEqual(proc.returncode, 0)
+        proc = self.lancer(donnees)
+        try:
+            self.assertEqual(api('/api/etat', **kw)[1]['taille_texte'], 'tres-grande')
+            page = requete('GET', '/', **kw)[2].decode('utf-8')
+            self.assertIn('<html lang="fr" data-taille="tres-grande">', page)
+        finally:
+            self.arreter(proc)
 
 
 class TestActionsWindows(unittest.TestCase):
@@ -3076,6 +3208,164 @@ class TestRechercheProches(unittest.TestCase):
         self.assertEqual(pages, ids)                             # pages contiguës, sans doublon
         self.assertEqual(self.r.chercher('chien', 50, 4, proches=True)['proches'], [])
         self.assertIsNone(self.r.chercher('   ', 0, 4, proches=True))
+
+
+class TestSemblablesRecherche(unittest.TestCase):
+    """recherche.semblables : cosinus entre vecteurs d'image, la photo exclue, ordre stable, pages sans doublon ;
+    classement gardé pour les pages suivantes et refait quand les vecteurs changent."""
+
+    def setUp(self):
+        import numpy as np
+        from myphotos import recherche
+        self.np = np
+        dim = 8
+        # Cosinus avec la photo 101 (première ligne) : 102 → 0,9 ; 103 → 0,5 ; 104 → -0,2 ; 105 → 0,5 ; 106 → 0,7.
+        cos = {101: 1.0, 102: 0.9, 103: 0.5, 104: -0.2, 105: 0.5, 106: 0.7}
+        mat = np.zeros((len(cos), dim), np.float32)
+        for i, c in enumerate(cos.values()):
+            mat[i, 0] = c
+            mat[i, 1 + i] = np.sqrt(1 - c * c)
+        self.ids = np.array(list(cos), np.int64)
+        self.mat = mat / np.linalg.norm(mat, axis=1, keepdims=True)
+        essai = self
+        self.generation = 1
+        self.chargements = 0
+
+        class Base:
+            def generation(self):
+                return essai.generation
+
+            def vecteurs(self, cle):
+                essai.chargements += 1
+                return essai.ids, essai.mat, np.full(len(essai.ids), np.datetime64('NaT', 's'))
+
+        def sans_moteur():
+            raise AssertionError('« plus comme celle-ci » ne demande jamais le moteur')
+        self.r = recherche.Recherche(Base(), sans_moteur, 'base')
+
+    def test_ordre_exclusion_et_pages(self):
+        res = self.r.semblables(101, 0, 100)
+        self.assertEqual([x['id'] for x in res['photos']], [102, 106, 103, 105, 104])   # 103 avant 105 : ordre stable
+        self.assertEqual((res['total'], res['debut'], res['analysees']), (5, 0, 6))
+        scores = [x['score'] for x in res['photos']]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        self.assertAlmostEqual(scores[0], 0.9, places=3)
+        pages = []
+        for debut in range(0, 7, 2):
+            p = self.r.semblables(101, debut, 2)
+            self.assertEqual(p['debut'], debut)
+            pages += [x['id'] for x in p['photos']]
+        self.assertEqual(pages, [102, 106, 103, 105, 104])
+        self.assertEqual(self.r.semblables(101, 50, 10)['photos'], [])
+        self.assertEqual(len(self.r.semblables(101, 0, None)['photos']), 5)
+        self.assertEqual(self.r.semblables(101, 0, 0)['photos'], [])
+        # Depuis une autre photo : elle est exclue, et la 101 y figure.
+        ids = [x['id'] for x in self.r.semblables(104, 0, 10)['photos']]
+        self.assertNotIn(104, ids)
+        self.assertEqual(sorted(ids), [101, 102, 103, 105, 106])
+
+    def test_photo_sans_vecteur_et_matrice_vide(self):
+        self.assertIsNone(self.r.semblables(999, 0, 10))
+        self.ids = self.np.empty(0, self.np.int64)
+        self.mat = self.np.empty((0, 0), self.np.float32)
+        self.generation += 1
+        self.r.rafraichir()
+        self.assertIsNone(self.r.semblables(101, 0, 10))
+
+    def test_classement_garde_puis_refait(self):
+        self.r.semblables(101, 0, 2)
+        self.r.semblables(101, 2, 2)
+        self.assertEqual(self.chargements, 1)
+        # Nouvelles analyses : la 104 devient la plus proche ; le classement suit dès le rechargement des vecteurs.
+        self.mat = self.mat.copy()
+        self.mat[3] = self.mat[0]
+        self.generation += 1
+        self.r.rafraichir()
+        self.assertEqual(self.r.semblables(101, 0, 1)['photos'][0]['id'], 104)
+        self.assertEqual(self.chargements, 2)
+
+    def test_100000_photos(self):
+        """Vitesse sur 100 000 vecteurs factices (dimension réduite à 64 pour l'essai) ; la vraie mesure, en 768 et
+        1 152, est dans docs/ARCHITECTURE.md."""
+        np = self.np
+        rng = np.random.default_rng(7)
+        mat = rng.standard_normal((100_000, 64), dtype=np.float32)
+        self.mat = mat / np.linalg.norm(mat, axis=1, keepdims=True)
+        self.ids = np.arange(1, 100_001, dtype=np.int64)
+        self.generation += 1
+        self.r.rafraichir()
+        self.r.semblables(1, 0, 1)                    # vecteurs chargés
+        debut = time.perf_counter()
+        res = self.r.semblables(50_000, 0, 150)
+        premiere = time.perf_counter() - debut
+        debut = time.perf_counter()
+        suite = self.r.semblables(50_000, 150, 150)
+        seconde = time.perf_counter() - debut
+        self.assertEqual(res['total'], 99_999)
+        attendu = np.argsort(-(self.mat @ self.mat[49_999]), kind='stable')
+        attendu = [int(self.ids[i]) for i in attendu if i != 49_999]
+        self.assertEqual([x['id'] for x in res['photos'] + suite['photos']], attendu[:300])
+        self.assertLess(premiere, 1.0)
+        self.assertLess(seconde, 0.1)                 # page suivante : classement gardé
+
+
+class TestSemblablesApplication(EssaiApplication):
+    """Application.semblables : sans moteur, pendant la préparation, photo pas encore analysée : une réponse vide
+    avec un message, jamais une erreur ; photo inconnue : 404 ; ensuite, les photos du même moteur seulement."""
+
+    def test_etats_et_resultats(self):
+        import numpy as np
+        app = self.app
+        dossier = self.tmp / 'photos-semblables'
+        dossier.mkdir()
+        did = app.base.ajouter_dossier(str(dossier))['id']
+        lignes = [(str(dossier / f'p{i}.jpg'), 1000 + i, 1_700_000_000_000_000_000 + i, f'2023-08-{10 + i:02d}T10:00:00')
+                  for i in range(5)]
+        app.base.ajouter_photos(did, lignes)
+        connus = app.base.connus(did)
+        ids = [connus[l[0]][0] for l in lignes]
+        cos = [1.0, 0.2, 0.8, 0.5]                      # p0 (référence), p1, p2, p3 ; p4 n'est pas analysée
+
+        def vecteur(c, k):
+            v = np.zeros(8, np.float32)
+            v[0], v[1 + k] = c, np.sqrt(1 - c * c)
+            return v.astype(np.float16).tobytes()
+        analyses = [{'id': ids[k], 'taille': lignes[k][1], 'modifie': lignes[k][2], 'largeur': 640, 'hauteur': 480,
+                     'date_prise': f'2023-08-{12 + k:02d}T10:00:00', 'lat': None, 'lon': None,
+                     'vecteur': vecteur(c, k), 'miniature': b'\xff\xd8'} for k, c in enumerate(cos)]
+        self.assertEqual(app.base.enregistrer(analyses, [], 'base'), 4)
+        dossier.rmdir()                                  # dossier injoignable : ses photos restent dans l'index
+        with self.assertRaises(self.serveur.Refus) as e:
+            app.semblables(987654, 0, 10)
+        self.assertEqual(e.exception.statut, 404)
+        r = app.semblables(ids[0], 0, 10)                # aucun moteur
+        self.assertEqual((r['mode'], r['preparation'], r['total'], r['photos']), ('semblables', False, 0, []))
+        self.assertEqual(r['message'], self.serveur.SEMBLABLES_SANS_MOTEUR)
+        self.assertEqual(r['date'], '2023-08-12T10:00:00')
+        for cle, valeur in (('moteur', 'base'), ('moteur_vision', 'fp16'), ('assistant', 'fini')):
+            app.base.meta_set(cle, valeur)
+        app.demarrer()
+        r = app.semblables(ids[0], 0, 10)                # moteur en préparation
+        self.assertEqual((r['preparation'], r['photos'], r['message']), (True, [], self.serveur.PREPARATION))
+        app.serveur_pret()
+        app.page_servie()
+        self.barriere.set()
+        self.assertTrue(attendre(self.prete, 10, 0.05), 'la préparation ne finit pas')
+        r = app.semblables(ids[0], 0, 10)
+        self.assertEqual((r['preparation'], r['message'], r['non_analysee']), (False, None, False))
+        self.assertEqual([x['id'] for x in r['photos']], [ids[2], ids[3], ids[1]])
+        self.assertEqual((r['total'], r['suivant'], r['analysees']), (3, 3, 4))
+        self.assertEqual(r['photos'][0]['date'], '2023-08-14T10:00:00')
+        self.assertEqual(set(r['photos'][0]), {'id', 'score', 'date', 'largeur', 'hauteur'})
+        r = app.semblables(ids[0], 1, 1)
+        self.assertEqual(([x['id'] for x in r['photos']], r['debut'], r['suivant']), ([ids[3]], 1, 2))
+        r = app.semblables(ids[4], 0, 10)                # pas encore analysée
+        self.assertEqual((r['non_analysee'], r['photos'], r['message']),
+                         (True, [], self.serveur.SEMBLABLES_PAS_ANALYSEE))
+        # Une photo partie entre-temps n'est jamais renvoyée, même si les vecteurs en mémoire la connaissent encore.
+        app.base.oublier_photos([ids[2]])
+        r = app.semblables(ids[0], 0, 10)
+        self.assertNotIn(ids[2], [x['id'] for x in r['photos']])
 
 
 class TestCarte(unittest.TestCase):

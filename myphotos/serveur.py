@@ -188,6 +188,14 @@ CALME_MAX_S = 2.0                  # … sans attendre plus de 2 s
 PREPARATION_MAX_S = 300            # un changement de moteur attend sa préparation au plus 5 minutes
 ATTENTE_RECHERCHE_S = 2.0          # moteur en plein chargement : une recherche attend jusqu'à 2 s qu'il soit prêt
 PREPARATION = 'Préparation du moteur de reconnaissance…'
+# « Plus comme celle-ci » (0.4.1) : sans moteur, ou photo pas encore analysée par le moteur actuel, une réponse vide avec
+# une phrase simple, jamais une erreur.
+SEMBLABLES_SANS_MOTEUR = ('Les photos qui se ressemblent pourront être trouvées dès que le moteur de reconnaissance '
+                          'sera installé.')
+SEMBLABLES_PAS_ANALYSEE = ("Cette photo n'est pas encore analysée : MyPhotos ne peut pas encore trouver les photos qui "
+                           "lui ressemblent. Réessayez un peu plus tard.")
+# Taille du texte de la page (0.4.1), gardée dans la table meta (le profil de la fenêtre est effacé à chaque fermeture).
+TAILLES_TEXTE = ('normale', 'grande', 'tres-grande')
 
 # Images que le navigateur affiche telles quelles ; les autres extensions de config.EXTENSIONS (TIFF) sont
 # converties en JPEG à la volée.
@@ -2413,6 +2421,8 @@ class Application:
             'doublons': self.etat_doublons(generation),
             # Nouvelle version de MyPhotos : accord, version proposée, téléchargement, bilan (mise_a_jour.py).
             'mise_a_jour': self.mises_a_jour.resume(),
+            # Taille du texte de la page (Réglages, 0.4.1) : normale, grande, tres-grande.
+            'taille_texte': self.taille_texte(),
         }
 
     def action_mise_a_jour(self, action, corps):
@@ -2499,6 +2509,57 @@ class Application:
         for g in groupes:
             reponse[g] = enrichir(res.get(g))
         return reponse
+
+    def semblables(self, pid, debut, n):
+        """« Plus comme celle-ci » : les photos qui ressemblent le plus à la photo pid (mode 'semblables'), de la plus
+        proche à la moins proche, par pages. Pendant la préparation du moteur : réponse vide marquée preparation=True,
+        que la page relance d'elle-même ; sans moteur, ou photo pas encore analysée par ce moteur : réponse vide avec
+        un message. Jamais une erreur, sauf pour une photo inconnue (404)."""
+        p = self.base.photo(pid)
+        if p is None:
+            raise Refus('Cette photo est introuvable.', 404)
+        reponse = {'mode': 'semblables', 'id': pid, 'date': p['date'], 'preparation': False, 'message': None,
+                   'non_analysee': False, 'debut': debut, 'suivant': debut, 'total': 0, 'photos': [],
+                   'analysees': None, 'duree_ms': 0}
+        r = self.recherche
+        prep = self._preparation
+        if not self.changement and r is not None and prep is not None and prep['etat'] == 'en_cours':
+            prep['finie'].wait(ATTENTE_RECHERCHE_S)   # moteur en plein chargement : la réponse attend un peu
+        if self.changement or (r is not None and self.en_preparation()):
+            return dict(reponse, preparation=True, message=PREPARATION)
+        if r is None:
+            return dict(reponse, message=SEMBLABLES_SANS_MOTEUR)
+        try:
+            res = r.semblables(pid, debut, n)
+        except Exception:
+            journal.exception('photos semblables')
+            raise Refus('La recherche a rencontré un problème. Réessayez ; si cela continue, relancez MyPhotos.', 500)
+        if res is None:
+            return dict(reponse, message=SEMBLABLES_PAS_ANALYSEE, non_analysee=True)
+        infos = {x['id']: x for x in self.base.photos([i['id'] for i in res['photos']])}
+        photos = []
+        for i in res['photos']:
+            x = infos.get(i['id'])
+            if x is not None:                         # retirée entre-temps
+                photos.append({'id': i['id'], 'score': i['score'], 'date': x['date'], 'largeur': x['largeur'],
+                               'hauteur': x['hauteur']})
+        reponse.update(debut=res['debut'], suivant=res['debut'] + len(res['photos']), total=res['total'],
+                       photos=photos, analysees=res['analysees'], duree_ms=res['duree_ms'])
+        return reponse
+
+    def taille_texte(self):
+        """Taille du texte choisie dans les Réglages : 'normale' (défaut), 'grande' ou 'tres-grande'."""
+        try:
+            v = self.base.meta_get('taille_texte')
+        except sqlite3.Error:
+            return 'normale'
+        return v if v in TAILLES_TEXTE else 'normale'
+
+    def regler_taille_texte(self, taille):
+        if taille not in TAILLES_TEXTE:
+            raise Refus('Taille du texte inconnue.', 400)
+        self.base.meta_set('taille_texte', taille)
+        return {'ok': True, 'taille_texte': taille}
 
     def _attente_preparation(self, q, debut, proches):
         return {'mode': 'proches' if proches else 'recherche', 'preparation': True, 'message': PREPARATION,
@@ -3092,7 +3153,9 @@ class Page:
                 return p
         return None
 
-    def rendre(self, nonce):
+    def rendre(self, nonce, taille='normale'):
+        """La page, avec ce nonce ; taille : taille du texte choisie (Réglages), posée sur <html> dès l'envoi, pour
+        que la page s'affiche tout de suite à la bonne taille, sans changer sous les yeux."""
         p = self.chemin()
         if p is None:
             return None
@@ -3100,6 +3163,8 @@ class Page:
         if self._cache[0] != cle:
             self._cache = (cle, p.read_text(encoding='utf-8'), None)
         texte = self._cache[1]
+        if taille in TAILLES_TEXTE and taille != 'normale':
+            texte = texte.replace('<html lang="fr">', f'<html lang="fr" data-taille="{taille}">', 1)
         return (texte.replace('<script>', f'<script nonce="{nonce}">')
                 .replace('<style>', f'<style nonce="{nonce}">')).encode('utf-8')
 
@@ -3425,7 +3490,7 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
 
     def _get(self, app, chemin, params):
         if chemin in ('/', '/index.html'):
-            self._page()
+            self._page(app.taille_texte())
             return app.page_servie()                  # le moteur pourra se préparer
         if chemin == '/api/etat':
             self._json(app.etat())
@@ -3447,6 +3512,11 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             if (params.get('proches') or [''])[-1] == '1' and q.strip():
                 return self._json(app.chercher(q, debut, n, proches=True))   # « voir les plus proches »
             return self._json(app.chercher(q, debut, n))
+        if chemin.startswith('/api/semblables/'):          # « Plus comme celle-ci » (0.4.1)
+            pid = self._identifiant(chemin[len('/api/semblables/'):])
+            debut = self._entier(params, 'debut', 0, 0, 10 ** 8)
+            n = self._entier(params, 'n', LISTE_DEFAUT, 1, LISTE_MAX)
+            return self._json(app.semblables(pid, debut, n))
         for prefixe, action in (('/api/photo/', self._info_photo), ('/miniature/', self._miniature),
                                 ('/photo/', self._photo)):
             if chemin.startswith(prefixe):
@@ -3515,6 +3585,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             r = {'ok': True}
         elif chemin == '/api/raccourci':
             r = app.creer_raccourcis()
+        elif chemin == '/api/taille-texte':
+            r = app.regler_taille_texte(corps.get('taille'))
         elif chemin.startswith('/api/mise-a-jour/') and chemin.count('/') == 3:
             r = app.action_mise_a_jour(chemin.rsplit('/', 1)[1], corps)
         elif chemin == '/api/quitter':
@@ -3527,9 +3599,9 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
 
     # ------------------------------------------------ contenus
 
-    def _page(self):
+    def _page(self, taille='normale'):
         nonce = secrets.token_urlsafe(18)
-        corps = self.server.page.rendre(nonce)
+        corps = self.server.page.rendre(nonce, taille)
         if corps is None:
             corps = '<!doctype html><meta charset="utf-8"><title>MyPhotos</title><p>La page de MyPhotos est ' \
                     'introuvable : réinstallez MyPhotos.</p>'.encode('utf-8')

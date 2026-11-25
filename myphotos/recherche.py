@@ -114,6 +114,9 @@ class Recherche:
         self._generation = None
         self._controle = 0.0                     # dernier coup d'œil à base.generation()
         self._intervalle = RECHARGEMENT_MIN_S
+        self._chargement = 0                     # numéro de la matrice chargée (change à chaque rechargement)
+        self._dernier_classement = None          # « plus comme celle-ci » : (photo, chargement, classement)
+        self._verrou_classement = threading.Lock()
 
     # ------------------------------------------------ recherche
 
@@ -172,6 +175,42 @@ class Recherche:
         res['duree_ms'] = round((time.perf_counter() - t0) * 1000, 1)
         return res
 
+    # ------------------------------------------------ photos qui se ressemblent
+
+    def semblables(self, photo_id, debut=0, n=200):
+        """« Plus comme celle-ci » : les photos qui ressemblent le plus à la photo photo_id, de la plus proche à la
+        moins proche (cosinus entre son vecteur d'image et celui de chaque autre photo analysée par le même moteur).
+
+        Renvoie None si la photo n'a pas de vecteur de ce moteur (pas encore analysée, ou analysée par un autre
+        moteur), sinon {total, debut, photos: [{id, score}], analysees, duree_ms}. La photo elle-même est exclue ;
+        la page [debut, debut + n) court sur un classement stable (pages sans doublon). Aucun moteur n'est chargé :
+        seuls les vecteurs déjà en mémoire servent. Le dernier classement est gardé pour les pages suivantes.
+        """
+        t0 = time.perf_counter()
+        debut = max(0, int(debut))
+        n = None if n is None else max(0, int(n))
+        photo_id = int(photo_id)
+        ids, mat, numero = self._vecteurs_numerotes()
+        with self._verrou_classement:
+            garde = self._dernier_classement
+            if garde is not None and garde[0] == photo_id and garde[1] == numero:
+                classement, scores = garde[2], garde[3]
+            else:
+                classement = scores = None
+                trouve = np.flatnonzero(ids == photo_id) if mat is not None and len(ids) else ()
+                if len(trouve):
+                    i = int(trouve[0])
+                    scores = mat @ mat[i]
+                    classement = np.argsort(-scores, kind='stable')
+                    classement = classement[classement != i]
+                self._dernier_classement = (photo_id, numero, classement, scores)
+        if classement is None:
+            return None
+        page = classement[debut:] if n is None else classement[debut:debut + n]
+        return {'total': int(len(classement)), 'debut': debut, 'analysees': int(len(ids)),
+                'photos': [{'id': int(ids[i]), 'score': round(float(scores[i]), 4)} for i in page],
+                'duree_ms': round((time.perf_counter() - t0) * 1000, 1)}
+
     # ------------------------------------------------ vecteur de la requête
 
     def _moteur_texte(self):
@@ -207,18 +246,23 @@ class Recherche:
     def _vecteurs(self):
         """(ids, matrice) à jour : rechargés quand base.generation() change, au plus une fois par seconde
         (plus rarement si le chargement est long, pour ne pas freiner l'indexation)."""
+        return self._vecteurs_numerotes()[:2]
+
+    def _vecteurs_numerotes(self):
+        """(ids, matrice, numéro du chargement), lus ensemble : le numéro change à chaque rechargement."""
         with self._verrou_matrice:
             t = time.monotonic()
             if self._matrice is not None and t - self._controle < self._intervalle:
-                return self._ids, self._matrice
+                return self._ids, self._matrice, self._chargement
             self._controle = t
             g = self.base.generation()
             if self._matrice is None or g != self._generation:
                 debut = time.perf_counter()
                 ids, mat, dates = self.base.vecteurs(self.cle_modele)
                 self._ids, self._matrice, self._dates, self._generation = ids, mat, dates, g
+                self._chargement += 1
                 self._intervalle = max(RECHARGEMENT_MIN_S, 3 * (time.perf_counter() - debut))
-            return self._ids, self._matrice
+            return self._ids, self._matrice, self._chargement
 
     # ------------------------------------------------ entretien
 

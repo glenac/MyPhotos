@@ -1374,7 +1374,7 @@ class TestChoixDossierReel(unittest.TestCase):
                      'essai réel de la fenêtre : MYPHOTOS_ESSAI_FENETRE=1 (Windows)')
 class TestFenetreReelle(unittest.TestCase):
     PORT = int(os.environ.get('MYPHOTOS_ESSAI_PORT_FENETRE') or 7938)
-    PORT_CDP = PORT + 1500
+    PORT_CDP = int(os.environ.get('MYPHOTOS_ESSAI_PORT_CDP') or PORT + 1500)
     ORIGINE = f'http://127.0.0.1:{PORT}'
 
     @classmethod
@@ -1773,6 +1773,100 @@ class TestFenetreReelle(unittest.TestCase):
                                                      captures / 'Capture d’écran 1.png')))   # jamais supprimées
             choix_faits = [x for x in self.lignes_trace() if x['quoi'] == 'choix']
             self.assertEqual([x['args'][0] for x in choix_faits[1:]], [racine, racine])   # ouverte DANS le dossier
+        finally:
+            if ws is not None:
+                ws.fermer()
+            if O.code_sortie(hproc) is None:
+                job.terminer()                       # filet : les processus de CE job seulement
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
+
+    def test_diaporama_plein_ecran(self):
+        """Diaporama (0.4.1) : la page demande le plein écran (API Fullscreen) et la fenêtre de MyPhotos le prend
+        (ContainsFullScreenElementChanged) ; les photos défilent ; Échap quitte le plein écran et le diaporama, la
+        visionneuse reste ouverte, et la fenêtre reprend sa place et sa taille."""
+        O = self.O
+        import ctypes
+        from ctypes import wintypes
+        import processus_essai
+        env = dict(self.env, MYPHOTOS_DEBUG='1',
+                   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=f'--remote-debugging-port={self.PORT_CDP}')
+        ligne = [sys.executable, '-X', 'faulthandler', str(self.lanceur)]
+        nom_bureau = f'MyPhotosDiaporama{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        fil = O.FilBureau(hbureau)
+        job = processus_essai.Job()
+        pid, hproc = O.lancer(ligne, nom_bureau, str(RACINE), env, job)
+        ws = None
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [('cbSize', wintypes.DWORD), ('rcMonitor', wintypes.RECT), ('rcWork', wintypes.RECT),
+                        ('dwFlags', wintypes.DWORD)]
+
+        u32 = ctypes.WinDLL('user32', use_last_error=True)          # types déclarés ici seulement
+        u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        u32.MonitorFromWindow.restype = ctypes.c_void_p
+        u32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+
+        def rectangle(hwnd):
+            r = wintypes.RECT()
+            u32.GetWindowRect(hwnd, ctypes.byref(r))
+            return (r.left, r.top, r.right, r.bottom)
+
+        def ecran(hwnd):
+            m = MONITORINFO()
+            m.cbSize = ctypes.sizeof(m)
+            u32.GetMonitorInfoW(u32.MonitorFromWindow(hwnd, 2), ctypes.byref(m))
+            r = m.rcMonitor
+            return (r.left, r.top, r.right, r.bottom)
+        try:
+            page = O.attendre_page(self.PORT_CDP, self.ORIGINE + '/', 120)
+            ws = O.CDP(page['webSocketDebuggerUrl'])
+            ws.appel('Runtime.enable')
+            ws.appel('Emulation.setFocusEmulationEnabled', enabled=True)
+            self.assertTrue(O.attendre(lambda: ws.evaluer(
+                "!document.querySelector('#appli').hidden && document.querySelectorAll('#resultats a.tuile').length"),
+                60), 'écran des photos absent')
+            principale = O.attendre(lambda: next((f for f in fil.faire(lambda: O.fenetres(set(job.pids())))
+                                                  if f['titre'] == 'MyPhotos' and f['visible']
+                                                  and f['classe'].startswith('WindowsForms')), None), 10)
+            self.assertTrue(principale)
+            hwnd = principale['hwnd']
+            avant = fil.faire(lambda: rectangle(hwnd))
+            plein = fil.faire(lambda: ecran(hwnd))
+            self.assertNotEqual(avant, plein)
+            ws.evaluer("document.querySelector('#resultats a.tuile').click(); 1", geste=True)
+            self.assertTrue(O.attendre(lambda: ws.evaluer(
+                "document.querySelector('#v-image').classList.contains('chargee')"), 30))
+            premiere = ws.evaluer('location.hash')
+            ws.evaluer("document.querySelector('.dp-durees [data-duree=\"3\"]').click(); "
+                       "document.querySelector('#v-diaporama').click(); 1", geste=True)
+            self.assertTrue(O.attendre(lambda: ws.evaluer(
+                "!!document.fullscreenElement && document.fullscreenElement.id === 'diaporama'"), 10),
+                'plein écran refusé')
+            self.assertTrue(O.attendre(lambda: fil.faire(lambda: rectangle(hwnd)) == plein, 10),
+                            (fil.faire(lambda: rectangle(hwnd)), plein))
+            ws.capture(str(self.dossier / 'diaporama-plein-ecran.png'))
+            # Les photos défilent (3 s chacune).
+            pos = ws.evaluer("document.querySelector('#dp-position').textContent")
+            self.assertTrue(O.attendre(lambda: ws.evaluer(
+                "document.querySelector('#dp-position').textContent") != pos, 10), pos)
+            # Échap : fin du plein écran et du diaporama ; la visionneuse reste, sur la dernière photo montrée.
+            ws.touche('Escape', 'Escape', 27)
+            self.assertTrue(O.attendre(lambda: ws.evaluer(
+                "!document.fullscreenElement && document.querySelector('#diaporama').hidden"), 10))
+            self.assertTrue(ws.evaluer("document.querySelector('#visionneuse').open"))
+            self.assertNotEqual(ws.evaluer('location.hash'), premiere)
+            self.assertTrue(O.attendre(lambda: fil.faire(lambda: rectangle(hwnd)) == avant, 10),
+                            (fil.faire(lambda: rectangle(hwnd)), avant))
+            ws.fermer()
+            ws = None
+            fil.faire(lambda: O.u32.PostMessageW(hwnd, O.WM_CLOSE, 0, 0))
+            self.assertTrue(O.attendre_processus(hproc, 60), 'MyPhotos ne s\'arrête pas')
+            self.assertEqual(O.code_sortie(hproc), 0)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
         finally:
             if ws is not None:
                 ws.fermer()
