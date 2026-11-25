@@ -50,6 +50,15 @@ en erreur.
 
 ## Publier
 
+**En une commande** (depuis la 0.4.1) : `construction\publier.ps1 --essai`, puis `construction\publier.ps1`.
+Il contrôle que main est propre et envoyée, que l'étiquette est libre, que les nouveautés
+(`construction\nouveautes.json`) et les notes (`dist\NOTES-<version>.md`, écrites à la main avec les repères
+`{SHA_INST}`, `{SHA_EXE}`, `{SHA_ZIP}`, `{SHA_JSON}`, `{TAILLE_INST}`, `{TAILLE_EXE}`, `{TAILLE_ZIP}`,
+`{DATE_DEFENDER}`, `{DATE_DEFENDER_EN}`) existent et que la clé de signature correspond ; construit tout (exe,
+dossier, paquet, installateur, manifeste) ; contrôle les empreintes, le manifeste et l'analyse Defender ; puis
+(sans `--essai`) pose l'étiquette, crée la Release en brouillon avec ses 8 fichiers, la publie comme dernière
+version et vérifie en ligne (fichiers retéléchargés, manifeste lu par MyPhotos). Le détail des étapes suit.
+
 Une fois `dist\MyPhotos.exe` construit **et essayé**, préparer ce qui sera publié :
 
 ```
