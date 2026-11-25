@@ -133,6 +133,10 @@ PHOTO_ABSENTE = ("La photo d'origine est introuvable : le disque est peut-être 
 # Photo ouverte (visionneuse, Ouvrir, Afficher dans le dossier, Copier) dont le fichier a disparu alors que son dossier
 # suivi répond : MyPhotos l'oublie aussitôt (réponse 410). Dossier injoignable : rien n'est oublié (PHOTO_ABSENTE).
 PHOTO_RETIREE = "Cette photo n'existe plus sur le disque : MyPhotos l'a retirée."
+# Son sous-dossier a disparu (renommé, déplacé ou supprimé) : rien n'est oublié, un tour de son dossier suivi la retrouve
+# sous son nouveau nom, avec son analyse, ou l'oublie (réponse 404).
+PHOTO_DEPLACEE = ("Le dossier de cette photo a été renommé, déplacé ou supprimé : MyPhotos refait le tour de vos "
+                  "dossiers pour la retrouver.")
 # Assistant : sous-dossiers décochés d'office, et pourquoi (une phrase simple).
 RAISONS_SOUS_DOSSIER = {'captures': "Décoché : ce dossier semble contenir des captures d'écran, pas des photos.",
                         'fonds': "Décoché : ce dossier semble contenir des fonds d'écran, pas des photos."}
@@ -2302,7 +2306,8 @@ class Application:
 
     def fichier_photo(self, pid, oublier=False):
         """(fiche, chemin habituel, chemin système, extension) d'une photo connue, qui est bien une image.
-        oublier=True : si le fichier a disparu alors que son dossier répond, la photo est oubliée (Refus 410)."""
+        oublier=True : si le fichier a disparu alors que son dossier répond, la photo est oubliée (Refus 410) ; si c'est
+        son sous-dossier qui a disparu, un tour de son dossier suivi est demandé (Refus 404, voir photo_partie)."""
         p = self.base.photo(pid)
         if p is None:
             raise Refus('Cette photo est introuvable.', 404)
@@ -2312,42 +2317,63 @@ class Application:
             raise Refus('Ce fichier n\'est pas une photo.', 403)
         systeme = chemin_systeme(chemin)
         if not os.path.isfile(systeme):
-            if oublier and self._oublier_si_partie(p):
+            etat = self._oublier_si_partie(p) if oublier else None
+            if etat == 'partie':
                 raise Refus(PHOTO_RETIREE, 410)
-            raise Refus(PHOTO_ABSENTE, 404)
+            raise Refus(PHOTO_DEPLACEE if etat == 'deplacee' else PHOTO_ABSENTE, 404)
         return p, chemin_affiche(chemin), systeme, ext
 
     @staticmethod
     def photo_partie(p):
-        """Vrai si le fichier de cette photo n'existe plus ALORS QUE son dossier suivi répond : elle a vraiment été
-        supprimée ou déplacée hors de MyPhotos. Faux si elle est là, ou si on ne peut pas savoir (disque débranché,
-        réseau coupé, dossier vide comme un partage monté sans son disque ou un dossier Images qui ne contient plus que
-        desktop.ini, accès refusé) : rien n'est alors oublié."""
+        """Le fichier de cette photo a-t-il disparu pour de bon ?
+        - 'partie' : il n'existe plus ALORS QUE son dossier suivi répond et que le dossier de la photo est toujours là :
+          elle a vraiment été supprimée, ou déplacée hors de MyPhotos ;
+        - 'deplacee' : c'est son sous-dossier qui a disparu, renommé, déplacé ou supprimé : on ne peut pas savoir d'ici
+          lequel. Seul un tour du dossier suivi le dira, et il reconnaît une photo déplacée (même taille, même date) :
+          elle garde alors son analyse. L'oublier tout de suite la ferait analyser de nouveau sous son nouveau nom ;
+        - None : elle est là, ou on ne peut pas savoir (disque débranché, réseau coupé, dossier vide comme un partage
+          monté sans son disque ou un dossier Images qui ne contient plus que desktop.ini, accès refusé).
+        Rien n'est oublié ni demandé ici (voir _oublier_si_partie)."""
         dossier = p.get('dossier')
         if not dossier:
-            return False
+            return None
         try:
             os.stat(chemin_systeme(p['chemin']))
-            return False                         # le fichier est là
+            return None                          # le fichier est là
         except FileNotFoundError:
             pass                                 # fichier ou dossier introuvable (ERROR_FILE/PATH_NOT_FOUND)
         except (OSError, ValueError):
-            return False                         # accès refusé, réseau, disque pas prêt… : on ne sait pas
+            return None                          # accès refusé, réseau, disque pas prêt… : on ne sait pas
         try:
-            return not dossier_vide(dossier)
+            if dossier_vide(dossier):
+                return None
         except OSError:
-            return False
+            return None
+        parent = os.path.dirname(p['chemin'])
+        try:
+            parent_la = cle_chemin(parent) == cle_chemin(dossier) or os.path.isdir(chemin_systeme(parent))
+        except (OSError, ValueError):
+            parent_la = False
+        return 'partie' if parent_la else 'deplacee'
 
     def _oublier_si_partie(self, p):
-        if not self.photo_partie(p):
-            return False
-        self.base.oublier_photos([p['id']])
-        journal.info('photo n° %d disparue du disque : oubliée', p['id'])
-        return True
+        """Photo dont le fichier manque (photo_partie) : 'partie', elle est oubliée à l'instant ; 'deplacee', rien n'est
+        oublié et un tour de son dossier suivi est demandé ; None, rien n'est fait. Renvoie cet état."""
+        etat = self.photo_partie(p)
+        if etat == 'partie':
+            self.base.oublier_photos([p['id']])
+            journal.info('photo n° %d disparue du disque : oubliée', p['id'])
+        elif etat == 'deplacee':
+            journal.info('photo n° %d : son sous-dossier a disparu, tour de son dossier demandé', p['id'])
+            ix = self.indexeur
+            if ix is not None:
+                ix.relancer(dossiers=[p['dossier_id']])
+        return etat
 
     def verifier_photo(self, pid):
         """Visionneuse : la photo d'origine n'a pas pu s'afficher. {etat, message} : 'presente' (le fichier est là,
-        mais ne s'affiche pas), 'retiree' (disparue alors que son dossier répond : oubliée à l'instant), 'injoignable'
+        mais ne s'affiche pas), 'retiree' (disparue alors que son dossier répond : oubliée à l'instant), 'deplacee' (son
+        sous-dossier a disparu : rien n'est oublié, un tour de son dossier la retrouvera ou l'oubliera), 'injoignable'
         (disque débranché… : rien n'est oublié) ou 'inconnue' (plus dans MyPhotos)."""
         p = self.base.photo(pid)
         if p is None:
@@ -2357,8 +2383,11 @@ class Application:
                 return {'etat': 'presente', 'message': None}
         except (OSError, ValueError):
             pass
-        if self._oublier_si_partie(p):
+        etat = self._oublier_si_partie(p)
+        if etat == 'partie':
             return {'etat': 'retiree', 'message': PHOTO_RETIREE}
+        if etat == 'deplacee':
+            return {'etat': 'deplacee', 'message': PHOTO_DEPLACEE}
         return {'etat': 'injoignable', 'message': PHOTO_ABSENTE}
 
     def ouvrir(self, pid):
@@ -2432,8 +2461,9 @@ class Application:
                 refusees.append({'id': pid, 'raison': INTROUVABLE})
                 continue
             raison, systeme, st = self._fichier_present(p)
-            if raison == PHOTO_ABSENTE and self._oublier_si_partie(p):
-                raison = PHOTO_RETIREE
+            if raison == PHOTO_ABSENTE:
+                etat = self._oublier_si_partie(p)
+                raison = PHOTO_RETIREE if etat == 'partie' else PHOTO_DEPLACEE if etat == 'deplacee' else raison
             if raison:
                 refusees.append({'id': pid, 'raison': raison})
                 continue
