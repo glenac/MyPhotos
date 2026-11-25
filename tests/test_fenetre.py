@@ -451,6 +451,10 @@ class TestRelance(unittest.TestCase):
         patcher = mock.patch.object(fenetre, 'tenir_mutex')
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Port « tenu par notre compte » (fenetre.port_tenu_par) : jamais la vraie table des ports de cet ordinateur.
+        patcher = mock.patch.object(fenetre, 'port_tenu_par', return_value='nous')
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_decisions(self):
         ancienne = {'nom': 'MyPhotos', 'version': '0.2.0'}
@@ -507,18 +511,65 @@ class TestRelance(unittest.TestCase):
         self.assertFalse(fenetre.autre_compte({'version': '0.2.0'}, moi))
 
     def test_jeton_refuse(self):
-        """0.4.0 : la MyPhotos déjà lancée refuse notre jeton d'accès (elle tourne pour un autre compte Windows : son
-        jeton est dans SES données) : message, et rien n'est ouvert ; sans page, rien du tout."""
+        """0.4.0 : notre MyPhotos (port tenu par notre compte, vérifié avant) refuse le jeton lu dans nos données
+        (autres données, ou jeton pas encore écrit) : sa fenêtre revient si l'événement de notre session répond
+        (relecture adverse : avant, faux message « autre compte ») ; sinon un message, et rien n'est ouvert."""
         etat = {'nom': 'MyPhotos', 'jeton_refuse': True}
-        for demande in ('fenetre', 'navigateur'):
-            page, infos, signal = self.relancer(etat, demande)
+        page, infos, signal = self.relancer(etat, 'fenetre')
+        signal.assert_called_once_with(1)
+        page.assert_not_called()
+        infos.assert_not_called()
+        for demande, signal_ok in (('fenetre', False), ('navigateur', True)):
+            page, infos, signal = self.relancer(etat, demande, signal_ok=signal_ok)
             page.assert_not_called()
-            signal.assert_not_called()
-            infos.assert_called_once_with(fenetre.AUTRE_COMPTE)
+            infos.assert_called_once_with(fenetre.JETON_REFUSE)
         page, infos, signal = self.relancer(etat, 'sans_page')
         page.assert_not_called()
         infos.assert_not_called()
         signal.assert_not_called()
+
+    def test_main_port_d_un_autre_compte(self):
+        """Relecture adverse de la 0.4.0 : le port est tenu par un programme d'un AUTRE compte Windows (ou que Windows
+        ne laisse pas identifier). Rien ne lui est envoyé : ni /api/etat avec notre jeton, ni la page ; un message."""
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            serveur.creer_jeton(chemin)
+            with mock.patch.object(serveur, 'Serveur', side_effect=OSError('port pris')), \
+                    mock.patch.object(fenetre, 'port_tenu_par', return_value='autre'), \
+                    mock.patch.object(config, 'JETON', chemin), \
+                    mock.patch.object(serveur, 'etat_instance') as etat, \
+                    mock.patch.object(serveur, 'configurer_journal'), \
+                    mock.patch.object(serveur, 'ouvrir_page') as page, \
+                    mock.patch.object(fenetre, 'signaler_premier_plan') as signal, \
+                    mock.patch.object(serveur, 'informer') as infos, \
+                    mock.patch.object(serveur, 'alerter') as alerte:
+                for argv in ([], ['--navigateur']):
+                    self.assertEqual(serveur.main(argv), 1)
+        etat.assert_not_called()
+        page.assert_not_called()
+        signal.assert_not_called()
+        infos.assert_not_called()
+        self.assertEqual(alerte.call_args[0][0], serveur.PORT_PRIS.format(port=config.PORT))
+        self.assertIn('autre compte', alerte.call_args[0][0])
+
+    def test_main_port_libere_puis_pris(self):
+        """Plus personne n'écoute (une MyPhotos finit de s'arrêter) : on réessaie, sans rien envoyer ; si le port
+        reste pris sans écouteur au-delà de PORT_LIBERE_S, le message d'avant."""
+        essais = []
+
+        def serveur_(*_a, **_k):
+            essais.append(1)
+            if len(essais) < 3:
+                raise OSError('port pris')
+            raise RuntimeError('démarré')
+        with mock.patch.object(serveur, 'Serveur', side_effect=serveur_), \
+                mock.patch.object(fenetre, 'port_tenu_par', return_value=None), \
+                mock.patch.object(serveur, 'etat_instance') as etat, \
+                mock.patch.object(serveur, 'configurer_journal'), \
+                mock.patch.object(serveur.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'démarré'):
+                serveur.main([])
+        etat.assert_not_called()
 
     def test_main_adresse_de_relance(self):
         """Relance : la page d'une MyPhotos 0.4.0 (ou plus) s'ouvre par l'adresse d'entrée, avec le jeton lu dans les
@@ -707,6 +758,110 @@ class TestRelance(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- navigation
+
+@unittest.skipUnless(os.name == 'nt', 'Windows')
+class TestPortTenu(unittest.TestCase):
+    """Relecture adverse de la 0.4.0 : la relance faisait confiance à n'importe quel programme qui tenait le port (un
+    autre compte Windows recevait notre jeton dans le cookie de /api/etat, puis notre page s'ouvrait chez lui avec
+    « ?jeton= »). Désormais, fenetre.port_tenu_par vérifie, AVANT tout envoi, que le programme qui écoute sur
+    127.0.0.1:<port> tourne sous NOTRE compte (table des ports de Windows, puis compte du processus)."""
+
+    PORT = int(os.environ.get('MYPHOTOS_ESSAI_PORT') or 7896) + 8
+
+    def ecouter(self, adresse='127.0.0.1'):
+        s = socket.socket()
+        s.bind((adresse, self.PORT))
+        s.listen()
+        self.addCleanup(s.close)
+        return s
+
+    def test_vrais_ecouteurs(self):
+        if not _port_libre(self.PORT):
+            self.skipTest(f'port {self.PORT} déjà pris')
+        self.assertIsNone(fenetre.port_tenu_par(self.PORT))               # personne
+        s = self.ecouter()
+        self.assertEqual(fenetre.ecouteurs(self.PORT), [os.getpid()])
+        self.assertEqual(fenetre.port_tenu_par(self.PORT), 'nous')
+        s.close()
+        self.assertIsNone(fenetre.port_tenu_par(self.PORT))
+        self.ecouter('0.0.0.0')                                           # toutes les adresses : compte aussi
+        self.assertEqual(fenetre.port_tenu_par(self.PORT), 'nous')
+        self.assertRegex(fenetre.sid_compte(), r'^S-1-5-')
+        self.assertEqual(fenetre.sid_du_processus(os.getpid()), fenetre.sid_compte())
+        self.assertEqual(fenetre.sid_du_processus(4), '')                 # le système : Windows refuse, donc « autre »
+
+    def test_autre_compte_ou_illisible(self):
+        moi = fenetre.sid_compte()
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=[1234]), \
+                mock.patch.object(fenetre, 'sid_du_processus', return_value='S-1-5-21-1-2-3-1001'):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=[1234, 5678]), \
+                mock.patch.object(fenetre, 'sid_du_processus', side_effect=lambda p=None: moi if p == 1234 else ''):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')          # un seul écouteur douteux suffit
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=None):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')          # table illisible : rien n'est envoyé
+        with mock.patch.object(fenetre, 'ecouteurs', side_effect=OSError('refusé')):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=[1234]), \
+                mock.patch.object(fenetre, 'sid_compte', return_value=''):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')          # notre compte illisible
+
+    def test_relance_face_a_un_faux_serveur(self):
+        """Bout en bout, comme la preuve du relecteur : un faux serveur tient le port et se présente comme une
+        MyPhotos 0.4.0 en mode navigateur. Le même programme vu comme tournant sous un AUTRE compte (son processus est
+        celui de l'essai : son compte est simulé) ne reçoit RIEN, et rien ne s'ouvre ; vu comme le nôtre, la relance
+        l'interroge comme avant (témoin : sans la vérification, le jeton partait)."""
+        if not _port_libre(self.PORT):
+            self.skipTest(f'port {self.PORT} déjà pris')
+        import http.server
+        recues = []
+
+        class Faux(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                recues.append((self.path, self.headers.get('Cookie')))
+                corps = json.dumps({'nom': 'MyPhotos', 'version': '0.4.0', 'mode': 'navigateur',
+                                    'acces_par_jeton': True}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(corps)))
+                self.end_headers()
+                self.wfile.write(corps)
+        faux = http.server.ThreadingHTTPServer(('127.0.0.1', self.PORT), Faux)
+        threading.Thread(target=faux.serve_forever, daemon=True).start()
+        self.addCleanup(faux.server_close)
+        self.addCleanup(faux.shutdown)
+        vrai = fenetre.sid_du_processus
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            jeton = serveur.creer_jeton(chemin)
+            for autre_compte in (True, False):
+                recues.clear()
+
+                def sid(pid=None, autre_compte=autre_compte):
+                    return 'S-1-5-21-1-2-3-1001' if autre_compte and pid == os.getpid() else vrai(pid)
+                with mock.patch.object(fenetre, 'tenir_mutex'), \
+                        mock.patch.object(fenetre, 'sid_du_processus', side_effect=sid), \
+                        mock.patch.object(config, 'PORT', self.PORT), \
+                        mock.patch.object(config, 'JETON', chemin), \
+                        mock.patch.object(serveur, 'SANS_PAGE', False), \
+                        mock.patch.object(serveur, 'configurer_journal'), \
+                        mock.patch.object(serveur, 'ouvrir_page') as page, \
+                        mock.patch.object(serveur, 'informer'), \
+                        mock.patch.object(serveur, 'alerter') as alerte:
+                    code = serveur.main(['--navigateur'])
+                if autre_compte:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(recues, [])                          # ni /api/etat, ni cookie
+                    page.assert_not_called()                              # ni page « ?jeton= »
+                    alerte.assert_called_once_with(serveur.PORT_PRIS.format(port=self.PORT))
+                else:
+                    self.assertEqual(code, 0)
+                    self.assertEqual(recues, [('/api/etat', f'myphotos-{self.PORT}={jeton}')])
+                    page.assert_called_once_with(serveur.adresse_entree(self.PORT, jeton))
+
 
 class TestNavigation(unittest.TestCase):
     PORT = 7942

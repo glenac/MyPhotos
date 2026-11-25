@@ -114,6 +114,7 @@ PREFIXES_CLR = ('COMPLUS_', 'COR_', 'DOTNET_', 'PYTHONNET_')
 NOMS_CLR = {'APPDOMAIN_MANAGER_ASM', 'APPDOMAIN_MANAGER_TYPE'}
 RELEASE_NET_MIN = 461808               # .NET Framework 4.7.2 (minimum de pythonnet 3 ; Windows 10 1803 et plus)
 RELANCE_VERIF_S = 1.0                  # relance : l'instance signalée est-elle toujours là, et pas en train de s'arrêter ?
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 WEBVIEW2_DOSSIER = 'webview2'          # DONNEES\webview2 (mode privé : effacé à chaque fermeture)
 EDGE_DOSSIER = 'edge'                  # DONNEES\edge : profil d'Edge en mode application (repli)
 AUTRE_COMPTE = ('MyPhotos est déjà ouvert par un autre compte de cet ordinateur. Il ne peut être ouvert que par un '
@@ -121,6 +122,8 @@ AUTRE_COMPTE = ('MyPhotos est déjà ouvert par un autre compte de cet ordinateu
 PLANTAGES = ('L’affichage de MyPhotos a rencontré un problème plusieurs fois de suite.\n\n'
              'Réessayer ?\n\n(Non : fermer MyPhotos. Si cela recommence, redémarrez l’ordinateur.)')
 
+JETON_REFUSE = ("MyPhotos est déjà ouvert, mais sa page ne peut pas être rouverte d'ici. Retrouvez sa fenêtre (ou "
+                'sa page dans votre navigateur), ou arrêtez MyPhotos et relancez-le.')
 ANCIENNE_VERSION = ('Une ancienne version de MyPhotos est ouverte : arrêtez-la (Réglages, puis Arrêter MyPhotos), '
                     'puis relancez MyPhotos.')
 PHRASES_FERMETURE = {
@@ -248,24 +251,24 @@ def relancer(etat, adresse, port, demande, ouvrir_page, informer, etat_actuel=No
     """Seconde instance : MyPhotos répond déjà sur ce port. Rend le code de sortie (0), ou None si l'instance
     signalée s'arrête en fait (fenêtre fermée à l'instant) : main() attend alors qu'elle libère le port.
 
+    serveur.main() n'appelle relancer qu'après avoir vérifié que le port est tenu par NOTRE compte Windows
+    (port_tenu_par) : un autre compte, ou un programme qui squatterait le port, ne reçoit jamais ni le jeton ni la page.
     adresse : celle de sa page, avec le jeton d'accès de ses données pour une 0.4.0 ou plus (serveur.adresse_entree).
-    etat['jeton_refuse'] (serveur.etat_instance) : une MyPhotos 0.4.0 ou plus a refusé notre jeton ; ses données, donc
-    elle-même, sont à un autre compte Windows (ou à d'autres données) : même message que pour un autre compte."""
-    if etat.get('jeton_refuse') or autre_compte(etat):
-        journal.warning('MyPhotos est déjà ouvert par un autre compte de cet ordinateur (ou avec d\'autres données) : '
-                        'rien n\'est ouvert')
+
+    Ordre : d'abord l'événement nommé Local\\MyPhotos-premier-plan-<port>, qui n'existe que dans NOTRE session
+    Windows : la MyPhotos déjà lancée ramène elle-même sa fenêtre (ou rouvre elle-même sa page en mode navigateur),
+    sans que rien passe par HTTP. Ensuite seulement, sa page est ouverte depuis ici.
+    etat['jeton_refuse'] (serveur.etat_instance) : notre MyPhotos a refusé le jeton lu dans nos données (autres données,
+    ou jeton pas encore écrit) : sa fenêtre revient si l'événement répond, sinon un message, et rien n'est ouvert."""
+    if autre_compte(etat):
+        journal.warning('MyPhotos est déjà ouvert par un autre compte de cet ordinateur : rien n\'est ouvert')
         if demande != SANS_PAGE:
             informer(AUTRE_COMPTE)
         return 0
-    decision = decision_relance(etat, demande)
-    if decision == 'rien':
+    if demande == SANS_PAGE:
         return 0
-    if decision == 'ancienne':
-        journal.info('MyPhotos %s (sans fenêtre) est déjà ouvert : ouverture de sa page', etat.get('version'))
-        ouvrir_page(adresse)
-        informer(ANCIENNE_VERSION)
-        return 0
-    if decision == 'premier_plan' and signaler_premier_plan(port):
+    refuse = bool(etat.get('jeton_refuse'))
+    if demande == FENETRE and (refuse or not ancienne_version(etat)) and signaler_premier_plan(port):
         if etat_actuel is not None:
             time.sleep(RELANCE_VERIF_S)
             e = etat_actuel()
@@ -273,6 +276,16 @@ def relancer(etat, adresse, port, demande, ouvrir_page, informer, etat_actuel=No
                 journal.info('MyPhotos s\'arrêtait : on attend qu\'il ait fini pour ouvrir une nouvelle fenêtre')
                 return None
         journal.info('MyPhotos est déjà ouvert : sa fenêtre revient au premier plan')
+        return 0
+    if refuse:
+        journal.warning('MyPhotos est déjà ouvert, mais refuse le jeton de ces données : rien n\'est ouvert')
+        informer(JETON_REFUSE)
+        return 0
+    decision = decision_relance(etat, demande)
+    if decision == 'ancienne':
+        journal.info('MyPhotos %s (sans fenêtre) est déjà ouvert : ouverture de sa page', etat.get('version'))
+        ouvrir_page(adresse)
+        informer(ANCIENNE_VERSION)
         return 0
     journal.info('MyPhotos est déjà ouvert : ouverture de la page')
     ouvrir_page(adresse)
@@ -442,6 +455,8 @@ def _dll(nom):
                        'GetDpiForWindow': ([v], u), 'GetWindowRect': ([v, ctypes.POINTER(wintypes.RECT)], b),
                        'GetWindowPlacement': ([v, ctypes.POINTER(_WINDOWPLACEMENT)], b),
                        'SetProcessDpiAwarenessContext': ([v], b)},
+            'iphlpapi': {'GetExtendedTcpTable': ([v, ctypes.POINTER(wintypes.DWORD), b, wintypes.ULONG, ctypes.c_int,
+                                                  wintypes.ULONG], wintypes.DWORD)},
             'shcore': {'GetDpiForMonitor': ([v, ctypes.c_int, ctypes.POINTER(u), ctypes.POINTER(u)], ctypes.c_long)},
             'shell32': {'SetCurrentProcessExplicitAppUserModelID': ([w], ctypes.c_long)},
             'ole32': {'CoTaskMemFree': ([v], None)},
@@ -715,6 +730,61 @@ class _FiltreEffacement(logging.Filter):
 
 
 _COMPTE = []
+_SID = []
+
+
+def _sid_du_jeton(jeton):
+    """SID (texte) du compte d'un jeton d'accès Windows (TokenUser), ou ''."""
+    k32, a32 = _dll('kernel32'), _dll('advapi32')
+    taille = wintypes.DWORD()
+    a32.GetTokenInformation(jeton, 1, None, 0, ctypes.byref(taille))                    # TokenUser
+    tampon = ctypes.create_string_buffer(max(taille.value, 64))
+    if not a32.GetTokenInformation(jeton, 1, tampon, len(tampon), ctypes.byref(taille)):
+        return ''
+    psid = ctypes.cast(tampon, ctypes.POINTER(ctypes.c_void_p))[0]
+    texte = ctypes.c_void_p()
+    if not a32.ConvertSidToStringSidW(psid, ctypes.byref(texte)):
+        return ''
+    try:
+        return ctypes.wstring_at(texte.value)
+    finally:
+        k32.LocalFree(texte)
+
+
+def sid_du_processus(pid=None):
+    """SID (texte) du compte Windows qui fait tourner ce processus (le nôtre si pid est None), ou '' : processus d'un
+    autre compte ou du système (Windows refuse de l'ouvrir), disparu, jeton illisible."""
+    if os.name != 'nt':
+        return ''
+    k32, a32 = _dll('kernel32'), _dll('advapi32')
+    try:
+        if pid is None:
+            h = k32.GetCurrentProcess()                                      # pseudo-handle : rien à fermer
+        else:
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not h:
+                return ''
+        try:
+            jeton = wintypes.HANDLE()
+            if not a32.OpenProcessToken(h, 0x0008, ctypes.byref(jeton)):    # TOKEN_QUERY
+                return ''
+            try:
+                return _sid_du_jeton(jeton)
+            finally:
+                k32.CloseHandle(jeton)
+        finally:
+            if pid is not None:
+                k32.CloseHandle(h)
+    except (OSError, AttributeError, ValueError, OverflowError):
+        journal.debug('compte Windows du processus %s illisible', pid, exc_info=True)
+        return ''
+
+
+def sid_compte():
+    """SID (texte) de NOTRE compte Windows, ou '' si illisible. Jamais exposé (voir identite_compte)."""
+    if not _SID:
+        _SID.append(sid_du_processus())
+    return _SID[0]
 
 
 def identite_compte():
@@ -723,31 +793,71 @@ def identite_compte():
     lui-même n'est pas exposé. '' si illisible."""
     if _COMPTE:
         return _COMPTE[0]
-    sid = ''
-    if os.name == 'nt':
-        try:
-            k32, a32 = _dll('kernel32'), _dll('advapi32')
-            jeton = wintypes.HANDLE()
-            if a32.OpenProcessToken(k32.GetCurrentProcess(), 0x0008, ctypes.byref(jeton)):      # TOKEN_QUERY
-                try:
-                    taille = wintypes.DWORD()
-                    a32.GetTokenInformation(jeton, 1, None, 0, ctypes.byref(taille))            # TokenUser
-                    tampon = ctypes.create_string_buffer(max(taille.value, 64))
-                    if a32.GetTokenInformation(jeton, 1, tampon, len(tampon), ctypes.byref(taille)):
-                        psid = ctypes.cast(tampon, ctypes.POINTER(ctypes.c_void_p))[0]
-                        texte = ctypes.c_void_p()
-                        if a32.ConvertSidToStringSidW(psid, ctypes.byref(texte)):
-                            sid = ctypes.wstring_at(texte.value)
-                            k32.LocalFree(texte)
-                finally:
-                    k32.CloseHandle(jeton)
-        except (OSError, AttributeError):
-            journal.debug('compte Windows illisible', exc_info=True)
-    else:
-        sid = str(os.getuid())
+    sid = sid_compte() if os.name == 'nt' else str(os.getuid())
     import hashlib
     _COMPTE.append(hashlib.sha256(('MyPhotos|' + sid).encode()).hexdigest()[:16] if sid else '')
     return _COMPTE[0]
+
+
+# ---------------------------------------------------------------- qui tient le port ? (relance, 0.4.0)
+
+class _LIGNE_TCP(ctypes.Structure):
+    """MIB_TCPROW_OWNER_PID."""
+    _fields_ = [('dwState', wintypes.DWORD), ('dwLocalAddr', wintypes.DWORD), ('dwLocalPort', wintypes.DWORD),
+                ('dwRemoteAddr', wintypes.DWORD), ('dwRemotePort', wintypes.DWORD), ('dwOwningPid', wintypes.DWORD)]
+
+
+def ecouteurs(port):
+    """Identifiants des processus qui ÉCOUTENT sur ce port TCP en IPv4, sur 127.0.0.1 ou sur toutes les adresses
+    (0.0.0.0) : ceux qui peuvent recevoir une connexion vers 127.0.0.1:<port>. None si Windows ne donne pas la table
+    (GetExtendedTcpTable, TCP_TABLE_OWNER_PID_LISTENER)."""
+    import socket
+    import struct
+    iph = _dll('iphlpapi')
+    taille = wintypes.DWORD(16384)
+    for _ in range(8):                                       # la table peut grandir entre deux appels
+        tampon = ctypes.create_string_buffer(taille.value)
+        r = iph.GetExtendedTcpTable(tampon, ctypes.byref(taille), False, 2, 3, 0)   # AF_INET, OWNER_PID_LISTENER
+        if r == 0:
+            break
+        if r != 122:                                         # ERROR_INSUFFICIENT_BUFFER
+            return None
+        taille = wintypes.DWORD(taille.value + 4096)
+    else:
+        return None
+    n = wintypes.DWORD.from_buffer(tampon).value
+    if 4 + n * ctypes.sizeof(_LIGNE_TCP) > len(tampon):
+        return None
+    lignes = (_LIGNE_TCP * n).from_buffer(tampon, 4)
+    res = []
+    for ligne in lignes:
+        if socket.ntohs(ligne.dwLocalPort & 0xFFFF) != port:
+            continue
+        if socket.inet_ntoa(struct.pack('<I', ligne.dwLocalAddr)) in ('127.0.0.1', '0.0.0.0'):
+            res.append(int(ligne.dwOwningPid))
+    return res
+
+
+def port_tenu_par(port):
+    """Qui tient le port de MyPhotos, AVANT de lui envoyer quoi que ce soit (relance : jeton d'accès, page) :
+    « nous » (tous les programmes qui y écoutent tournent sous NOTRE compte Windows), « autre » (un autre compte, le
+    système, ou un propriétaire que Windows ne laisse pas lire : on ne lui envoie rien), None (plus personne n'y
+    écoute : une MyPhotos qui finit de s'arrêter). Le port 127.0.0.1 est commun à tous les comptes du PC."""
+    if os.name != 'nt':
+        return 'nous'                                        # MyPhotos ne tourne que sous Windows
+    try:
+        pids = ecouteurs(port)
+    except (OSError, AttributeError, ValueError):
+        journal.debug('table des ports illisible', exc_info=True)
+        pids = None
+    if pids is None:
+        return 'autre'
+    if not pids:
+        return None
+    moi = sid_compte()
+    if not moi:
+        return 'autre'
+    return 'nous' if all(sid_du_processus(p) == moi for p in set(pids)) else 'autre'
 
 
 _MUTEX = []

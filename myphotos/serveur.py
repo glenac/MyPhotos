@@ -147,6 +147,10 @@ EN_TETE = 'X-MyPhotos'
 COOKIE_JETON = 'myphotos-{port}'
 PARAMETRE_JETON = 'jeton'
 JETON_REFUSE = 'Ouvrez MyPhotos depuis son raccourci.'
+# Relance : le port est tenu par un programme d'un autre compte Windows (ou que Windows ne laisse pas identifier) ;
+# rien ne lui est envoyé (fenetre.port_tenu_par).
+PORT_PRIS = ('MyPhotos ne peut pas démarrer : le port {port} est déjà utilisé par un autre programme, ou par MyPhotos '
+             'ouvert sur un autre compte de cet ordinateur.')
 PAGE_REFUS = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
               f'<p>{JETON_REFUSE}</p></html>').encode('utf-8')
 _JETON = re.compile(r'[A-Za-z0-9_-]{32,128}')
@@ -3542,8 +3546,17 @@ def main(argv=None):
         try:
             serveur = Serveur((config.HOTE, config.PORT), Gestionnaire)
         except OSError as e:
+            # Qui tient le port ? AVANT d'envoyer quoi que ce soit (jeton, page) : seulement un programme de NOTRE
+            # compte Windows. Un autre compte, ou un programme qui squatte le port, n'obtient ni cookie ni page (relecture
+            # adverse de la 0.4.0 : sa page s'ouvrait avec notre jeton, et un service worker volait le suivant).
+            tenu = fenetre.port_tenu_par(config.PORT)
+            if tenu == 'autre':
+                journal.warning('port %d tenu par un programme d\'un autre compte Windows (ou illisible) : rien ne lui '
+                                'est envoyé', config.PORT)
+                alerter(PORT_PRIS.format(port=config.PORT))
+                return 1
             jeton_lu = lire_jeton()              # celui de la MyPhotos qui tient le port (mêmes données), relu à chaque tour
-            etat = etat_instance(config.PORT, jeton_lu or '')
+            etat = etat_instance(config.PORT, jeton_lu or '') if tenu == 'nous' else None
             if etat is None:
                 if time.monotonic() < patience_port:
                     time.sleep(0.5)              # une MyPhotos qui s'arrête garde le port un instant sans répondre
@@ -3560,7 +3573,8 @@ def main(argv=None):
             # Sa page s'ouvre par l'adresse d'entrée si elle exige le jeton (0.4.0 et plus), par « / » sinon.
             entree = adresse_entree(config.PORT, jeton_lu) if etat.get('acces_par_jeton') and jeton_lu else adresse
             code = fenetre.relancer(etat, entree, config.PORT, demande, ouvrir_page, informer,
-                                    etat_actuel=lambda: etat_instance(config.PORT, jeton_lu or ''))
+                                    etat_actuel=lambda: (etat_instance(config.PORT, jeton_lu or '')
+                                                         if fenetre.port_tenu_par(config.PORT) == 'nous' else None))
             if code is None and time.monotonic() < patience:
                 time.sleep(0.5)                  # elle s'arrêtait en fait : on attend qu'elle libère le port
                 continue
