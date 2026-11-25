@@ -202,7 +202,9 @@ def telecharger(cle, noms, progression=None, arret=None, racine=None, essais=4):
         progression(total, total, '')
 
 
-def _telecharger_un(url, partiel, taille, rappel, arret):
+def _telecharger_un(url, partiel, taille, rappel, arret, ouvrir=None, agent='MyPhotos/1 (logiciel local)'):
+    """Un fichier, repris là où il s'était arrêté. ouvrir : comme urllib.request.urlopen (mise_a_jour.py passe le
+    sien, qui n'accepte que https)."""
     debut = partiel.stat().st_size if partiel.exists() else 0
     if debut > taille:
         partiel.unlink()
@@ -210,10 +212,10 @@ def _telecharger_un(url, partiel, taille, rappel, arret):
     if debut == taille:
         rappel(taille)
         return
-    req = urllib.request.Request(url, headers={'User-Agent': 'MyPhotos/1 (logiciel local)'})
+    req = urllib.request.Request(url, headers={'User-Agent': agent})
     if debut:
         req.add_header('Range', f'bytes={debut}-')
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with (ouvrir or urllib.request.urlopen)(req, timeout=60) as r:
         if debut and r.status != 206:            # le serveur ne sait pas reprendre : on repart de zéro
             debut = 0
         fait = debut

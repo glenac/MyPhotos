@@ -50,6 +50,7 @@ MyPhotos.exe, seulement avec en plus l'argument --essai-debogage, voir fenetre.d
 MYPHOTOS_TELECHARGEMENT_FACTICE=1 simule le téléchargement du moteur (essais de l'interface ; les fichiers réels
 de MYPHOTOS_MODELES servent ensuite) ; MYPHOTOS_INACTIVITE_S change le délai d'arrêt automatique (180 s).
 """
+import base64
 import concurrent.futures
 import ctypes
 import errno
@@ -81,7 +82,7 @@ from collections import deque
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import config, fenetre, materiel, modele, raccourci
+from . import config, fenetre, materiel, mise_a_jour, modele, raccourci
 from . import doublons as _doublons
 from . import recherche as _recherche
 from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, maintenant,
@@ -96,6 +97,40 @@ INACTIVITE_S = float(os.environ.get('MYPHOTOS_INACTIVITE_S') or 180)
 SANS_PAGE = bool(os.environ.get('MYPHOTOS_SANS_PAGE'))
 FACTICE = os.environ.get('MYPHOTOS_TELECHARGEMENT_FACTICE') == '1'
 DUREE_FACTICE_S = float(os.environ.get('MYPHOTOS_FACTICE_S') or 8)
+
+
+def _essai_mise_a_jour():
+    """Essais (test_serveur), en mode FACTICE seulement : manifeste lu dans un fichier local (MYPHOTOS_ESSAI_MANIFESTE)
+    et signé par une clé d'essai (MYPHOTOS_ESSAI_CLE_MAJ, clé publique en base64) ; téléchargement et installation
+    simulés : aucun programme n'est lancé. Hors de ce mode, la vraie vérification (mise_a_jour.py)."""
+    chemin = os.environ.get('MYPHOTOS_ESSAI_MANIFESTE')
+    if not FACTICE or not chemin:
+        return {}
+    try:
+        cle = base64.b64decode(os.environ.get('MYPHOTOS_ESSAI_CLE_MAJ') or '', validate=True)
+    except ValueError:
+        cle = b''
+
+    def chercher():
+        try:
+            brut = Path(chemin).read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            raise mise_a_jour.Indisponible(str(e)) from None
+        return mise_a_jour.lire_manifeste(brut, cle=cle)
+
+    def telecharger(info, progression, arret, racine):
+        for i in range(1, 11):
+            if arret.wait(DUREE_FACTICE_S / 40):
+                raise InterruptedError('téléchargement interrompu')
+            progression(info['taille'] * i // 10, info['taille'])
+        return mise_a_jour.dossier(racine) / info['nom']
+
+    def lancer(chemin_installateur, info):
+        journal.info('essai : installation de %s simulée', info['nom'])
+        return 0
+    return {'chercher': chercher, 'telecharger': telecharger, 'lancer': lancer, 'possible': lambda: (True, '')}
 
 EN_TETE = 'X-MyPhotos'
 CORPS_MAX = 64 * 1024              # corps JSON d'un POST
@@ -1446,6 +1481,9 @@ class Application:
         self._doublons_annulee = False           # arrêtée par l'utilisateur : la page ne la relance plus seule
         # Bouton « Actualiser » : {numero (demande d'inventaire), indexeur, debut}, une à la fois.
         self._actualisation = None
+        # Mise à jour proposée (mise_a_jour.py) : une vérification par jour, seulement si l'utilisateur l'a acceptée.
+        self.mises_a_jour = mise_a_jour.Gestion(self.base.meta_get, self.base.meta_set, self.arreter,
+                                                self.travaux_en_cours, journal, **_essai_mise_a_jour())
         if self.base.ecartes:
             self._noter_base_ecartee(self.base.ecartes)
 
@@ -1492,6 +1530,7 @@ class Application:
         if self.base.meta_get('assistant') != 'fini':
             threading.Thread(target=self._materiel_en_avance, name='myphotos-materiel', daemon=True).start()
         threading.Thread(target=self._veiller, name='myphotos-veille', daemon=True).start()
+        self.mises_a_jour.demarrer()
 
     def activite(self):
         self.derniere_activite = time.monotonic()
@@ -1559,6 +1598,7 @@ class Application:
             if self.arret_lance:
                 return
             self.arret_lance = True
+        self.mises_a_jour.fermer()               # un téléchargement de mise à jour s'interrompt (reprise plus tard)
         rappel = self.quand_arret
         if rappel is not None:
             try:
@@ -1594,6 +1634,7 @@ class Application:
             self.arret_lance = True
         self._fin.set()
         self._feu_vert.set()                     # une préparation en attente se réveille… et renonce
+        self.mises_a_jour.fermer()
         t = self.telechargement
         if t is not None:
             t.arret.set()
@@ -2231,7 +2272,34 @@ class Application:
             'limite_selection': LIMITE_SELECTION,
             # Recherche des doublons : avancement et numéro du dernier résultat (les groupes : GET /api/doublons).
             'doublons': self.etat_doublons(generation),
+            # Nouvelle version de MyPhotos : accord, version proposée, téléchargement, bilan (mise_a_jour.py).
+            'mise_a_jour': self.mises_a_jour.resume(),
         }
+
+    def action_mise_a_jour(self, action, corps):
+        """POST /api/mise-a-jour/<action> : reglage {oui}, verifier, installer, annuler, reporter, vu."""
+        g = self.mises_a_jour
+        try:
+            if action == 'reglage':
+                oui = corps.get('oui')
+                if not isinstance(oui, bool):
+                    raise Refus('Réponse attendue : oui ou non.', 400)
+                return g.regler(oui)
+            if action == 'verifier':
+                return g.verifier(manuel=True)
+            if action == 'installer':
+                if self.arret_lance:
+                    raise Refus('MyPhotos est en train de s\'arrêter.', 409)
+                return g.installer()
+            if action == 'annuler':
+                return g.annuler()
+            if action == 'reporter':
+                return g.reporter()
+            if action == 'vu':
+                return g.bilan_vu()
+        except mise_a_jour.Refus as e:
+            raise Refus(str(e), e.code) from None
+        raise Refus('Action inconnue.', 404)
 
     # ------------------------------------------------ photos
 
@@ -3221,6 +3289,8 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             r = {'ok': True}
         elif chemin == '/api/raccourci':
             r = app.creer_raccourcis()
+        elif chemin.startswith('/api/mise-a-jour/') and chemin.count('/') == 3:
+            r = app.action_mise_a_jour(chemin.rsplit('/', 1)[1], corps)
         elif chemin == '/api/quitter':
             journal.info('arrêt demandé par la page')
             app.arreter()

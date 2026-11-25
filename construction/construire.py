@@ -8,6 +8,7 @@
     construction\\construire.ps1 --paquet [--cache <dossier>]     -> dist\\MyPhotos-<version>-windows.zip
     construction\\construire.ps1 --installateur [--cache <dossier>] [--iscc <ISCC.exe>] [--sortie <dossier>]
                                                                   -> dist\\MyPhotos-<version>-installation.exe
+    construction\\construire.ps1 --manifeste [--sortie <dossier>]  -> dist\\MyPhotos-mise-a-jour.json (signé)
     .venv-build\\Scripts\\python construction\\construire.py [...]          (la même chose, sans PowerShell)
 
 --essai construit le programme d'essai (construction\\essai_exe.py) avec les mêmes réglages et le même
@@ -27,6 +28,12 @@ dist\\MyPhotos\\, seulement MyPhotos.exe et _internal\\ : c'est contrôlé (cont
 licences comme --paquet (plus celle d'Inno Setup, dans licences\\InnoSetup\\), puis compile construction\\MyPhotos.iss avec Inno Setup 6 (ISCC.exe : --iscc, sinon
 %MYPHOTOS_ISCC%, sinon les emplacements habituels), contrôle la ressource de version de l'installateur et écrit
 dist\\MyPhotos-<version>-installation.exe et son empreinte SHA-256.
+
+--manifeste (après --installateur, depuis la 0.4.0) écrit dist\\MyPhotos-mise-a-jour.json : le manifeste de la
+mise à jour (version, taille et empreinte de l'installateur, nouveautés de construction\\nouveautes.json), signé
+avec la clé privée du projet (construction\\cle_signature.py, jamais dans le dépôt), puis relu avec les règles de
+MyPhotos et la clé publique qu'il contient. Ce fichier est publié avec chaque version : c'est lui que les MyPhotos
+installés lisent pour proposer la mise à jour (myphotos/mise_a_jour.py).
 
 La fenêtre de MyPhotos (myphotos/fenetre.py) : pywebview et pythonnet, avec leurs DLL et assemblies .NET
 (Microsoft.Web.WebView2.Core et .WinForms, WebView2Loader.dll pour x64, arm64 et x86, Python.Runtime.dll,
@@ -944,6 +951,55 @@ def installateur(cache=None, iscc=None, sortie=None):
     return cible
 
 
+# ---------------------------------------------------------------- manifeste de mise à jour (--manifeste)
+
+NOUVEAUTES = ICI / 'nouveautes.json'
+
+
+def nouveautes(version):
+    """Les lignes « Nouveautés » de cette version (construction/nouveautes.json), telles que la page les affichera."""
+    try:
+        toutes = json.loads(NOUVEAUTES.read_text(encoding='utf-8'))
+    except (OSError, ValueError) as e:
+        raise SystemExit(f'{NOUVEAUTES} illisible : {e}') from None
+    lignes = toutes.get(version) if isinstance(toutes, dict) else None
+    if not isinstance(lignes, list) or not lignes:
+        raise SystemExit(f'{NOUVEAUTES} : aucune nouveauté pour la version {version}')
+    return lignes
+
+
+def manifeste(sortie=None, cle_privee=None):
+    """Écrit <dist>\\MyPhotos-mise-a-jour.json pour l'installateur déjà construit, signé, puis relu comme MyPhotos le
+    lira (clé publique de config.py). cle_privee : pour les essais seulement ; sinon la clé du projet."""
+    if str(RACINE) not in sys.path:
+        sys.path.insert(0, str(RACINE))
+    from myphotos import config, mise_a_jour
+    version = version_myphotos()
+    dist = Path(sortie).resolve() if sortie else DIST
+    inst = dist / mise_a_jour.nom_installateur(version)
+    if not inst.is_file():
+        raise SystemExit(f'{inst} est absent : construisez d\'abord l\'installateur (--installateur).')
+    if cle_privee is None:
+        sys.path.insert(0, str(ICI))
+        import cle_signature
+        cle_privee = cle_signature.lire_cle_privee()
+        cle_signature.verifier_correspondance(cle_privee)
+        publique = config.cle_mise_a_jour()
+    else:
+        publique = cle_privee[:64]
+    brut = mise_a_jour.faire_manifeste(version, inst, cle_privee, nouveautes(version))
+    info = mise_a_jour.lire_manifeste(brut, cle=publique)
+    if (info['version'], info['taille'], info['sha256']) != (version, inst.stat().st_size,
+                                                             empreinte(inst).hexdigest()):
+        raise SystemExit('manifeste incohérent avec l\'installateur')
+    cible = dist / mise_a_jour.NOM_MANIFESTE
+    cible.write_bytes(brut)
+    octets = f'{info["taille"]:,}'.replace(',', ' ')
+    print(f'{cible.name} : MyPhotos {version}, installateur de {octets} octets, SHA-256 {info["sha256"]}')
+    print(f'{cible.name} : SHA-256 {ecrire_empreinte(cible)}')
+    return cible
+
+
 def _valeur(argv, option):
     """Valeur de `option` dans argv (None si l'option est absente)."""
     if option not in argv:
@@ -959,6 +1015,8 @@ def main(argv):
         paquet(_valeur(argv, '--cache'))
     elif '--installateur' in argv:
         installateur(_valeur(argv, '--cache'), _valeur(argv, '--iscc'), _valeur(argv, '--sortie'))
+    elif '--manifeste' in argv:
+        manifeste(_valeur(argv, '--sortie'))
     else:
         construire(essai='--essai' in argv, sortie=_valeur(argv, '--sortie'), dossier='--dossier' in argv)
 

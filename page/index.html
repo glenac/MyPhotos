@@ -198,6 +198,13 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .operation { background: var(--surface-2); }
 .operation-boutons { display: flex; flex-wrap: wrap; gap: 8px; }
 .operation-boutons .bouton-icone { width: 40px; height: 40px; }
+.operation-boutons a.bouton { text-decoration: none; }
+/* Nouvelles versions de MyPhotos : question de l'assistant, réglage. */
+.question-version { margin: 18px 0 0; padding: 14px 18px; border: 1px solid var(--bordure); border-radius: 14px; background: var(--surface); }
+.question-version h2 { margin: 0 0 6px; font-size: 1.05rem; }
+.question-version p { margin: 0 0 12px; }
+.boutons-version { display: flex; flex-wrap: wrap; gap: 10px; }
+.reponse-version { margin: 14px 0 0; }
 /* Barre de la sélection : elle prend la place de l'en-tête, à la même hauteur. */
 .barre-selection {
   display: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 16px;
@@ -686,6 +693,15 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     <p class="intro">MyPhotos regarde chacune de vos photos une seule fois pour reconnaître ce qu'elle montre. Cela peut prendre un moment.</p>
     <div id="e3-etat" class="etat-analyse" role="status"></div>
     <p class="encart">Vous pouvez déjà chercher pendant l'analyse : les résultats s'enrichissent au fur et à mesure.</p>
+    <div id="e3-nv" class="question-version" hidden>
+      <h2>Nouvelles versions de MyPhotos</h2>
+      <p>Quand une nouvelle version de MyPhotos sort, voulez-vous qu’il vous la propose ? Pour le savoir, MyPhotos demande une fois par jour au site GitHub, où il est publié, le numéro de la dernière version. Rien d’autre n’est envoyé : ni vos photos, ni vos recherches.</p>
+      <div class="boutons-version">
+        <button id="e3-nv-oui" class="bouton" type="button">Oui, me la proposer</button>
+        <button id="e3-nv-non" class="bouton" type="button">Non merci</button>
+      </div>
+    </div>
+    <p id="e3-nv-reponse" class="note reponse-version" role="status" hidden></p>
     <div class="pied">
       <button id="e3-retour" class="bouton" type="button">Retour</button>
       <button id="e3-suite" class="bouton principal grand" type="button">Commencer à chercher</button>
@@ -730,6 +746,12 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
       <span id="operation-texte" class="bandeau-texte"></span>
       <progress id="operation-barre" max="100" aria-label="Avancement de la copie"></progress>
       <span id="operation-boutons" class="operation-boutons"></span>
+    </div>
+    <!-- Nouvelle version de MyPhotos : question, proposition, téléchargement, bilan (mise_a_jour.py). -->
+    <div id="nv" class="bandeau version" role="status" hidden>
+      <span id="nv-texte" class="bandeau-texte"></span>
+      <progress id="nv-barre" max="100" aria-label="Téléchargement de la nouvelle version" hidden></progress>
+      <span id="nv-boutons" class="operation-boutons"></span>
     </div>
   </div>
 
@@ -856,6 +878,20 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
       <h3 id="r-t-raccourci">Raccourci</h3>
       <p class="note">Pour lancer MyPhotos facilement, mettez son icône sur le Bureau et dans le menu Démarrer.</p>
       <button id="r-raccourci" class="bouton" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>Créer un raccourci sur le Bureau et dans le menu Démarrer</button>
+    </section>
+    <section aria-labelledby="r-t-nv">
+      <h3 id="r-t-nv">Nouvelles versions</h3>
+      <ul class="liste-cases">
+        <li>
+          <label><input id="r-nv-auto" type="checkbox" aria-describedby="r-nv-explication"><span>Me proposer les nouvelles versions de MyPhotos</span></label>
+          <p id="r-nv-explication" class="note">MyPhotos demande alors une fois par jour au site GitHub, où il est publié, le numéro de la dernière version. Rien d’autre n’est envoyé.</p>
+        </li>
+      </ul>
+      <p id="r-nv-etat" class="note" role="status"></p>
+      <div class="boutons-version">
+        <button id="r-nv-verifier" class="bouton petit actualiser" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg><span>Rechercher une nouvelle version</span></button>
+        <button id="r-nv-installer" class="bouton petit principal" type="button" hidden>Mettre à jour</button>
+      </div>
     </section>
     <section class="r-fin">
       <button id="r-quitter" class="bouton danger" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 7.5a8 8 0 1 0 11.4 0"/></svg>Arrêter MyPhotos</button>
@@ -1697,6 +1733,116 @@ function etatAnalyse(e) {
 
 function majEtape3(e) {
   barreProgression($('#e3-etat'), etatAnalyse(e));
+  const m = e.mise_a_jour;
+  $('#e3-nv').hidden = !m || m.accord !== null;
+}
+
+// ============================================================ nouvelles versions de MyPhotos (mise_a_jour.py)
+// MyPhotos ne cherche une nouvelle version qu'avec l'accord de l'utilisateur (étape 3 de l'assistant, ou une fois
+// dans un bandeau pour qui vient d'une version d'avant la 0.4.0, puis « Réglages »). Il ne l'installe que sur un clic.
+const NV = {reglage: false};
+
+async function repondreVersion(oui) {
+  try {
+    await api('/api/mise-a-jour/reglage', {oui});
+    return true;
+  } catch (err) {
+    annoncer(err.message, 'erreur');
+    return false;
+  } finally {
+    sonder();
+  }
+}
+
+async function repondreEtape3(oui) {
+  if (!(await repondreVersion(oui))) return;
+  $('#e3-nv').hidden = true;
+  const r = $('#e3-nv-reponse');
+  r.textContent = (oui ? 'C’est noté : MyPhotos vous proposera ses nouvelles versions.'
+    : 'C’est noté : MyPhotos ne cherchera pas de nouvelle version.') + ' Vous pourrez changer d’avis dans « Réglages ».';
+  r.hidden = false;
+}
+
+async function actionVersion(action) {
+  try { await api(`/api/mise-a-jour/${action}`, {}); } catch (err) { annoncer(err.message, 'erreur'); }
+  sonder();
+}
+
+async function mettreAJour() {
+  const m = E.serveur && E.serveur.mise_a_jour;
+  if (!m || !m.version) return;
+  const texte = [`MyPhotos va télécharger sa version ${m.version} (${taille(m.taille)}), se fermer, l’installer, `
+    + 'puis se rouvrir tout seul. Vos photos et ce que MyPhotos en sait sont gardés.'];
+  if (m.nouveautes.length) texte.push('Nouveautés :', ...m.nouveautes.map((n) => `• ${n}`));
+  const a = E.serveur.analyse;
+  if (a && a.active) texte.push('L’analyse en cours reprendra toute seule après la mise à jour.');
+  if (!(await confirmer({titre: 'Mettre à jour MyPhotos ?', texte, oui: 'Mettre à jour', non: 'Pas maintenant'}))) return;
+  await actionVersion('installer');
+}
+
+const dateVerification = (s) => new Date(s * 1000).toLocaleString('fr-FR',
+  {day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'});
+
+function majVersion(e) {
+  const m = e.mise_a_jour, zone = $('#nv-boutons'), barre = $('#nv-barre');
+  let texte = '', pourcent, boutons = [];
+  if (!m) {
+    texte = '';
+  } else if (m.apres) {
+    texte = m.apres.reussie ? `MyPhotos a été mis à jour : vous avez maintenant sa version ${m.apres.version}.`
+      : `La mise à jour vers MyPhotos ${m.apres.version} n’a pas abouti. Rien n’est perdu : MyPhotos fonctionne comme avant, et vous la proposera de nouveau.`;
+    boutons = [{texte: 'OK', faire: () => actionVersion('vu')}];
+  } else if (m.accord === null && e.assistant === 'fini') {
+    texte = 'Nouveau : MyPhotos peut vous proposer ses nouvelles versions. Pour cela, il demande une fois par jour au site GitHub, où il est publié, le numéro de la dernière version. Rien d’autre n’est envoyé.';
+    boutons = [{texte: 'Oui, me les proposer', faire: () => repondreVersion(true)},
+      {texte: 'Non merci', faire: () => repondreVersion(false)}];
+  } else if (m.etat === 'telechargement') {
+    texte = `Téléchargement de MyPhotos ${m.version} : ${taille(m.fait)} sur ${taille(m.total)}`;
+    pourcent = m.pourcent;
+    boutons = [{texte: 'Annuler', faire: () => actionVersion('annuler')}];
+  } else if (m.etat === 'installation') {
+    texte = `Installation de MyPhotos ${m.version} : MyPhotos va se fermer, puis se rouvrir tout seul dans un instant.`;
+    pourcent = null;
+  } else if (m.version && (m.etat === 'disponible' || m.etat === 'erreur') && !m.reportee) {
+    texte = m.etat === 'erreur' && m.message ? m.message : `Une nouvelle version de MyPhotos est disponible : la ${m.version}.`;
+    boutons = m.possible ? [{texte: m.etat === 'erreur' ? 'Réessayer' : 'Mettre à jour', faire: mettreAJour}]
+      : [{texte: 'Télécharger', lien: m.notes}];
+    if (m.possible && m.notes) boutons.push({texte: 'Nouveautés', lien: m.notes});
+    boutons.push({texte: 'Plus tard', faire: () => actionVersion('reporter')});
+  }
+  $('#nv').hidden = !texte;
+  if (!texte) { zone.dataset.cle = ''; return; }
+  $('#nv-texte').textContent = texte;
+  barre.hidden = pourcent === undefined;
+  if (pourcent === null) barre.removeAttribute('value');
+  else if (pourcent !== undefined) barre.value = Math.max(0, Math.min(100, pourcent));
+  const cle = boutons.map((b) => b.texte + (b.lien || '')).join('|');
+  if (zone.dataset.cle === cle) return;
+  zone.dataset.cle = cle;
+  // Un lien https s'ouvre dans le navigateur de Windows (fenetre.py), jamais dans la fenêtre de MyPhotos.
+  zone.replaceChildren(...boutons.map((b) => (b.lien
+    ? el('a', {classe: 'bouton petit', href: b.lien, target: '_blank', rel: 'noopener noreferrer'}, b.texte)
+    : el('button', {classe: b.texte === 'Mettre à jour' ? 'bouton petit principal' : 'bouton petit', type: 'button',
+      onclick: b.faire}, b.texte))));
+}
+
+function majReglagesVersion(e) {
+  const m = e.mise_a_jour;
+  if (!m) return;
+  if (!NV.reglage) $('#r-nv-auto').checked = m.accord === 'oui';
+  const occupe = ['verification', 'telechargement', 'installation'].includes(m.etat);
+  const bouton = $('#r-nv-verifier');
+  bouton.disabled = occupe;
+  bouton.setAttribute('aria-busy', m.etat === 'verification' ? 'true' : 'false');
+  const proposee = m.version && ['disponible', 'telechargement', 'installation', 'erreur'].includes(m.etat);
+  $('#r-nv-installer').hidden = !(proposee && m.possible && (m.etat === 'disponible' || m.etat === 'erreur'));
+  let t = '';
+  if (m.etat === 'verification') t = 'Recherche d’une nouvelle version…';
+  else if (proposee) t = `Une nouvelle version est disponible : MyPhotos ${m.version}.${m.possible ? '' : ' Téléchargez-la sur sa page (bandeau en haut).'}`;
+  else if (m.etat === 'a_jour') t = `Vous avez la dernière version de MyPhotos (${e.version}).`;
+  else if (m.etat === 'erreur' && m.message) t = m.message;
+  if (m.derniere && !occupe && m.etat !== 'erreur') t += ` Dernière vérification : le ${dateVerification(m.derniere)}.`;
+  $('#r-nv-etat').textContent = t.trim();
 }
 
 async function commandeAnalyse(action) {
@@ -2126,6 +2272,7 @@ function afficherErreur(err) {
 
 function majAppli(e, avant) {
   majBandeau(e);
+  majVersion(e);
   if (e.copie && e.copie.etat === 'en_cours' && C.suivie === null) suivreCopie(e.copie);   // page rouverte en cours de copie
   if (E.vue === 'doublons') majDoublons(e);
   if (R.mode === null || E.vue !== 'photos') return;      // écran des photos caché : il se mettra à jour en revenant
@@ -3231,6 +3378,7 @@ function majReglages(e) {
   $('#r-analyse').textContent = texte;
   majActualisation(e);
   $('#r-version').textContent = `MyPhotos ${e.version}`;
+  majReglagesVersion(e);
   $('#r-fermeture').hidden = !(e.mode === 'fenetre' || e.mode === 'edge');
   $('#r-s-raccourci').hidden = !e.raccourci;
 }
@@ -3518,6 +3666,17 @@ function brancher() {
   $('#r-changer').addEventListener('click', ouvrirChoixMoteur);
   $('#r-raccourci').addEventListener('click', (ev) => creerRaccourci(ev.currentTarget));
   $('#r-quitter').addEventListener('click', quitter);
+  $('#e3-nv-oui').addEventListener('click', () => repondreEtape3(true));
+  $('#e3-nv-non').addEventListener('click', () => repondreEtape3(false));
+  $('#r-nv-auto').addEventListener('change', async (ev) => {
+    const c = ev.currentTarget;
+    NV.reglage = true;
+    const ok = await repondreVersion(c.checked);
+    NV.reglage = false;
+    if (!ok) c.checked = !c.checked;
+  });
+  $('#r-nv-verifier').addEventListener('click', () => actionVersion('verifier'));
+  $('#r-nv-installer').addEventListener('click', mettreAJour);
 }
 
 brancher();

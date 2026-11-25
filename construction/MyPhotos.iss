@@ -71,8 +71,14 @@
 #define MyAppVersionNum GetVersionNumbersString(AppExe)
 
 ; Identifiants permanents. Le mutex est créé par MyPhotos (0.3.0 et suivantes) pendant qu'il tourne.
+; Seul l'essai réel de tests/test_construction.py les remplace (/DMyAppId=…, /DMyAppMutex=…), pour ne jamais
+; toucher à une vraie installation de MyPhotos sur le PC d'essai.
+#ifndef MyAppId
 #define MyAppId "25DE0724-F7B4-4956-8238-1E33E16ABFED"
+#endif
+#ifndef MyAppMutex
 #define MyAppMutex "MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED"
+#endif
 
 [Setup]
 AppId={{{#MyAppId}}
@@ -199,6 +205,9 @@ Name: "{autodesktop}\MyPhotos"; Filename: "{app}\MyPhotos.exe"; WorkingDir: "{ap
 
 [Run]
 Filename: "{app}\MyPhotos.exe"; WorkingDir: "{app}"; Description: "{cm:LancerMyPhotos}"; Flags: nowait postinstall skipifsilent
+; Mise à jour lancée par MyPhotos lui-même (/MISEAJOUR, myphotos/mise_a_jour.py) : MyPhotos est rouvert à la fin,
+; même en silence.
+Filename: "{app}\MyPhotos.exe"; WorkingDir: "{app}"; Flags: nowait; Check: ParametrePresent('/MISEAJOUR')
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
@@ -225,9 +234,13 @@ Type: dirifempty; Name: "{app}"
     lui-même sans descendre dedans) ;
   - les dossiers modele\, webview2\ et edge\ ne partent que si leur contenu est bien celui de MyPhotos
     (ContenuDeMyPhotos) : des photos rangées par l'utilisateur dans un « modele » ou un « Edge » restent.
-  Limite connue : la liste des dossiers protégés compare des chemins écrits ; un autre chemin vers le même dossier
-  (nom court 8.3, partage \\localhost\C$) n'y est pas reconnu. Seuls les noms ci-dessus y seraient supprimés.
+  Les dossiers protégés sont reconnus par leur chemin écrit, puis par leur identité (volume et numéro de fichier,
+  comme os.stat : st_dev, st_ino) : un autre chemin vers le même dossier (nom court 8.3, partage \\localhost\C$,
+  jonction parente) est reconnu aussi (0.4.0 ; en 0.3.0, seul le chemin écrit comptait).
   Désinstallation silencieuse : rien n'est demandé et les données sont gardées, sauf avec /SUPPRIMERDONNEES.
+
+  Mise à jour lancée par MyPhotos (/MISEAJOUR) : InitializeSetup attend que MyPhotos se soit fermé, puis [Run] le
+  rouvre à la fin.
   ------------------------------------------------------------------------------------------------------------ }
 
 const
@@ -235,6 +248,29 @@ const
   CSIDL_MYMUSIC = $000D;
   CSIDL_MYVIDEO = $000E;
   CSIDL_MYPICTURES = $0027;
+  FILE_SHARE_TOUT = 7;                       { lecture, écriture et suppression : n'empêche personne }
+  OPEN_EXISTING = 3;
+  FILE_FLAG_BACKUP_SEMANTICS = $02000000;    { nécessaire pour ouvrir un dossier }
+
+type
+  TIdentite = record
+    Volume, Haut, Bas: DWORD;
+  end;
+  { BY_HANDLE_FILE_INFORMATION }
+  TInfosFichier = record
+    Attributs: DWORD;
+    Creation1, Creation2, Acces1, Acces2, Ecriture1, Ecriture2: DWORD;
+    Volume: DWORD;
+    TailleHaut, TailleBas, Liens, IndexHaut, IndexBas: DWORD;
+  end;
+
+function CreateFileW(Nom: String; Acces, Partage: DWORD; Securite: DWORD; Disposition, Drapeaux: DWORD;
+  Modele: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';     { publication: ok (fonction de Windows, pas une adresse) }
+function GetFileInformationByHandle(Fichier: THandle; var Infos: TInfosFichier): BOOL;
+  external 'GetFileInformationByHandle@kernel32.dll stdcall';     { publication: ok }
+function CloseHandle(Objet: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';     { publication: ok }
 
 { Vrai si ce nom, à la racine du dossier de données, est un élément que MyPhotos crée. Noms exacts : un fichier de
   l'utilisateur au nom voisin (« Journal.log.txt », « index.db.sauvegarde ») est gardé. À compléter si MyPhotos
@@ -277,6 +313,79 @@ begin
     end;
 end;
 
+{ Mise à jour lancée par MyPhotos (/MISEAJOUR, myphotos/mise_a_jour.py) : MyPhotos se ferme juste après avoir
+  lancé l'installateur. On attend ici qu'il ait fini (son mutex disparaît), 60 secondes au plus, avant la
+  vérification AppMutex d'Inno Setup, qui sinon abandonnerait en silence (/SUPPRESSMSGBOXES). Essai du 25/11/2026
+  (Inno Setup 6.7.4) : InitializeSetup passe bien avant cette vérification. }
+function InitializeSetup(): Boolean;
+var
+  i: Integer;
+begin
+  if ParametrePresent('/MISEAJOUR') then
+  begin
+    i := 0;
+    while CheckForMutexes('{#MyAppMutex}') and (i < 240) do
+    begin
+      Sleep(250);
+      i := i + 1;
+    end;
+    Log(Format('Mise à jour lancée par MyPhotos : %d ms d''attente de sa fermeture.', [i * 250]));
+  end;
+  Result := True;
+end;
+
+{ Identité d'un dossier (volume, numéro de fichier), en suivant les jonctions comme Windows : deux chemins écrits
+  différemment vers le même dossier ont la même identité. False si le dossier n'existe pas ou ne s'ouvre pas. }
+function Identite(const Chemin: String; var Id: TIdentite): Boolean;
+var
+  H: THandle;
+  I: TInfosFichier;
+begin
+  Result := False;
+  H := CreateFileW(Chemin, 0, FILE_SHARE_TOUT, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+  if (H = 0) or (H = THandle(-1)) then
+    Exit;
+  try
+    if GetFileInformationByHandle(H, I) then
+    begin
+      Id.Volume := I.Volume;
+      Id.Haut := I.IndexHaut;
+      Id.Bas := I.IndexBas;
+      Result := True;
+    end;
+  finally
+    CloseHandle(H);
+  end;
+end;
+
+{ Comme ParentOuEgal, par identité : vrai si le dossier d'identité IdDossier est Protege ou l'un de ses parents.
+  On remonte les parents de Protege (écrit normalement) et on compare chacun au dossier de données, quel que soit
+  le chemin par lequel celui-ci a été donné (C:\PROGRA~1\…, \\localhost\C$\Users\…, jonction). }
+function ParentOuEgalIdentite(const Protege: String; const IdDossier: TIdentite): Boolean;
+var
+  P, Parent: String;
+  Id: TIdentite;
+  n: Integer;
+begin
+  Result := False;
+  if Protege = '' then
+    Exit;
+  P := RemoveBackslashUnlessRoot(Protege);
+  for n := 1 to 64 do
+  begin
+    if Identite(P, Id) and (Id.Volume = IdDossier.Volume) and (Id.Haut = IdDossier.Haut)
+       and (Id.Bas = IdDossier.Bas) then
+    begin
+      Result := True;
+      Exit;
+    end;
+    Parent := RemoveBackslashUnlessRoot(ExtractFileDir(P));
+    if (Parent = '') or (CompareText(Parent, P) = 0) then
+      Exit;
+    P := Parent;
+  end;
+end;
+
 { « X:\... » ou « \\serveur\partage\... » : jamais un chemin relatif, ni « \\?\ » ou « \\.\ ». }
 function CheminComplet(const S: String): Boolean;
 begin
@@ -312,6 +421,7 @@ function DossierProtege(const Dossier: String; var Lequel: String): Boolean;
 var
   Liste: TArrayOfString;
   i: Integer;
+  IdDossier: TIdentite;
 begin
   Ajouter(Liste, GetEnv('USERPROFILE'));
   Ajouter(Liste, ExpandConstant('{localappdata}'));
@@ -338,6 +448,15 @@ begin
       Result := True;
       Exit;
     end;
+  { Même dossier écrit autrement (nom court 8.3, \\localhost\C$, jonction) : par identité. }
+  if Identite(Dossier, IdDossier) then
+    for i := 0 to GetArrayLength(Liste) - 1 do
+      if ParentOuEgalIdentite(Liste[i], IdDossier) then
+      begin
+        Lequel := Liste[i];
+        Result := True;
+        Exit;
+      end;
 end;
 
 { Attributs de l'élément lui-même (sans le suivre si c'est un lien) ; -1 s'il n'existe pas. }
