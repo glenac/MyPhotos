@@ -28,6 +28,7 @@ numéro diffère : le dossier est inaccessible, ses photos ne sont pas « suppri
 manque, de la même façon : NULL (inconnu) pour une base 0.3.0, appris au tour suivant ; une 0.3.0 ou une 0.2.0 rouverte
 sur une base 0.4.0 ne lit que les colonnes qu'elle connaît et ajoute ses dossiers sans numéro.
 """
+import ctypes
 import os
 import sqlite3
 import threading
@@ -194,6 +195,23 @@ def chemin_reel(chemin):
         return chemin_affiche(os.path.realpath(chemin_systeme(chemin), strict=True))
     except (OSError, ValueError):
         return None
+
+
+def nom_long(chemin):
+    """Chemin d'un élément existant écrit avec ses noms longs (« VACANC~1 » -> « Vacances d'été 2021 »), par
+    GetLongPathNameW : chaque nom est développé là où il est, sans traverser aucune jonction (contrairement à
+    chemin_reel, qui les résout). None si Windows ne le donne pas, ou ailleurs que sous Windows."""
+    if not WINDOWS:
+        return None
+    try:
+        fonction = ctypes.WinDLL('kernel32', use_last_error=True).GetLongPathNameW
+        fonction.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        fonction.restype = ctypes.c_uint32
+        tampon = ctypes.create_unicode_buffer(32768)
+        n = fonction(chemin_systeme(chemin), tampon, len(tampon))
+    except (OSError, ValueError, AttributeError):
+        return None
+    return chemin_affiche(tampon.value) if 0 < n < len(tampon) else None
 
 
 def sous_le_dossier(chemin, racine):
@@ -806,7 +824,13 @@ class Base:
             'SELECT id, chemin, taille, modifie FROM photos WHERE dossier_id = ?', (dossier_id,))}
 
     def ajouter_photos(self, dossier_id, lignes):
-        """Nouvelles photos [(chemin, taille, modifie, date_fichier)]. Renvoie le nombre ajouté."""
+        """Nouvelles photos [(chemin, taille, modifie, date_fichier)]. Renvoie le nombre ajouté.
+
+        Chaque photo reçoit un identifiant jamais donné auparavant. Laissé à lui-même, SQLite redonne le plus haut
+        identifiant libéré (photo oubliée, fiche vierge d'un déplacement) : une sélection restée dans la page, un groupe
+        de doublons ou une miniature en cache désignaient alors une AUTRE photo (et « Mettre à la Corbeille » l'aurait
+        envoyée à la Corbeille). Le plus haut identifiant donné est gardé dans meta (photo_id_max) : une 0.3.0 l'ignore,
+        et une base 0.3.0, qui n'en a pas, repart du plus haut identifiant présent."""
         quand = maintenant()
         with self._transaction() as c:
             if not c.execute('SELECT 1 FROM dossiers WHERE id = ?', (dossier_id,)).fetchone():
@@ -816,11 +840,21 @@ class Base:
                                                             (dossier_id,))]
             if exclus:
                 lignes = [x for x in lignes if not any(dedans(cle_chemin(x[0]), kx) for kx in exclus)]
+            if not lignes:
+                return 0
+            m = c.execute("SELECT valeur FROM meta WHERE cle = 'photo_id_max'").fetchone()
+            plancher = max(int(m[0] or 0) if m else 0,
+                           c.execute('SELECT COALESCE(MAX(id), 0) FROM photos').fetchone()[0],
+                           c.execute('SELECT COALESCE(MAX(id), 0) FROM mini.miniatures').fetchone()[0])
             avant = c.total_changes
-            c.executemany('INSERT INTO photos(chemin, dossier_id, taille, modifie, date_fichier, vu) '
-                          'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chemin) DO NOTHING',
-                          [(ch, dossier_id, t, m, df, quand) for ch, t, m, df in lignes])
-            return c.total_changes - avant
+            c.executemany('INSERT INTO photos(id, chemin, dossier_id, taille, modifie, date_fichier, vu) '
+                          'VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chemin) DO NOTHING',
+                          [(plancher + 1 + i, ch, dossier_id, t, m, df, quand)
+                           for i, (ch, t, m, df) in enumerate(lignes)])
+            ajoutees = c.total_changes - avant
+            c.execute("INSERT INTO meta(cle, valeur) VALUES ('photo_id_max', ?) "
+                      'ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur', (plancher + len(lignes),))
+            return ajoutees
 
     def marquer_modifiees(self, lignes):
         """Fichiers changés [(id, taille, modifie, date_fichier)] : à analyser de nouveau. La miniature reste

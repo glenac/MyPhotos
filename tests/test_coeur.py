@@ -410,6 +410,33 @@ class TestBase(EssaiAvecImages):
         self.assertEqual(problemes, [])
         self.assertEqual(self.base.compter()['analysees'], self.ok())
 
+    def test_identifiants_jamais_redonnes(self):
+        """Une photo oubliée ne laisse jamais son identifiant à une autre (SQLite redonnait le plus haut identifiant
+        libéré) : la page, les doublons et le cache des miniatures désignent les photos par leur identifiant. Le plus
+        haut identifiant donné est gardé dans meta ; une base 0.3.0 (sans cette clé) repart du plus haut présent."""
+        d = self.base.ajouter_dossier(self.photos)
+        ligne = lambda nom: (str(self.photos / nom), 1, 1, None)              # noqa: E731
+        self.base.ajouter_photos(d['id'], [ligne('a.jpg'), ligne('b.jpg'), ligne('c.jpg')])
+        ids = {os.path.basename(ch): v[0] for ch, v in self.base.connus(d['id']).items()}
+        self.base.oublier_photos([ids['c.jpg'], ids['b.jpg']])                # les plus hauts identifiants
+        self.base.ajouter_photos(d['id'], [ligne('d.jpg')])
+        n = self.base.connus(d['id'])[str(self.photos / 'd.jpg')][0]
+        self.assertGreater(n, ids['c.jpg'])
+        # Fiche vierge supprimée par un déplacement (deplacer_photos) : son identifiant n'est pas redonné non plus.
+        self.base.ajouter_photos(d['id'], [ligne('e.jpg')])
+        e = self.base.connus(d['id'])[str(self.photos / 'e.jpg')][0]
+        self.base.deplacer_photos([(ids['a.jpg'], str(self.photos / 'e.jpg'))])
+        self.base.fermer()
+        self.base = Base(self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db')
+        self.base.ajouter_photos(d['id'], [ligne('f.jpg')])
+        self.assertGreater(self.base.connus(d['id'])[str(self.photos / 'f.jpg')][0], e)
+        # Ce que la 0.3.0 laisse (pas de clé dans meta) : on repart du plus haut identifiant présent.
+        with self.base._transaction() as c:
+            c.execute("DELETE FROM meta WHERE cle = 'photo_id_max'")
+        haut = max(v[0] for v in self.base.connus(d['id']).values())
+        self.base.ajouter_photos(d['id'], [ligne('g.jpg')])
+        self.assertEqual(self.base.connus(d['id'])[str(self.photos / 'g.jpg')][0], haut + 1)
+
 
 class TestParcours(EssaiAvecImages):
 
@@ -1302,11 +1329,24 @@ class TestExclusions(EssaiAvecImages):
         # Tout le chemin en noms courts (comme « PROGRA~1 ») : accepté aussi (0.3.0 : « n'est pas dans »).
         self.base.retirer_exclusion(r['id'])
         self.assertEqual(self.base.ajouter_exclusion(d['id'], court)['chemin'], str(long))
+        # Exclusion écrite par la 0.3.0 avec le nom court : le tour suivant exclut le vrai dossier (noms longs par
+        # GetLongPathNameW, sans traverser de jonction).
+        for x in self.base.exclusions(d['id']):
+            self.base.retirer_exclusion(x['id'])
+        self.relancer(ix)
+        self.assertEqual(len(self.sous(long)), 2)
+        with self.base._transaction() as c:
+            c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
+                      (d['id'], os.path.join(str(self.photos), os.path.basename(court)), '2026-11-24T12:00:00'))
+        self.relancer(ix)
+        self.assertEqual(self.sous(long), [])
 
     @unittest.skipUnless(os.name == 'nt', 'jonctions : Windows')
     def test_jonction(self):
-        """Exclusion choisie à travers une jonction : le vrai dossier est exclu (l'inventaire ne suit jamais une jonction,
-        il ne voit que le vrai dossier). Une exclusion enregistrée ainsi par la 0.3.0 devient efficace au tour suivant."""
+        """Exclusion choisie à travers une jonction : le vrai dossier est exclu, enregistré et affiché (l'inventaire ne
+        suit jamais une jonction, il ne voit que le vrai dossier). Mais une exclusion enregistrée par la 0.3.0 sur une
+        jonction reste sans effet, comme en 0.3.0 : la ramener à sa cible excluait en silence un autre vrai dossier,
+        alors que la liste montrait toujours la jonction (première 0.4.0)."""
         import _winapi
         vacances = self.photos / 'vacances'
         raccourci = self.photos / 'Raccourci vers vacances'          # jonction dans le dossier suivi
@@ -1323,7 +1363,7 @@ class TestExclusions(EssaiAvecImages):
             # Par la jonction du dehors : 0.3.0 refusait (« n'est pas dans »).
             self.base.retirer_exclusion(r['id'])
             self.assertEqual(self.base.ajouter_exclusion(d['id'], str(dehors / 'vacances'))['chemin'], str(vacances))
-            # Exclusion écrite par la 0.3.0, avec le chemin de la jonction : le tour suivant exclut le vrai dossier.
+            # Exclusion écrite par la 0.3.0, avec le chemin de la jonction : sans effet, comme en 0.3.0.
             for x in self.base.exclusions(d['id']):
                 self.base.retirer_exclusion(x['id'])
             self.relancer(ix)
@@ -1332,8 +1372,8 @@ class TestExclusions(EssaiAvecImages):
                 c.execute('INSERT INTO exclusions(dossier_id, chemin, ajoute) VALUES (?, ?, ?)',
                           (d['id'], str(raccourci), '2026-11-24T12:00:00'))
             self.relancer(ix)
-            self.assertEqual(self.sous(vacances), [])
-            self.assertEqual(ix.etat()['bilan']['retirees'], 4)
+            self.assertEqual(len(self.sous(vacances)), 4)
+            self.assertEqual(ix.etat()['bilan']['retirees'], 0)
         finally:
             for j in (raccourci, dehors):
                 try:
@@ -1485,8 +1525,8 @@ class TestDisqueChange(EssaiAvecImages):
         n = ix.relancer()
         self.assertTrue(ix.attendre(60))
         b = ix.etat()['bilan']
-        self.assertEqual((b['numero'], b['retirees'], b['nouvelles'], b['injoignables']),
-                         (n, 0, 0, [str(self.disque)]))
+        self.assertEqual((b['numero'], b['retirees'], b['nouvelles'], b['injoignables'], b['autres_disques']),
+                         (n, 0, 0, [str(self.disque)], [str(self.disque)]))
         self.assertEqual(self.ids(), avant)                                 # gardées, et rien du disque B
         self.assertFalse(self.base.dossier(d['id'])['disponible'])
         self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)
@@ -1516,6 +1556,95 @@ class TestDisqueChange(EssaiAvecImages):
         self.assertEqual(self.base.dossier(d['id'])['volume'], 0xC3)
         self.assertEqual({k: v for k, v in self.ids().items() if k in avant}, avant)
         self.assertEqual(f.images, 3)
+
+    def annees(self, par_an=5):
+        """Le disque devient une photothèque rangée par année (2019 à 2024), la plus récente en dernier (date des
+        fichiers). Renvoie le nombre de photos."""
+        shutil.rmtree(self.disque)
+        debut = time.time() - 86400 * 400
+        k = 0
+        for an in ('2019', '2020', '2021', '2022', '2023', '2024'):
+            for _ in range(par_an):
+                ie.jpeg(self.disque / an / f'IMG_{k:03d}.jpg', (200 + k, 150), (k * 7 % 255, 90, 160),
+                        quand=debut + 86400 * k)
+                k += 1
+        return k
+
+    def test_sauvegarde_pas_adoptee(self):
+        """Disque de sauvegarde branché à la place du disque de photos, sur la même lettre : pas adopté, ni avec les
+        années les plus anciennes seulement (20 photos sur 30), ni presque complet sans les deux photos les plus
+        récentes (28 sur 30). Première 0.4.0 : adopté dès la moitié d'un échantillon, et les photos absentes de la
+        sauvegarde, les plus récentes, étaient retirées avec leur analyse."""
+        n = self.annees()
+        d = self.base.ajouter_dossier(self.disque)
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        os.rename(self.disque, self.tmp / 'disque-A')
+        for an in ('2019', '2020', '2021', '2022'):
+            shutil.copytree(self.tmp / 'disque-A' / an, self.disque / an)
+        self.numero = 0xB2
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables'], b['autres_disques']),
+                         (0, [str(self.disque)], [str(self.disque)]))
+        self.assertEqual(self.ids(), avant)
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xA1)
+        shutil.rmtree(self.disque)
+        shutil.copytree(self.tmp / 'disque-A', self.disque)
+        for p in sorted(self.disque.rglob('*.jpg'))[-2:]:                    # les deux plus récentes
+            p.unlink()
+        self.relancer(ix)
+        self.assertEqual(ix.etat()['bilan']['autres_disques'], [str(self.disque)])
+        self.assertEqual(self.ids(), avant)
+        # Le vrai disque revient : rien n'est refait.
+        shutil.rmtree(self.disque)
+        os.rename(self.tmp / 'disque-A', self.disque)
+        self.numero = 0xA1
+        self.relancer(ix)
+        self.assertTrue(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.ids(), avant)
+        self.assertEqual(f.images, n)
+
+    def test_echantillon_reparti_et_recentes(self):
+        """memes_photos regarde un échantillon réparti sur toutes les photos, plus les plus récentes. Première 0.4.0 :
+        pour 20 à 39 photos, les 20 premières par ordre alphabétique, donc les plus anciennes d'un disque rangé par
+        année, et une sauvegarde de ces seules années passait à 100 %."""
+        self.annees(par_an=7)
+        fichiers = sorted(str(p) for p in self.disque.rglob('*.jpg'))[:39]
+        connus = {ch: (i, os.path.getsize(ch), os.stat(ch).st_mtime_ns) for i, ch in enumerate(fichiers)}
+        self.assertTrue(indexation.memes_photos(connus))
+        for ch in fichiers[20:]:
+            os.remove(ch)
+        self.assertFalse(indexation.memes_photos(connus))
+
+    def test_meme_disque_nouveau_numero_photos_rangees(self):
+        """Même disque, nouveau numéro de volume (lecteur remonté par un logiciel qui en tire un nouveau, disque
+        restauré sur un neuf…), ET photos rangées entre-temps dans un sous-dossier : retrouvées par un parcours sans
+        écriture (taille et date), le numéro est adopté et les déplacements reconnus (mêmes identifiants, rien de
+        refait). Au tour de l'adoption, rien n'est oublié : une photo vraiment supprimée attend le tour suivant.
+        Première 0.4.0 : « inaccessible » pour toujours."""
+        n = self.annees()
+        d = self.base.ajouter_dossier(self.disque)
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        rangees = self.disque / 'Rangées par année'
+        rangees.mkdir()
+        for an in ('2019', '2020', '2021', '2022', '2023', '2024'):
+            os.replace(self.disque / an, rangees / an)
+        os.remove(rangees / '2019' / 'IMG_000.jpg')
+        self.numero = 0xC3
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['nouvelles'], b['injoignables'], b['autres_disques']), (0, 0, [], []))
+        self.assertTrue(self.base.dossier(d['id'])['disponible'])
+        self.assertEqual(self.base.dossier(d['id'])['volume'], 0xC3)
+        self.assertEqual(sorted(self.ids().values()), sorted(avant.values()))
+        self.assertTrue(all(dedans(k, cle_chemin(str(rangees))) for k in self.ids()
+                            if not k.endswith('img_000.jpg')))
+        self.assertEqual(f.images, n)
+        self.relancer(ix)                                                  # même numéro : la supprimée part
+        self.assertEqual(ix.etat()['bilan']['retirees'], 1)
+        self.assertEqual(len(self.ids()), n - 1)
 
     def test_base_0_3_0_sans_numero(self):
         """Base 0.3.0 (sans la colonne volume) : rouverte sans rien perdre ni changer user_version ; le numéro est
@@ -1592,6 +1721,46 @@ class TestDossierPresqueVide(EssaiAvecImages):
         self.assertTrue(self.base.dossier(self.d['id'])['disponible'])
         self.assertEqual(self.ids(), avant)
         self.assertEqual(f.images, 2)
+
+    def windows(self, *noms):
+        """Sous-dossiers que Windows crée lui-même dans Images (Pellicule, Images enregistrées) : leur desktop.ini seul."""
+        for nom in noms:
+            (self.images / nom).mkdir(exist_ok=True)
+            ini = self.images / nom / 'desktop.ini'
+            ini.write_text('[.ShellClassInfo]\r\n', encoding='utf-8')
+            ie.attribut(ini, ie.CACHE | ie.SYSTEME)
+
+    def test_sous_dossiers_de_windows(self):
+        """Dossier Images que OneDrive n'a pas encore rempli, avec ses sous-dossiers habituels (Pellicule, Images
+        enregistrées) qui ne contiennent que leur desktop.ini, et un sous-dossier vide : toujours « vide », à toutes les
+        profondeurs (première 0.4.0 : seul le premier niveau comptait, toutes les photos étaient retirées)."""
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        self.vider()
+        self.windows('Pellicule', 'Images enregistrées')
+        (self.images / '2024' / 'Vacances').mkdir(parents=True)
+        self.assertTrue(indexation.dossier_vide(str(self.images)))
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables']), (0, [str(self.images)]))
+        self.assertEqual(self.ids(), avant)
+        # Un vrai fichier, même tout au fond : le dossier a du contenu, les photos supprimées sont retirées.
+        (self.images / '2024' / 'Vacances' / 'notes.txt').write_text('liste de courses', encoding='utf-8')
+        self.assertFalse(indexation.dossier_vide(str(self.images)))
+        self.relancer(ix)
+        self.assertEqual(ix.etat()['bilan']['retirees'], 2)
+        self.assertEqual(f.images, 2)
+
+    def test_dossier_vide_borne(self):
+        """dossier_vide (visionneuse) s'arrête au premier vrai fichier ; au-delà de la borne de dossiers regardés sans
+        en trouver, il répond « pas vide » (on ne sait pas : c'est l'inventaire qui tranchera)."""
+        self.vider()
+        for i in range(5):
+            (self.images / f'vide{i}').mkdir()
+        self.assertTrue(indexation.dossier_vide(str(self.images)))
+        self.assertFalse(indexation.dossier_vide(str(self.images), limite=3))
+        with self.assertRaises(OSError):
+            indexation.dossier_vide(str(self.tmp / 'absent'))
 
     def test_photos_vraiment_supprimees(self):
         """Toutes les photos supprimées, mais le dossier garde du contenu (un document) : elles sont retirées."""
