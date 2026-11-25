@@ -30,9 +30,14 @@
   --tuile: #e2e6eb;
   --ombre: 0 1px 2px rgba(16, 24, 40, .06), 0 6px 20px rgba(16, 24, 40, .08);
   --rayon: 16px;
-  --tuile-min: 172px;
+  --tuile-min: calc(172px * var(--e));
   --gouttiere: 24px;
+  /* Taille du texte (Réglages, 0.4.1) : tout grandit ensemble, textes en rem et dimensions en calc(… * var(--e)).
+     L'attribut data-taille est posé par le serveur dès l'envoi de la page : aucun changement sous les yeux. */
+  --e: 1;
 }
+:root[data-taille="grande"] { --e: 1.2; }
+:root[data-taille="tres-grande"] { --e: 1.4; }
 @media (prefers-color-scheme: dark) {
   :root {
     --fond: #111316;
@@ -58,7 +63,7 @@
   }
 }
 *, *::before, *::after { box-sizing: border-box; }
-html { font-size: 112.5%; -webkit-text-size-adjust: 100%; }
+html { font-size: calc(112.5% * var(--e)); -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; min-height: 100vh; background: var(--fond); color: var(--texte);
   font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -87,15 +92,15 @@ a { color: var(--accent); }
 /* ------------------------------------------------ boutons */
 .bouton {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 48px; padding: 0 20px; border-radius: 999px; border: 1px solid var(--bordure);
+  min-height: calc(48px * var(--e)); padding: 0 calc(20px * var(--e)); border-radius: 999px; border: 1px solid var(--bordure);
   background: var(--surface); color: var(--texte); font: inherit; font-weight: 600; cursor: pointer;
   text-decoration: none; white-space: nowrap; transition: background-color .15s, border-color .15s, color .15s;
 }
 .bouton:hover { border-color: var(--accent); color: var(--accent); }
 .bouton.principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
 .bouton.principal:hover { background: var(--accent-survol); border-color: var(--accent-survol); color: var(--accent-texte); }
-.bouton.grand { min-height: 56px; padding: 0 30px; font-size: 1.08rem; }
-.bouton.petit { min-height: 40px; padding: 0 16px; font-size: .95rem; }
+.bouton.grand { min-height: calc(56px * var(--e)); padding: 0 calc(30px * var(--e)); font-size: 1.08rem; }
+.bouton.petit { min-height: calc(40px * var(--e)); padding: 0 calc(16px * var(--e)); font-size: .95rem; }
 .bouton.danger { color: var(--danger); }
 .bouton.danger:hover { border-color: var(--danger); background: var(--danger-doux); }
 .bouton.danger-plein { background: var(--danger); border-color: var(--danger); color: var(--danger-texte); }
@@ -111,7 +116,7 @@ a { color: var(--accent); }
   cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
 }
 .bouton-icone {
-  display: inline-grid; place-items: center; width: 48px; height: 48px; border-radius: 50%;
+  display: inline-grid; place-items: center; width: calc(48px * var(--e)); height: calc(48px * var(--e)); border-radius: 50%;
   border: none; background: transparent; color: inherit; cursor: pointer;
 }
 .bouton-icone:hover { background: var(--surface-2); }
@@ -151,7 +156,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 }
 /* Icône de MyPhotos (construction/MyPhotos.ico, image de 64 px), une seule fois dans la page. */
 .logo {
-  display: inline-block; width: 40px; height: 40px; flex: none;
+  display: inline-block; width: calc(40px * var(--e)); height: calc(40px * var(--e)); flex: none;
   background: url("data:image/png;base64,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") center / contain no-repeat;
 }
 
@@ -160,7 +165,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
   position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px;
   background: var(--fond); z-index: 50;
 }
-.ecran-plein .logo { display: block; width: 64px; height: 64px; margin: 0 auto 16px; }
+.ecran-plein .logo { display: block; width: calc(64px * var(--e)); height: calc(64px * var(--e)); margin: 0 auto 16px; }
 .ecran-plein p { color: var(--texte-doux); font-size: 1.1rem; max-width: 34em; margin-inline: auto; }
 
 /* ------------------------------------------------ en-tête */
@@ -170,16 +175,16 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
   padding: 12px var(--gouttiere); background: color-mix(in srgb, var(--fond) 90%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-bottom: 1px solid var(--bordure);
 }
-.recherche { display: flex; gap: 10px; width: 100%; max-width: 820px; justify-self: center; }
+.recherche { display: flex; gap: 10px; width: 100%; max-width: calc(820px * var(--e)); justify-self: center; }
 .champ { position: relative; flex: 1; min-width: 0; }
-.champ .icone { position: absolute; left: 20px; top: 50%; transform: translateY(-50%); color: var(--texte-doux); pointer-events: none; }
+.champ .icone { position: absolute; left: calc(20px * var(--e)); top: 50%; transform: translateY(-50%); color: var(--texte-doux); pointer-events: none; }
 .champ input {
-  width: 100%; height: 58px; padding: 0 20px 0 58px; border-radius: 999px; border: 2px solid var(--bordure);
+  width: 100%; height: calc(58px * var(--e)); padding: 0 20px 0 calc(58px * var(--e)); border-radius: 999px; border: 2px solid var(--bordure);
   background: var(--surface); color: var(--texte); font: inherit; font-size: 1.15rem;
 }
 .champ input::placeholder { color: var(--texte-doux); opacity: .9; }
 .champ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-doux); }
-.recherche .bouton { min-height: 58px; padding: 0 26px; font-size: 1.05rem; }
+.recherche .bouton { min-height: calc(58px * var(--e)); padding: 0 calc(26px * var(--e)); font-size: 1.05rem; }
 .bandeau {
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 8px var(--gouttiere);
   background: var(--accent-doux); border-bottom: 1px solid var(--bordure); font-size: .95rem;
@@ -187,7 +192,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .bandeau-texte { flex: 1 1 320px; min-width: 0; }
 .bandeau progress { flex: 0 1 260px; height: 10px; background: var(--surface); }
 .bandeau progress::-webkit-progress-bar { background: var(--surface); }
-.bandeau .bouton { min-height: 38px; }
+.bandeau .bouton { min-height: calc(38px * var(--e)); }
 /* Avancement inconnu (préparation du moteur, inventaire) : une bande qui va et vient, plutôt qu'une barre vide. */
 progress:not([value]), .bandeau progress:not([value]) {
   background-image: linear-gradient(var(--accent), var(--accent)); background-repeat: no-repeat;
@@ -197,7 +202,7 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 @keyframes indetermine { from { background-position: 0 0; } to { background-position: 100% 0; } }
 .operation { background: var(--surface-2); }
 .operation-boutons { display: flex; flex-wrap: wrap; gap: 8px; }
-.operation-boutons .bouton-icone { width: 40px; height: 40px; }
+.operation-boutons .bouton-icone { width: calc(40px * var(--e)); height: calc(40px * var(--e)); }
 /* Nouvelles versions de MyPhotos : question de l'assistant, réglage. */
 .question-version { margin: 18px 0 0; padding: 14px 18px; border: 1px solid var(--bordure); border-radius: 14px; background: var(--surface); }
 .question-version h2 { margin: 0 0 6px; font-size: 1.05rem; }
@@ -207,7 +212,7 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 /* Barre de la sélection : elle prend la place de l'en-tête, à la même hauteur. */
 .barre-selection {
   display: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 16px;
-  min-height: 83px; padding: 12px var(--gouttiere); background: var(--accent-doux); border-bottom: 1px solid var(--bordure);
+  min-height: calc(83px * var(--e)); padding: 12px var(--gouttiere); background: var(--accent-doux); border-bottom: 1px solid var(--bordure);
 }
 .en-selection .entete { display: none; }
 .en-selection .barre-selection { display: grid; }
@@ -221,7 +226,7 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .exemples { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 18px 0 4px; }
 .exemples .etiquette { color: var(--texte-doux); margin-right: 4px; }
 .puce {
-  min-height: 44px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--bordure);
+  min-height: calc(44px * var(--e)); padding: 0 calc(18px * var(--e)); border-radius: 999px; border: 1px solid var(--bordure);
   background: var(--surface); color: var(--texte); font: inherit; font-size: 1rem; cursor: pointer;
 }
 .puce:hover { border-color: var(--accent); color: var(--accent); }
@@ -265,13 +270,13 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
   display: grid; place-items: center; padding: 0; border: none; background: none; color: inherit; cursor: pointer;
   transition: opacity .15s;
 }
-.coche { position: absolute; top: 0; left: 0; z-index: 2; width: 48px; height: 48px; opacity: 0; }
+.coche { position: absolute; top: 0; left: 0; z-index: 2; width: calc(48px * var(--e)); height: calc(48px * var(--e)); opacity: 0; }
 .coche .rond, .coche-mois .rond {
-  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; width: calc(26px * var(--e)); height: calc(26px * var(--e)); border-radius: 50%;
   transition: background-color .15s, border-color .15s;
 }
 .coche .rond { border: 2px solid #fff; background: rgba(0, 0, 0, .18); box-shadow: 0 1px 4px rgba(0, 0, 0, .5); }
-.coche .icone, .coche-mois .icone { width: 16px; height: 16px; stroke-width: 3.2; opacity: 0; transition: opacity .15s; }
+.coche .icone, .coche-mois .icone { width: calc(16px * var(--e)); height: calc(16px * var(--e)); stroke-width: 3.2; opacity: 0; transition: opacity .15s; }
 .coche .icone { color: #fff; }
 .coche:hover .icone { opacity: .9; }
 .coche:hover .rond { background: rgba(0, 0, 0, .35); }
@@ -280,8 +285,8 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
   background: var(--accent); border-color: var(--accent); box-shadow: none;
 }
 .case.choisie .coche .icone, .coche-mois[aria-checked="true"] .icone { opacity: 1; color: var(--accent-texte); }
-.coche-mois { width: 44px; height: 44px; border-radius: 50%; color: var(--texte-doux); opacity: 0; }
-.coche-mois .rond { width: 24px; height: 24px; border: 2px solid currentColor; }
+.coche-mois { width: calc(44px * var(--e)); height: calc(44px * var(--e)); border-radius: 50%; color: var(--texte-doux); opacity: 0; }
+.coche-mois .rond { width: calc(24px * var(--e)); height: calc(24px * var(--e)); border: 2px solid currentColor; }
 .coche-mois:hover { color: var(--accent); }
 .coche-mois:hover .icone { opacity: .8; }
 .coche-mois[aria-checked="mixed"] { color: var(--accent); }
@@ -297,13 +302,13 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 }
 .sentinelle { height: 1px; }
 .vide { text-align: center; padding: 56px 16px; color: var(--texte-doux); max-width: 40em; margin: 0 auto; }
-.vide .icone { width: 64px; height: 64px; stroke-width: 1.4; color: var(--bordure); margin-bottom: 12px; }
+.vide .icone { width: calc(64px * var(--e)); height: calc(64px * var(--e)); stroke-width: 1.4; color: var(--bordure); margin-bottom: 12px; }
 .vide h2 { color: var(--texte); }
 .vide .bouton { margin-top: 10px; }
 .moins-sures { margin-top: 40px; border-top: 1px solid var(--bordure); padding-top: 12px; }
 .moins-sures.seule { margin-top: 0; border-top: none; padding-top: 0; }
 .moins-sures summary {
-  display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 6px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 10px; min-height: calc(48px * var(--e)); padding: 0 6px; cursor: pointer;
   font-size: 1.12rem; font-weight: 650; list-style: none; border-radius: 10px;
 }
 .moins-sures summary::-webkit-details-marker { display: none; }
@@ -327,14 +332,14 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .etapes li { display: flex; align-items: center; gap: 10px; color: var(--texte-doux); font-weight: 600; }
 .etapes li + li::before { content: ""; width: 36px; height: 2px; background: var(--bordure); margin-right: 2px; }
 .etapes .num {
-  display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+  display: inline-grid; place-items: center; width: calc(34px * var(--e)); height: calc(34px * var(--e)); border-radius: 50%;
   border: 2px solid var(--bordure); font-size: .95rem;
 }
 .etapes li[aria-current="step"] { color: var(--texte); }
 .etapes li[aria-current="step"] .num { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
 .etapes li.faite .num { background: var(--succes); border-color: var(--succes); color: var(--surface); }
 .carte {
-  width: 100%; max-width: 800px; background: var(--surface); border: 1px solid var(--bordure);
+  width: 100%; max-width: calc(800px * var(--e)); background: var(--surface); border: 1px solid var(--bordure);
   border-radius: 22px; box-shadow: var(--ombre); padding: 34px 40px;
 }
 .carte h1:focus { outline: none; }
@@ -374,7 +379,7 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
   display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 14px;
   border: 1px solid var(--bordure); background: var(--surface);
 }
-.dossier > .icone { width: 30px; height: 30px; color: var(--accent); }
+.dossier > .icone { width: calc(30px * var(--e)); height: calc(30px * var(--e)); color: var(--accent); }
 .dossier-texte { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .dossier-chemin { font-weight: 600; overflow-wrap: anywhere; }
 .dossier-nom { font-weight: 700; }
@@ -383,7 +388,7 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .manuel { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; align-items: center; }
 .manuel label { width: 100%; font-weight: 600; }
 .manuel input {
-  flex: 1 1 280px; min-height: 48px; padding: 0 14px; border-radius: 12px; border: 2px solid var(--bordure);
+  flex: 1 1 280px; min-height: calc(48px * var(--e)); padding: 0 14px; border-radius: 12px; border: 2px solid var(--bordure);
   background: var(--surface); color: var(--texte); font: inherit;
 }
 .encart { padding: 14px 18px; border-radius: 14px; background: var(--accent-doux); margin: 18px 0 0; }
@@ -395,9 +400,9 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .liste-cases { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 8px; }
 .liste-cases li { padding: 10px 14px; border: 1px solid var(--bordure); border-radius: 12px; background: var(--surface); }
 .liste-cases label { display: flex; align-items: center; gap: 12px; cursor: pointer; }
-.liste-cases input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.liste-cases input { width: calc(22px * var(--e)); height: calc(22px * var(--e)); flex: none; accent-color: var(--accent); }
 .liste-cases .nom-sd { font-weight: 650; overflow-wrap: anywhere; }
-.liste-cases .note { margin: 4px 0 0 34px; }
+.liste-cases .note { margin: 4px 0 0 calc(34px * var(--e)); }
 #sd-total { overflow-wrap: anywhere; }
 .actualiser { display: inline-flex; align-items: center; gap: 6px; }
 .actualiser .icone { width: 1.1em; height: 1.1em; }
@@ -412,10 +417,10 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 dialog { border: none; padding: 0; color: var(--texte); background: var(--surface); }
 dialog::backdrop { background: rgba(10, 12, 16, .5); }
 .fenetre {
-  width: min(880px, calc(100% - 32px)); max-height: calc(100% - 32px); border-radius: 20px;
+  width: min(calc(880px * var(--e)), calc(100% - 32px)); max-height: calc(100% - 32px); border-radius: 20px;
   box-shadow: var(--ombre); overflow: auto;
 }
-.fenetre.petite { width: min(560px, calc(100% - 32px)); }
+.fenetre.petite { width: min(calc(560px * var(--e)), calc(100% - 32px)); }
 .fenetre-tete, .panneau-tete {
   position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 16px 18px 12px 28px; background: var(--surface); border-bottom: 1px solid var(--bordure);
@@ -424,7 +429,7 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 .fenetre-corps { padding: 20px 28px 26px; }
 .fenetre-corps .pied { margin-top: 22px; }
 .panneau {
-  margin: 0 0 0 auto; width: min(580px, 100%); max-width: 100%; height: 100%; max-height: 100%;
+  margin: 0 0 0 auto; width: min(calc(580px * var(--e)), 100%); max-width: 100%; height: 100%; max-height: 100%;
   border-left: 1px solid var(--bordure); overflow: auto; box-shadow: var(--ombre);
 }
 .panneau[open] { animation: glisser .2s ease-out; }
@@ -445,8 +450,8 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
 }
 .visionneuse::backdrop { background: #000; }
 .visionneuse[open] { display: flex; flex-direction: column; }
-.v-scene { position: relative; flex: 1 1 auto; min-height: 0; margin-top: 68px; }
-.v-cadre { position: absolute; inset: 0 92px 6px; }
+.v-scene { position: relative; flex: 1 1 auto; min-height: 0; margin-top: calc(68px * var(--e)); }
+.v-cadre { position: absolute; inset: 0 calc(92px * var(--e)) 6px; }
 .v-cadre img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .v-mini { filter: blur(6px); opacity: .85; }
 .v-image { visibility: hidden; }
@@ -457,18 +462,23 @@ dialog::backdrop { background: rgba(10, 12, 16, .5); }
   max-width: min(640px, calc(100% - 32px)); padding: 12px 18px; border-radius: 12px; background: rgba(0, 0, 0, .78);
   text-align: center; margin: 0;
 }
-.v-fleche, .v-fermer {
+.v-fleche, .v-fermer, .v-diapo {
   position: absolute; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   border: none; cursor: pointer; color: #fff; background: rgba(255, 255, 255, .12); font: inherit; font-weight: 600;
 }
-.v-fleche:hover, .v-fermer:hover { background: rgba(255, 255, 255, .24); }
-.v-fleche:disabled { opacity: .25; cursor: default; }
-.v-fleche { top: 50%; transform: translateY(-50%); width: 64px; height: 64px; border-radius: 50%; }
-.v-fleche .icone { width: 34px; height: 34px; }
+.v-fleche:hover, .v-fermer:hover, .v-diapo:hover { background: rgba(255, 255, 255, .24); }
+.v-fleche:disabled, .v-diapo:disabled { opacity: .25; cursor: default; }
+.v-diapo:disabled:hover { background: rgba(255, 255, 255, .12); }
+.v-fleche { top: 50%; transform: translateY(-50%); width: calc(64px * var(--e)); height: calc(64px * var(--e)); border-radius: 50%; }
+.v-fleche .icone { width: calc(34px * var(--e)); height: calc(34px * var(--e)); }
 .v-fleche.gauche { left: 14px; }
 .v-fleche.droite { right: 14px; }
-.v-fermer { top: 12px; right: 14px; min-height: 48px; padding: 0 18px 0 14px; border-radius: 999px; }
-.v-infos { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 10px 24px 18px; }
+.v-fermer, .v-diapo { top: 12px; right: 14px; min-height: calc(48px * var(--e)); padding: 0 18px 0 14px; border-radius: 999px; }
+.v-diapo { right: auto; left: 14px; }
+.v-infos {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 10px 24px 18px;
+  max-height: 50%; overflow-y: auto;          /* grand texte, fenêtre étroite : la photo garde au moins la moitié */
+}
 .v-texte { flex: 1 1 320px; min-width: 0; }
 .v-date { font-size: 1.15rem; font-weight: 650; margin: 0 0 2px; }
 .v-dossier {
@@ -520,7 +530,7 @@ details.d-section > summary::-webkit-details-marker { display: none; }
 details.d-section > summary .icone { transition: transform .2s; }
 details.d-section[open] > summary .icone { transform: rotate(90deg); }
 /* Groupes de deux photos côte à côte sur un grand écran ; trois photos et plus : toute la largeur. */
-.d-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 470px), 1fr)); gap: 14px; align-items: start; }
+.d-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(470px * var(--e))), 1fr)); gap: 14px; align-items: start; }
 .d-groupe {
   background: var(--surface); border: 1px solid var(--bordure); border-radius: var(--rayon); padding: 14px 18px 16px;
   content-visibility: auto; contain-intrinsic-block-size: auto 360px;
@@ -532,7 +542,7 @@ details.d-section[open] > summary .icone { transform: rotate(90deg); }
 .d-gain { color: var(--texte-doux); font-weight: 600; font-size: .95rem; }
 .d-complet .d-gain { color: var(--danger); }
 .d-photos { display: flex; flex-wrap: wrap; gap: 18px; }
-.d-photo { flex: 1 1 196px; max-width: 300px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.d-photo { flex: 1 1 calc(196px * var(--e)); max-width: calc(300px * var(--e)); min-width: 0; display: grid; gap: 8px; align-content: start; }
 .d-photo .case { aspect-ratio: 4 / 3; }
 .d-photo .tuile img { object-fit: contain; }
 .doublons .coche { opacity: 1; }
@@ -573,14 +583,65 @@ details.d-section[open] > summary .icone { transform: rotate(90deg); }
 /* Écran « Doublons » : au-dessus de la barre « Supprimer les copies cochées ». */
 body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 
+/* ------------------------------------------------ « plus comme celle-ci » (0.4.1) */
+.semblables-tete { display: grid; justify-items: start; gap: 12px; margin: 18px 0 2px; }
+.semblables-tete .bouton { white-space: normal; text-align: left; }
+.semblables-ligne { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.semblables-mini {
+  flex: none; display: block; width: calc(76px * var(--e)); height: calc(76px * var(--e)); border-radius: 12px;
+  overflow: hidden; background: var(--tuile);
+}
+.semblables-mini img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.semblables-tete h1 { margin: 0; font-size: 1.45rem; }
+.semblables-tete h1:focus { outline: none; }
+
+/* ------------------------------------------------ diaporama (0.4.1) : dans la visionneuse, plein écran si possible */
+.diaporama { position: fixed; inset: 0; z-index: 10; overflow: hidden; background: #000; color: #f2f3f5; cursor: none; }
+.diaporama::backdrop { background: #000; }
+.diaporama:focus { outline: none; }
+.diaporama.commandes-visibles, .diaporama.en-pause { cursor: default; }
+.dp-image {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .6s ease;
+}
+.dp-image.visible { opacity: 1; }
+.dp-message {
+  position: absolute; top: 24px; left: 50%; transform: translateX(-50%); width: max-content;
+  max-width: calc(100% - 32px); margin: 0; padding: 10px 20px; border-radius: 14px; background: rgba(12, 13, 15, .8);
+  font-size: 1.1rem; font-weight: 600; text-align: center;
+}
+.dp-message:empty { display: none; }
+.dp-commandes {
+  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: center; gap: 10px 16px; width: max-content; max-width: calc(100% - 32px);
+  padding: 12px 18px; border-radius: 20px; background: rgba(12, 13, 15, .82); opacity: 0; pointer-events: none;
+  transition: opacity .3s;
+}
+.diaporama.commandes-visibles .dp-commandes, .diaporama.en-pause .dp-commandes,
+.dp-commandes:has(:focus-visible) { opacity: 1; pointer-events: auto; }
+.dp-durees { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dp-durees .bouton[aria-pressed="true"] { background: #fff; border-color: #fff; color: #111; }
+.dp-position { color: #b9bfc7; white-space: nowrap; }
+
+/* ------------------------------------------------ taille du texte (Réglages, 0.4.1) */
+.choix-taille { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 10px; border: none; padding: 0; }
+.choix-taille label {
+  display: inline-flex; align-items: center; gap: 10px; min-height: calc(52px * var(--e)); padding: 6px 18px 6px 14px;
+  border: 2px solid var(--bordure); border-radius: 14px; background: var(--surface); font-weight: 600; cursor: pointer;
+}
+.choix-taille label:hover { border-color: var(--accent); }
+.choix-taille label:has(input:checked) { border-color: var(--accent); background: var(--accent-doux); }
+.choix-taille input { width: calc(22px * var(--e)); height: calc(22px * var(--e)); margin: 0; accent-color: var(--accent); }
+.choix-taille .t-grande { font-size: 1.15em; }
+.choix-taille .t-tres-grande { font-size: 1.3em; }
+
 /* ------------------------------------------------ largeur */
 @media (max-width: 900px) {
-  :root { --tuile-min: 132px; --gouttiere: 16px; }
+  :root { --tuile-min: calc(132px * var(--e)); --gouttiere: 16px; }
   .entete { grid-template-columns: 1fr auto; }
   .recherche { grid-column: 1 / -1; grid-row: 2; max-width: none; }
   .carte { padding: 26px 22px; }
   .v-cadre { inset: 0 8px 6px; }
-  .v-fleche { width: 52px; height: 52px; background: rgba(0, 0, 0, .5); }
+  .v-fleche { width: calc(52px * var(--e)); height: calc(52px * var(--e)); background: rgba(0, 0, 0, .5); }
   .v-fleche.gauche { left: 12px; }
   .v-fleche.droite { right: 12px; }
 }
@@ -593,8 +654,8 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   .barre-selection { gap: 8px; }
 }
 @media (max-width: 560px) {
-  :root { --tuile-min: 104px; }
-  html { font-size: 106%; }
+  :root { --tuile-min: calc(104px * var(--e)); }
+  html { font-size: calc(106% * var(--e)); }
   .recherche .bouton { padding: 0 16px; }
   .recherche .bouton span { display: none; }
   /* En-tête : les icônes suffisent à l'œil, les noms restent pour les lecteurs d'écran. */
@@ -613,8 +674,47 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   .materiel { grid-template-columns: 1fr; gap: 0; }
   .materiel dd { margin-bottom: 8px; }
   .fenetre-corps, .panneau-corps { padding-left: 18px; padding-right: 18px; }
-  .v-actions .bouton { flex: 1 1 100%; white-space: normal; }
+  .v-actions .bouton { flex: 1 1 calc(50% - 5px); white-space: normal; }
   .v-infos { padding: 10px 14px 14px; }
+}
+/* Grand texte : l'en-tête passe sur deux lignes, et les boutons de la sélection gardent leurs icônes seules, plus tôt
+   (les largeurs des requêtes de média ne suivent pas la taille du texte). */
+@media (max-width: 1100px) {
+  :root[data-taille="grande"] .entete, :root[data-taille="tres-grande"] .entete { grid-template-columns: 1fr auto; }
+  :root[data-taille="grande"] .recherche, :root[data-taille="tres-grande"] .recherche {
+    grid-column: 1 / -1; grid-row: 2; max-width: none;
+  }
+}
+@media (max-width: 1280px) {
+  :root[data-taille="tres-grande"] .entete { grid-template-columns: 1fr auto; }
+  :root[data-taille="tres-grande"] .recherche { grid-column: 1 / -1; grid-row: 2; max-width: none; }
+  :root[data-taille="tres-grande"] .v-cadre { inset: 0 8px 6px; }
+  :root[data-taille="tres-grande"] .v-fleche { background: rgba(0, 0, 0, .5); }
+}
+@media (max-width: 1000px) {
+  :root[data-taille="grande"] .sel-actions .bouton { padding: 0 14px; }
+  :root[data-taille="grande"] .sel-actions .bouton span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+@media (max-width: 1180px) {
+  :root[data-taille="tres-grande"] .sel-actions .bouton { padding: 0 14px; }
+  :root[data-taille="tres-grande"] .sel-actions .bouton span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+@media (max-width: 760px) {
+  :root[data-taille="grande"] .entete-actions .bouton, :root[data-taille="tres-grande"] .entete-actions .bouton,
+  :root[data-taille="grande"] .recherche .bouton, :root[data-taille="tres-grande"] .recherche .bouton { padding: 0 14px; }
+  :root[data-taille="grande"] .entete-actions .bouton span, :root[data-taille="tres-grande"] .entete-actions .bouton span {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  :root[data-taille="grande"] .recherche .bouton span, :root[data-taille="tres-grande"] .recherche .bouton span { display: none; }
+  :root[data-taille="grande"] .v-actions .bouton, :root[data-taille="tres-grande"] .v-actions .bouton {
+    flex: 1 1 calc(50% - 5px); white-space: normal;
+  }
+  :root[data-taille="grande"] .dossier, :root[data-taille="tres-grande"] .dossier { flex-wrap: wrap; }
+  :root[data-taille="grande"] .dossier-texte, :root[data-taille="tres-grande"] .dossier-texte { min-width: 60%; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation-duration: .01ms !important; }
@@ -765,6 +865,13 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
       <button class="puce" type="button" data-q="coucher de soleil">coucher de soleil</button>
       <button class="puce" type="button" data-q="fleurs">fleurs</button>
     </div>
+    <div id="semblables-tete" class="semblables-tete" hidden>
+      <button id="semblables-retour" class="bouton" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg><span id="semblables-retour-texte">Revenir à toutes les photos</span></button>
+      <div class="semblables-ligne">
+        <a id="semblables-mini" class="semblables-mini" href="#" aria-label="Voir cette photo"><img alt=""></a>
+        <h1 id="semblables-titre" tabindex="-1">Photos qui ressemblent à celle-ci</h1>
+      </div>
+    </div>
     <div class="ligne-compte">
       <p id="compte" class="compte" aria-live="polite"></p>
       <p id="maj" class="maj" hidden>De nouvelles photos sont prêtes. <button id="maj-bouton" class="bouton-lien" type="button">Mettre à jour</button></p>
@@ -821,6 +928,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     <button id="v-prec" class="v-fleche gauche" type="button" aria-label="Photo précédente (flèche gauche)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
     <button id="v-suiv" class="v-fleche droite" type="button" aria-label="Photo suivante (flèche droite)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
   </div>
+  <button id="v-diaporama" class="v-diapo" type="button" aria-keyshortcuts="D" title="Diaporama : une photo après l’autre, sur tout l’écran (touche D)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="m10 8 5 2.5-5 2.5z"/><path d="M8 21h8"/></svg><span>Diaporama</span></button>
   <button id="v-fermer" class="v-fermer" type="button" aria-label="Fermer la visionneuse (Échap)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Fermer</span></button>
   <div class="v-infos">
     <div class="v-texte">
@@ -829,11 +937,29 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     </div>
     <span id="v-position" class="v-position"></span>
     <div class="v-actions">
+      <button id="v-semblables" class="bouton sombre" type="button" title="Afficher les photos qui ressemblent le plus à celle-ci"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="12" height="12" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v11"/><path d="m5.5 17 3-3 2 2 1.5-1.5 2 2"/></svg>Plus comme celle-ci</button>
       <button id="v-copier" class="bouton sombre" type="button" aria-keyshortcuts="Control+C" title="Copier (Ctrl+C), puis coller où vous voulez avec Ctrl+V"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>Copier</button>
       <button id="v-copier-vers" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9.5 13h6M13 10.5l2.5 2.5-2.5 2.5"/></svg>Copier dans un dossier…</button>
       <button id="v-supprimer" class="bouton sombre danger" type="button" aria-keyshortcuts="Delete" title="Mettre à la Corbeille de Windows (Suppr)"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>Supprimer</button>
       <button id="v-ouvrir" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>Ouvrir avec la visionneuse Windows</button>
       <button id="v-montrer" class="bouton sombre" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Afficher dans le dossier</button>
+    </div>
+  </div>
+  <!-- Diaporama : par-dessus la visionneuse, en plein écran quand c'est possible (sinon toute la fenêtre). -->
+  <div id="diaporama" class="diaporama" role="region" aria-label="Diaporama" aria-roledescription="diaporama" tabindex="-1" hidden>
+    <img id="dp-a" class="dp-image" alt="">
+    <img id="dp-b" class="dp-image" alt="">
+    <p id="dp-message" class="dp-message" role="status"></p>
+    <div class="dp-commandes">
+      <button id="dp-pause" class="bouton sombre" type="button" aria-keyshortcuts="Space"></button>
+      <div class="dp-durees" role="group" aria-labelledby="dp-durees-titre">
+        <span id="dp-durees-titre">Chaque photo :</span>
+        <button class="bouton sombre petit" type="button" data-duree="3" aria-pressed="false">3 s</button>
+        <button class="bouton sombre petit" type="button" data-duree="5" aria-pressed="true">5 s</button>
+        <button class="bouton sombre petit" type="button" data-duree="10" aria-pressed="false">10 s</button>
+      </div>
+      <span id="dp-position" class="dp-position"></span>
+      <button id="dp-quitter" class="bouton sombre" type="button" aria-keyshortcuts="Escape"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>Quitter le diaporama</button>
     </div>
   </div>
 </dialog>
@@ -845,6 +971,15 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
     <button class="bouton-icone" type="button" data-fermer aria-label="Fermer les réglages"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="panneau-corps">
+    <section aria-labelledby="r-t-taille">
+      <h3 id="r-t-taille">Taille du texte</h3>
+      <div class="choix-taille" role="radiogroup" aria-labelledby="r-t-taille" aria-describedby="r-taille-note">
+        <label><input type="radio" name="taille-texte" value="normale" checked><span>Normale</span></label>
+        <label><input type="radio" name="taille-texte" value="grande"><span class="t-grande">Grande</span></label>
+        <label><input type="radio" name="taille-texte" value="tres-grande"><span class="t-tres-grande">Très grande</span></label>
+      </div>
+      <p id="r-taille-note" class="note">Tout MyPhotos grandit : les textes, les boutons et les photos. MyPhotos s’en souvient.</p>
+    </section>
     <section aria-labelledby="r-t-dossiers">
       <h3 id="r-t-dossiers">Vos dossiers de photos</h3>
       <p class="note">« Exclure un sous-dossier » : MyPhotos ne regarde plus ce sous-dossier (captures et fonds d’écran…). Rien n’est supprimé de votre ordinateur.</p>
@@ -954,6 +1089,11 @@ const PATIENCE_MS = 30000;         // « MyPhotos ne répond plus » : jamais av
 const PREPARATION = 'Préparation du moteur de reconnaissance…';
 const APPUI_LONG_MS = 450;         // écran tactile : un appui long coche une photo
 const SUIVI_COPIE_MS = 500;        // copie vers un dossier : avancement redemandé deux fois par seconde
+const DUREES_DIAPO = [3, 5, 10];   // diaporama : secondes par photo, au choix ; 5 par défaut
+const ESSAIS_DIAPO = 25;           // diaporama : photos introuvables sautées d'affilée, au plus
+const GESTE_DIAPO_MS = 3600000;    // diaporama : une heure sans un geste, il se met en pause (l'ordinateur peut dormir)
+const COMMANDES_DIAPO_MS = 3000;   // diaporama : commandes cachées 3 s après le dernier mouvement de la souris
+const TAILLES_TEXTE = ['normale', 'grande', 'tres-grande'];
 let LIMITE_SELECTION = 2000;       // photos par action (copier, mettre à la Corbeille) : donnée par /api/etat
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre',
   'novembre', 'décembre'];
@@ -966,6 +1106,8 @@ const ICONES = {
   telecharger: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
   croix: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   chevron: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
+  pause: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>',
+  lecture: '<svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
 };
 
 function icone(nom) {
@@ -1220,6 +1362,8 @@ function appliquerEtat(e) {
   if (E.ecran === 'assistant') majAssistant(e);
   if (E.ecran === 'appli') majAppli(e, avant);
   if ($('#reglages').open) majReglages(e);
+  // Taille du texte choisie ailleurs (autre fenêtre de MyPhotos) ; jamais juste après un choix fait ici.
+  if (e.taille_texte && e.taille_texte !== tailleActuelle() && Date.now() - T.choix > 5000) appliquerTaille(e.taille_texte);
   majActualisation(e);
   if (e.base_ecartee && !E.baseEcarteeVue && !document.querySelector('dialog[open]')) prevenirBaseEcartee(e.base_ecartee);
 }
@@ -1860,23 +2004,29 @@ const R = {
   q: null, mode: null, jeton: 0, generation: null, depuis: 0, erreur: false,
   principal: null, peut: null, mois: null, grille: null,
   proches: null, totalProches: 0, prochesDemandees: false, relance: null,
+  // « Plus comme celle-ci » : photo de référence, sa fiche {id, date}, l'écran d'où l'on vient (bouton « Revenir »),
+  // et le message du serveur quand rien ne peut encore être montré.
+  semblables: null, reference: null, retour: null, messageSemblables: null,
 };
 const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
 const infosPhotos = new Map();
 
-/** Adresse d'une recherche ou d'une photo ; sur l'écran « Doublons » : #doublons, ou #doublons&photo=… */
-function adresse(q, photo) {
+/** Adresse d'une recherche, des photos semblables à une photo (#semblables=…) ou d'une photo ; sur l'écran
+ *  « Doublons » : #doublons, ou #doublons&photo=… */
+function adresse(q, photo, semblables = R.semblables) {
   if (E.vue === 'doublons') return photo ? `#doublons&photo=${photo}` : '#doublons';
   const p = new URLSearchParams();
-  if (q) p.set('q', q);
+  if (semblables) p.set('semblables', String(semblables));
+  else if (q) p.set('q', q);
   if (photo) p.set('photo', String(photo));
   const s = p.toString();
   return s ? '#' + s : location.pathname;
 }
 function lireAdresse() {
   const p = new URLSearchParams(location.hash.slice(1));
-  const id = p.get('photo') || '';
+  const id = p.get('photo') || '', ref = p.get('semblables') || '';
   return {q: (p.get('q') || '').trim().replace(/\s+/g, ' ').slice(0, 200), photo: /^[1-9]\d{0,17}$/.test(id) ? +id : null,
+    semblables: /^[1-9]\d{0,17}$/.test(ref) ? +ref : null,
     reglages: p.has('reglages'), moteurs: p.has('moteurs'), doublons: p.has('doublons')};
 }
 
@@ -1887,7 +2037,11 @@ function synchroniser() {
     if (E.vue !== 'doublons') montrerDoublons();
   } else {
     if (E.vue !== 'photos') montrerPhotos();
-    if (a.q !== R.q) chercher(a.q, null);
+    if (a.semblables) {
+      if (a.semblables !== R.semblables) chercher('', null, a.semblables);
+    } else if (a.q !== R.q || R.semblables) {
+      chercher(a.q, null);
+    }
   }
   const v = $('#visionneuse');
   if (a.photo) {
@@ -1903,13 +2057,22 @@ function synchroniser() {
 window.addEventListener('popstate', synchroniser);
 window.addEventListener('hashchange', synchroniser);
 
-function chercher(q, historique = 'pousser') {
-  q = (q || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+/** Recherche (q), toutes les photos (q vide) ou, avec `semblables` (identifiant d'une photo), les photos qui lui
+ *  ressemblent le plus (« Plus comme celle-ci »). */
+function chercher(q, historique = 'pousser', semblables = null) {
+  q = semblables ? '' : (q || '').trim().replace(/\s+/g, ' ').slice(0, 200);
   if (E.vue !== 'photos') montrerPhotos();  // une recherche depuis l'écran « Doublons » ramène aux photos
-  if (q !== R.q) viderSelection();          // autre recherche : la sélection ne suit pas ; même liste mise à jour : elle reste
+  // Autre recherche : la sélection ne suit pas ; même liste mise à jour : elle reste.
+  if (q !== R.q || semblables !== R.semblables) viderSelection();
+  if (semblables !== R.semblables) {
+    R.retour = semblables ? (history.state && history.state.retour) || null : null;
+    R.reference = null;
+  }
   $('#q').value = q;
   R.q = q;
-  R.mode = q ? 'recherche' : 'dates';
+  R.semblables = semblables;
+  R.messageSemblables = null;
+  R.mode = semblables ? 'semblables' : q ? 'recherche' : 'dates';
   R.jeton += 1;
   R.principal = nouvelleListe();
   R.peut = nouvelleListe();
@@ -1934,7 +2097,9 @@ function chercher(q, historique = 'pousser') {
   $('#moins-sures').open = false;
   $('#vide').hidden = true;
   $('#maj').hidden = true;
-  $('#compte').textContent = q ? `Recherche de « ${q} »…` : 'Chargement des photos…';
+  $('#compte').textContent = semblables ? 'Recherche des photos qui se ressemblent…'
+    : q ? `Recherche de « ${q} »…` : 'Chargement des photos…';
+  majTeteSemblables();
   for (const b of document.querySelectorAll('.puce')) b.setAttribute('aria-pressed', String(b.dataset.q === q));
   if (historique === 'pousser' && location.hash !== adresse(q) && !(location.hash === '' && !q)) history.pushState(null, '', adresse(q));
   else if (historique === 'remplacer') history.replaceState(null, '', adresse(q));
@@ -1944,11 +2109,12 @@ function chercher(q, historique = 'pousser') {
 function rafraichir() {
   if (R.mode === null) return;
   const y = window.scrollY;
-  chercher(R.q, null);
+  chercher(R.q, null, R.semblables);
   if (y < 400) window.scrollTo(0, 0);
 }
 
 function urlPage(debut, n) {
+  if (R.mode === 'semblables') return `/api/semblables/${R.semblables}?debut=${debut}&n=${n}`;
   return R.mode === 'dates' ? `/api/photos?debut=${debut}&n=${n}`
     : `/api/recherche?q=${encodeURIComponent(R.q)}&debut=${debut}&n=${n}`;
 }
@@ -1962,8 +2128,10 @@ async function chargerPrincipal() {
     const d = await api(urlPage(L.suivant, N_PAGE));
     if (jeton !== R.jeton) return;
     if (d.preparation) attendrePreparation(L, chargerPrincipal);
-    else if (d.mode === 'dates') ajouterDates(d); else ajouterRecherche(d);
-    if (!d.preparation && d.mode === 'recherche' && E.serveur && E.serveur.preparation) sonder();   // bandeau à jour
+    else if (d.mode === 'dates') ajouterDates(d);
+    else if (d.mode === 'semblables') ajouterSemblables(d);
+    else ajouterRecherche(d);
+    if (!d.preparation && d.mode !== 'dates' && E.serveur && E.serveur.preparation) sonder();   // bandeau à jour
   } catch (err) {
     if (jeton === R.jeton) afficherErreur(err);
   } finally {
@@ -2004,7 +2172,8 @@ function attendrePreparation(L, relancer) {
   L.pause = true;
   if (L === R.principal) {
     $('#compte').replaceChildren(el('span', {classe: 'roue', 'aria-hidden': 'true'}),
-      R.q ? `Préparation… La recherche de « ${R.q} » commence dans un instant.` : 'Préparation…');
+      R.mode === 'semblables' ? 'Préparation… Les photos qui se ressemblent arrivent dans un instant.'
+        : R.q ? `Préparation… La recherche de « ${R.q} » commence dans un instant.` : 'Préparation…');
   }
   const jeton = R.jeton;
   clearTimeout(R.relance);
@@ -2204,10 +2373,107 @@ function ajouterRecherche(d) {
   if (V.id) majNavigation();
 }
 
+function ajouterSemblables(d) {
+  const L = R.principal;
+  if (d.id === R.semblables) {
+    R.reference = {id: d.id, date: d.date};
+    majTeteSemblables();
+  }
+  R.messageSemblables = d.message || null;
+  L.total = d.total;
+  if (!R.grille) {
+    R.grille = el('div', {classe: 'grille'});
+    $('#resultats').append(R.grille);
+  }
+  ajouterTuiles(L, d.photos || [], R.grille, 'principal');
+  L.suivant = d.suivant;
+  L.fin = !(d.photos || []).length || d.suivant >= d.total;
+  majCompte();
+  if (V.id) majNavigation();
+}
+
+/** Titre « Photos qui ressemblent à celle du 12 août 2023 », sa miniature et le bouton « Revenir ». */
+function majTeteSemblables() {
+  const avec = R.mode === 'semblables';
+  $('#semblables-tete').hidden = !avec;
+  $('#principal .exemples').hidden = avec;
+  if (!avec) return;
+  const ref = R.reference && R.reference.id === R.semblables ? R.reference : infosPhotos.get(R.semblables);
+  const jour = ref ? dateCourte(ref.date) : null;
+  $('#semblables-titre').textContent = jour ? `Photos qui ressemblent à celle du ${jour}` : 'Photos qui ressemblent à cette photo';
+  const mini = $('#semblables-mini'), img = mini.querySelector('img');
+  mini.href = adresse('', R.semblables);
+  if (img.dataset.id !== String(R.semblables)) {
+    img.dataset.id = String(R.semblables);
+    img.src = `/miniature/${R.semblables}`;
+  }
+  $('#semblables-retour-texte').textContent = texteRetour();
+}
+
+function texteRetour() {
+  const r = R.retour;
+  if (r && r.doublons) return 'Revenir aux doublons';
+  if (r && r.semblables) return 'Revenir aux photos précédentes';
+  if (r && r.q) return `Revenir à la recherche « ${r.q} »`;
+  return 'Revenir à toutes les photos';
+}
+
+/** Visionneuse, « Plus comme celle-ci » : les photos qui ressemblent le plus à celle-ci, dans la grille principale.
+ *  L'entrée de l'historique de la photo devient celle de ces photos : « Revenir » (ou Échap) ramène à la liste d'avant. */
+function voirSemblables(id) {
+  if (!id) return;
+  const retour = E.vue === 'doublons' ? {doublons: true} : R.semblables ? {semblables: R.semblables} : {q: R.q || ''};
+  const v = $('#visionneuse');
+  const remplacer = v.open && V.pousse;
+  if (v.open) {
+    V.pousse = false;
+    fermerVisionneuse(false);
+  }
+  chercher('', null, id);
+  R.retour = retour;
+  const etat = {retour};
+  if (remplacer) history.replaceState(etat, '', adresse('', null, id));
+  else history.pushState(etat, '', adresse('', null, id));
+  majTeteSemblables();
+  window.scrollTo(0, 0);
+  $('#semblables-titre').focus({preventScroll: true});
+}
+
+function revenirDesSemblables() {
+  if (R.mode !== 'semblables') return;
+  const etat = history.state;
+  if (etat && etat.retour && lireAdresse().semblables === R.semblables) { history.back(); return; }
+  const r = R.retour || {q: ''};
+  if (r.doublons) {
+    history.pushState(null, '', '#doublons');
+    synchroniser();
+  } else if (r.semblables) {
+    chercher('', 'pousser', r.semblables);
+  } else {
+    chercher(r.q || '', 'pousser');
+  }
+  window.scrollTo(0, 0);
+}
+
 function majCompte() {
   const c = $('#compte'), s = E.serveur || {}, photos = s.photos || {};
   const incomplet = s.analyse && s.analyse.active && photos.total > photos.analysees;
   const vide = $('#vide');
+  if (R.mode === 'semblables') {
+    const n = R.principal.total;
+    if (n) {
+      remplacer(c, el('strong', {texte: pluriel(n, 'photo')}), ', de la plus ressemblante à la moins ressemblante',
+        incomplet ? ` · parmi ${nombre.format(photos.analysees)} photos déjà analysées` : null);
+      vide.hidden = true;
+      return;
+    }
+    c.replaceChildren();
+    remplacer(vide, icone('photo'), el('h2', {texte: 'Aucune photo à montrer pour le moment'}),
+      el('p', {texte: R.messageSemblables || 'MyPhotos n’a pas encore analysé d’autres photos.'}),
+      el('button', {classe: 'bouton', type: 'button', onclick: revenirDesSemblables}, texteRetour()));
+    vide.hidden = false;
+    return;
+  }
   if (R.mode === 'dates') {
     const n = R.principal.total;
     c.replaceChildren(el('strong', {texte: pluriel(n, 'photo')}));
@@ -2263,8 +2529,15 @@ function afficherErreur(err) {
   R.erreur = true;
   $('#compte').textContent = '';
   const vide = $('#vide');
-  vide.replaceChildren(icone('loupe'), el('h2', {texte: 'La recherche n’a pas pu se faire'}), el('p', {texte: err.message}),
-    el('button', {classe: 'bouton', type: 'button', onclick: () => rafraichir()}, 'Réessayer'));
+  if (R.mode === 'semblables' && err.statut === 404) {     // photo partie entre-temps (ou adresse ancienne)
+    $('#semblables-tete').hidden = true;
+    vide.replaceChildren(icone('photo'), el('h2', {texte: 'Cette photo n’est plus dans MyPhotos'}),
+      el('p', {texte: err.message}),
+      el('button', {classe: 'bouton', type: 'button', onclick: revenirDesSemblables}, texteRetour()));
+  } else {
+    vide.replaceChildren(icone('loupe'), el('h2', {texte: 'La recherche n’a pas pu se faire'}), el('p', {texte: err.message}),
+      el('button', {classe: 'bouton', type: 'button', onclick: () => rafraichir()}, 'Réessayer'));
+  }
   vide.hidden = false;
 }
 
@@ -2432,6 +2705,7 @@ function montrerPhoto(id) {
 function majNavigation() {
   const liste = listeDe(V.groupe);
   const i = liste ? liste.indexOf(V.id) : -1;
+  $('#v-diaporama').disabled = i < 0;       // diaporama : sur la liste de la photo (aucune liste : photo seule)
   const L = listeGroupe(V.groupe) || R.principal;
   const total = L ? L.total : 0;
   if (i < 0 && V.retiree !== null && liste) {
@@ -2461,7 +2735,7 @@ async function photoVoisine(delta) {
   history.replaceState({photo: liste[j]}, '', adresse(R.q, liste[j]));
 }
 
-const BOUTONS_VISIONNEUSE = ['#v-copier', '#v-copier-vers', '#v-supprimer', '#v-ouvrir', '#v-montrer'];
+const BOUTONS_VISIONNEUSE = ['#v-semblables', '#v-copier', '#v-copier-vers', '#v-supprimer', '#v-ouvrir', '#v-montrer'];
 
 /** Photos dont le fichier a disparu alors que leur dossier répond : MyPhotos vient de les oublier. Elles quittent la
  *  page ; celle de la visionneuse y reste affichée avec le message, et les flèches mènent à ses voisines. */
@@ -2489,6 +2763,7 @@ function photosRetirees(ids, message) {
 }
 
 function fermerVisionneuse(historique = true) {
+  arreterDiaporama(false);
   const d = $('#visionneuse');
   if (d.open) d.close();
   $('#v-image').removeAttribute('src');
@@ -2502,6 +2777,242 @@ function fermerVisionneuse(historique = true) {
   const zone = E.vue === 'doublons' ? $('#ecran-doublons') : $('#principal');
   const t = id && zone.querySelector(`.case[data-id="${id}"] a.tuile`);
   if (t) t.focus();
+}
+
+// ============================================================ diaporama
+// Depuis la visionneuse : les photos de sa liste (recherche, toutes les photos, photos semblables, groupe de
+// doublons…), une toutes les 3, 5 ou 10 s, en plein écran quand c'est possible, sinon sur toute la fenêtre. La suivante
+// est préchargée ; une photo introuvable est sautée ; au bout de la liste, il recommence au début. L'écran reste allumé
+// pendant le diaporama (si Windows le permet), jamais plus d'une heure sans un geste : ensuite il se met en pause, et
+// l'ordinateur peut se mettre en veille comme d'habitude.
+const DP = {actif: false, pause: false, duree: 5, groupe: null, id: null, index: 0, minuteur: null, jeton: 0,
+  face: 'a', prechargee: null, geste: 0, verrou: null, commandes: null, pleinEcran: false, fin: 0};
+const listeDiapo = () => listeDe(DP.groupe) || [];
+
+function lancerDiaporama() {
+  if (DP.actif || !V.id || $('#v-diaporama').disabled) return;
+  const d = $('#diaporama');
+  Object.assign(DP, {actif: true, pause: false, groupe: V.groupe, id: V.id, prechargee: null, geste: Date.now(),
+    pleinEcran: false});
+  for (const i of [$('#dp-a'), $('#dp-b')]) { i.classList.remove('visible'); i.removeAttribute('src'); }
+  $('#dp-message').textContent = '';
+  d.hidden = false;
+  d.focus({preventScroll: true});
+  majDiaporama();
+  montrerCommandesDiapo();
+  // Plein écran : demandé tout de suite (il faut le clic ou la touche de l'utilisateur) ; refusé, la fenêtre suffit.
+  if (d.requestFullscreen) d.requestFullscreen({navigationUI: 'hide'}).catch(() => {});
+  garderEveille(true);
+  allerDiapo(0);
+}
+
+function arreterDiaporama(retour = true) {
+  if (!DP.actif) return;
+  DP.actif = false;
+  DP.jeton += 1;
+  DP.fin = Date.now();
+  clearTimeout(DP.minuteur);
+  clearTimeout(DP.commandes);
+  garderEveille(false);
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  const d = $('#diaporama');
+  d.hidden = true;
+  d.classList.remove('commandes-visibles', 'en-pause');
+  for (const i of [$('#dp-a'), $('#dp-b')]) { i.classList.remove('visible'); i.removeAttribute('src'); }
+  DP.prechargee = null;
+  if (!retour || !$('#visionneuse').open) return;
+  // La visionneuse reprend à la dernière photo du diaporama.
+  if (DP.id && DP.id !== V.id) {
+    V.groupe = DP.groupe;
+    montrerPhoto(DP.id);
+    history.replaceState({photo: DP.id}, '', adresse(R.q, DP.id));
+  }
+  $('#v-diaporama').focus();
+}
+
+/** Photo du diaporama, chargée et décodée à l'avance : vrai si elle peut s'afficher. */
+function imageDiapo(id) {
+  if (DP.prechargee && DP.prechargee.id === id) return DP.prechargee.promesse;
+  const img = new Image();
+  const promesse = new Promise((fini) => {
+    img.onload = () => { (img.decode ? img.decode() : Promise.resolve()).then(() => fini(true), () => fini(true)); };
+    img.onerror = () => fini(false);
+  });
+  img.src = `/photo/${id}`;
+  DP.prechargee = {id, img, promesse};
+  return promesse;
+}
+
+/** Photo voisine dans la liste (delta = 1 ou -1) ; au bout, la liste continue (page suivante) ou recommence. */
+async function voisineDiapo(id, delta) {
+  let liste = listeDiapo();
+  if (!liste.length) return null;
+  let i = liste.indexOf(id);
+  if (i < 0) i = Math.min(DP.index, liste.length) - (delta > 0 ? 1 : 0);
+  let j = i + delta;
+  if (j >= liste.length) {
+    const L = listeGroupe(DP.groupe);
+    if (L && !L.fin) {
+      await chargeurDe(DP.groupe)();
+      for (let k = 0; k < 50 && L.enCours; k += 1) await attendreMs(100);   // page suivante déjà demandée
+      liste = listeDiapo();
+    }
+    if (j >= liste.length) j = 0;
+  }
+  if (j < 0) j = liste.length - 1;
+  return liste.length ? liste[j] : null;
+}
+
+/** Montre la photo voisine (delta = 1 ou -1), ou la photo de départ (delta = 0), en sautant les introuvables. */
+async function allerDiapo(delta) {
+  if (!DP.actif) return;
+  const jeton = ++DP.jeton;
+  clearTimeout(DP.minuteur);
+  let id = DP.id;
+  const essais = Math.max(1, Math.min(ESSAIS_DIAPO, listeDiapo().length));
+  for (let k = 0; k < essais; k += 1) {
+    if (k > 0 || delta !== 0) {
+      const suivante = await voisineDiapo(id, delta || 1);
+      if (jeton !== DP.jeton) return;
+      if (suivante === null || (k > 0 && suivante === DP.id)) break;     // tour complet : rien d'autre à montrer
+      id = suivante;
+    }
+    const ok = await imageDiapo(id);
+    if (jeton !== DP.jeton) return;
+    if (ok) {
+      montrerDiapo(id);
+      programmerDiapo();
+      return;
+    }
+  }
+  DP.pause = true;
+  garderEveille(false);
+  majDiaporama('Les photos suivantes ne peuvent pas être affichées : leur disque est peut-être débranché.');
+}
+
+function montrerDiapo(id) {
+  const depuis = DP.face === 'a' ? $('#dp-a') : $('#dp-b'), vers = DP.face === 'a' ? $('#dp-b') : $('#dp-a');
+  if (id !== DP.id || !depuis.classList.contains('visible')) {
+    const p = infosPhotos.get(id);
+    vers.alt = p ? libellePhoto(p) : 'Photo';
+    vers.src = `/photo/${id}`;
+    vers.classList.add('visible');
+    depuis.classList.remove('visible');
+    DP.face = DP.face === 'a' ? 'b' : 'a';
+  }
+  DP.id = id;
+  const liste = listeDiapo();
+  DP.index = Math.max(0, liste.indexOf(id));
+  if (liste.length - DP.index < 10) chargeurDe(DP.groupe)();     // la suite de la liste arrive à temps
+  majDiaporama();
+}
+
+function programmerDiapo() {
+  clearTimeout(DP.minuteur);
+  if (!DP.actif || DP.pause) return;
+  if (Date.now() - DP.geste > GESTE_DIAPO_MS) {
+    DP.pause = true;
+    garderEveille(false);
+    majDiaporama('Diaporama en pause. Appuyez sur Espace pour reprendre.');
+    montrerCommandesDiapo();
+    return;
+  }
+  DP.minuteur = setTimeout(() => allerDiapo(1), DP.duree * 1000);
+  const liste = listeDiapo(), i = liste.indexOf(DP.id);
+  if (i >= 0 && liste.length > 1) imageDiapo(liste[(i + 1) % liste.length]);    // la suivante, préchargée
+}
+
+function basculerPauseDiapo() {
+  if (!DP.actif) return;
+  DP.geste = Date.now();
+  DP.pause = !DP.pause;
+  if (DP.pause) {
+    clearTimeout(DP.minuteur);
+    garderEveille(false);
+    majDiaporama('En pause');
+  } else {
+    garderEveille(true);
+    majDiaporama('');
+    programmerDiapo();
+  }
+  montrerCommandesDiapo();
+}
+
+function majDiaporama(message) {
+  $('#diaporama').classList.toggle('en-pause', DP.pause);
+  const b = $('#dp-pause');
+  const texte = DP.pause ? 'Reprendre' : 'Pause';
+  if (b.dataset.texte !== texte) {
+    b.dataset.texte = texte;
+    b.replaceChildren(icone(DP.pause ? 'lecture' : 'pause'), texte);
+  }
+  for (const x of document.querySelectorAll('.dp-durees [data-duree]')) {
+    x.setAttribute('aria-pressed', String(+x.dataset.duree === DP.duree));
+  }
+  const liste = listeDiapo(), i = liste.indexOf(DP.id), L = listeGroupe(DP.groupe);
+  $('#dp-position').textContent = i >= 0
+    ? `${nombre.format(i + 1)} sur ${nombre.format(Math.max(L ? L.total : 0, liste.length))}` : '';
+  if (message !== undefined) $('#dp-message').textContent = message;
+}
+
+function montrerCommandesDiapo() {
+  const d = $('#diaporama');
+  d.classList.add('commandes-visibles');
+  clearTimeout(DP.commandes);
+  DP.commandes = setTimeout(() => d.classList.remove('commandes-visibles'), COMMANDES_DIAPO_MS);
+}
+
+function toucheDiaporama(ev) {
+  DP.geste = Date.now();
+  montrerCommandesDiapo();
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const k = ev.key;
+  if (k === ' ' || k === 'Spacebar') { ev.preventDefault(); basculerPauseDiapo(); }
+  else if (k === 'ArrowRight' || k === 'PageDown') { ev.preventDefault(); allerDiapo(1); }
+  else if (k === 'ArrowLeft' || k === 'PageUp') { ev.preventDefault(); allerDiapo(-1); }
+  else if (k === 'Escape' || k === 'd' || k === 'D' || k === 'F5') { ev.preventDefault(); arreterDiaporama(); }
+}
+
+/** Écran gardé allumé pendant le diaporama (API Wake Lock) ; refusé, l'écran suit simplement les réglages de Windows. */
+async function garderEveille(oui) {
+  if (!navigator.wakeLock) return;
+  if (!oui) {
+    const v = DP.verrou;
+    DP.verrou = null;
+    if (v) v.release().catch(() => {});
+    return;
+  }
+  if (DP.verrou || document.hidden) return;
+  try {
+    const v = await navigator.wakeLock.request('screen');
+    if (!DP.actif || DP.pause || DP.verrou) { v.release().catch(() => {}); return; }
+    DP.verrou = v;
+    v.addEventListener('release', () => { if (DP.verrou === v) DP.verrou = null; });
+  } catch (err) { /* refusé : rien de plus */ }
+}
+
+// ============================================================ taille du texte (Réglages)
+// Gardée par MyPhotos (table meta) : le serveur la pose sur <html> dès l'envoi de la page, sans clignotement.
+const T = {choix: 0};
+const tailleActuelle = () => document.documentElement.dataset.taille || 'normale';
+function appliquerTaille(v) {
+  if (!TAILLES_TEXTE.includes(v)) v = 'normale';
+  if (v === 'normale') delete document.documentElement.dataset.taille;
+  else document.documentElement.dataset.taille = v;
+  for (const r of document.querySelectorAll('input[name="taille-texte"]')) r.checked = r.value === v;
+}
+async function choisirTaille(v) {
+  const avant = tailleActuelle();
+  T.choix = Date.now();
+  appliquerTaille(v);
+  try {
+    await api('/api/taille-texte', {taille: v});
+    if (E.serveur) E.serveur.taille_texte = v;
+  } catch (err) {
+    appliquerTaille(avant);
+    annoncer(err.message, 'erreur');
+  }
+  T.choix = Date.now();
 }
 
 // ============================================================ sélection
@@ -3381,6 +3892,7 @@ function majReglages(e) {
   $('#r-version').textContent = `MyPhotos ${e.version}`;
   majReglagesVersion(e);
   $('#r-fermeture').hidden = !(e.mode === 'fenetre' || e.mode === 'edge');
+  for (const r of document.querySelectorAll('input[name="taille-texte"]')) r.checked = r.value === tailleActuelle();
   $('#r-s-raccourci').hidden = !e.raccourci;
 }
 
@@ -3583,6 +4095,9 @@ function brancher() {
     if (ev.key === 'Escape' && S.ids.size) {
       ev.preventDefault();
       viderSelection();
+    } else if (ev.key === 'Escape' && R.mode === 'semblables' && !ctrl) {
+      ev.preventDefault();
+      revenirDesSemblables();
     } else if (ctrl && touche === 'a') {
       ev.preventDefault();
       toutSelectionner();
@@ -3616,10 +4131,18 @@ function brancher() {
 
   // Visionneuse
   const v = $('#visionneuse');
-  v.addEventListener('cancel', (ev) => { ev.preventDefault(); fermerVisionneuse(); });
+  v.addEventListener('cancel', (ev) => {
+    ev.preventDefault();
+    // Échap pendant le diaporama : il s'arrête, la visionneuse reste (même si le plein écran vient de se terminer).
+    if (DP.actif || Date.now() - DP.fin < 500) arreterDiaporama(); else fermerVisionneuse();
+  });
   v.addEventListener('keydown', (ev) => {
+    if (DP.actif) { toucheDiaporama(ev); return; }
     const ctrl = ev.ctrlKey || ev.metaKey;
-    if (ev.key === 'ArrowLeft') { ev.preventDefault(); photoVoisine(-1); }
+    if ((ev.key === 'd' || ev.key === 'D' || ev.key === 'F5') && !ctrl && !ev.altKey) {
+      ev.preventDefault();
+      lancerDiaporama();
+    } else if (ev.key === 'ArrowLeft') { ev.preventDefault(); photoVoisine(-1); }
     else if (ev.key === 'ArrowRight') { ev.preventDefault(); photoVoisine(1); }
     else if (ctrl && !ev.altKey && (ev.key === 'c' || ev.key === 'C') && V.id && !texteChoisi()) {
       ev.preventDefault();
@@ -3632,6 +4155,33 @@ function brancher() {
   $('#v-prec').addEventListener('click', () => photoVoisine(-1));
   $('#v-suiv').addEventListener('click', () => photoVoisine(1));
   $('#v-fermer').addEventListener('click', () => fermerVisionneuse());
+  $('#v-semblables').addEventListener('click', () => voirSemblables(V.id));
+  $('#v-diaporama').addEventListener('click', lancerDiaporama);
+  $('#semblables-retour').addEventListener('click', revenirDesSemblables);
+
+  // Diaporama : un clic sur la photo met en pause ou reprend ; la souris fait apparaître les commandes.
+  const dp = $('#diaporama');
+  dp.addEventListener('click', (ev) => {
+    if (ev.target.closest && ev.target.closest('.dp-commandes')) return;
+    basculerPauseDiapo();
+  });
+  dp.addEventListener('pointermove', () => { if (DP.actif) { DP.geste = Date.now(); montrerCommandesDiapo(); } });
+  $('#dp-pause').addEventListener('click', basculerPauseDiapo);
+  $('#dp-quitter').addEventListener('click', () => arreterDiaporama());
+  for (const b of document.querySelectorAll('.dp-durees [data-duree]')) {
+    b.addEventListener('click', () => {
+      DP.duree = DUREES_DIAPO.includes(+b.dataset.duree) ? +b.dataset.duree : 5;
+      DP.geste = Date.now();
+      majDiaporama();
+      programmerDiapo();
+    });
+  }
+  // Plein écran quitté (Échap, F11…) : le diaporama s'arrête avec lui.
+  document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement === dp) DP.pleinEcran = true;
+    else if (DP.actif && DP.pleinEcran) arreterDiaporama();
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && DP.actif && !DP.pause) garderEveille(true); });
   $('#v-copier').addEventListener('click', () => copierPhotos([V.id]));
   $('#v-copier-vers').addEventListener('click', () => copierPhotosVers([V.id]));
   $('#v-supprimer').addEventListener('click', supprimerDepuisVisionneuse);
@@ -3667,6 +4217,9 @@ function brancher() {
   $('#r-changer').addEventListener('click', ouvrirChoixMoteur);
   $('#r-raccourci').addEventListener('click', (ev) => creerRaccourci(ev.currentTarget));
   $('#r-quitter').addEventListener('click', quitter);
+  for (const r of document.querySelectorAll('input[name="taille-texte"]')) {
+    r.addEventListener('change', () => { if (r.checked) choisirTaille(r.value); });
+  }
   $('#e3-nv-oui').addEventListener('click', () => repondreEtape3(true));
   $('#e3-nv-non').addEventListener('click', () => repondreEtape3(false));
   $('#r-nv-auto').addEventListener('change', async (ev) => {
