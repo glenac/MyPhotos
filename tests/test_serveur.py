@@ -1898,9 +1898,11 @@ class TestDossiersEtActualiser(unittest.TestCase):
         ailleurs.mkdir()
         for x in list(self.photos.iterdir()):
             os.replace(x, ailleurs / x.name)
-        ini = self.photos / 'desktop.ini'
-        ini.write_text('[.ShellClassInfo]\r\n', encoding='utf-8')
-        ie.attribut(ini, ie.CACHE | ie.SYSTEME)
+        for sous in ('', 'Pellicule', 'Images enregistrées'):                  # comme Windows les crée
+            (self.photos / sous).mkdir(exist_ok=True)
+            ini = self.photos / sous / 'desktop.ini'
+            ini.write_text('[.ShellClassInfo]\r\n', encoding='utf-8')
+            ie.attribut(ini, ie.CACHE | ie.SYSTEME)
         for nom in ('a.jpg', 'Vacances/b.jpg'):
             self.assertEqual(self.app.verifier_photo(ids[nom])['etat'], 'injoignable', nom)
             self.assertIsNotNone(self.app.base.photo(ids[nom]))

@@ -1620,6 +1620,46 @@ class TestDossierPresqueVide(EssaiAvecImages):
         self.assertEqual(self.ids(), avant)
         self.assertEqual(f.images, 2)
 
+    def windows(self, *noms):
+        """Sous-dossiers que Windows crée lui-même dans Images (Pellicule, Images enregistrées) : leur desktop.ini seul."""
+        for nom in noms:
+            (self.images / nom).mkdir(exist_ok=True)
+            ini = self.images / nom / 'desktop.ini'
+            ini.write_text('[.ShellClassInfo]\r\n', encoding='utf-8')
+            ie.attribut(ini, ie.CACHE | ie.SYSTEME)
+
+    def test_sous_dossiers_de_windows(self):
+        """Dossier Images que OneDrive n'a pas encore rempli, avec ses sous-dossiers habituels (Pellicule, Images
+        enregistrées) qui ne contiennent que leur desktop.ini, et un sous-dossier vide : toujours « vide », à toutes les
+        profondeurs (première 0.4.0 : seul le premier niveau comptait, toutes les photos étaient retirées)."""
+        ix, f = self.indexer(dossier=False)
+        avant = self.ids()
+        self.vider()
+        self.windows('Pellicule', 'Images enregistrées')
+        (self.images / '2024' / 'Vacances').mkdir(parents=True)
+        self.assertTrue(indexation.dossier_vide(str(self.images)))
+        self.relancer(ix)
+        b = ix.etat()['bilan']
+        self.assertEqual((b['retirees'], b['injoignables']), (0, [str(self.images)]))
+        self.assertEqual(self.ids(), avant)
+        # Un vrai fichier, même tout au fond : le dossier a du contenu, les photos supprimées sont retirées.
+        (self.images / '2024' / 'Vacances' / 'notes.txt').write_text('liste de courses', encoding='utf-8')
+        self.assertFalse(indexation.dossier_vide(str(self.images)))
+        self.relancer(ix)
+        self.assertEqual(ix.etat()['bilan']['retirees'], 2)
+        self.assertEqual(f.images, 2)
+
+    def test_dossier_vide_borne(self):
+        """dossier_vide (visionneuse) s'arrête au premier vrai fichier ; au-delà de la borne de dossiers regardés sans
+        en trouver, il répond « pas vide » (on ne sait pas : c'est l'inventaire qui tranchera)."""
+        self.vider()
+        for i in range(5):
+            (self.images / f'vide{i}').mkdir()
+        self.assertTrue(indexation.dossier_vide(str(self.images)))
+        self.assertFalse(indexation.dossier_vide(str(self.images), limite=3))
+        with self.assertRaises(OSError):
+            indexation.dossier_vide(str(self.tmp / 'absent'))
+
     def test_photos_vraiment_supprimees(self):
         """Toutes les photos supprimées, mais le dossier garde du contenu (un document) : elles sont retirées."""
         (self.images / 'notes.txt').write_text('liste de courses', encoding='utf-8')

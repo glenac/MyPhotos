@@ -43,6 +43,7 @@ QUALITE_MINIATURE = 80
 PAQUET_INVENTAIRE = 500
 ECHECS_AVANT_CONTROLE = 3      # erreurs de lecture d'affilée avant de vérifier que le dossier répond
 ECHANTILLON_VOLUME = 20        # photos connues cherchées quand le disque d'un dossier suivi a changé (memes_photos)
+VIDE_DOSSIERS_MAX = 2000       # dossier_vide : dossiers regardés au plus avant de répondre « pas vide »
 
 # Formats lus (ceux de config.EXTENSIONS), quel que soit le nom du fichier. Pillow en connaît d'autres, dont EPS, qui
 # lance Ghostscript, un programme extérieur : un « .jpg » qui serait en fait un PostScript ne doit pas y arriver.
@@ -137,11 +138,43 @@ def _sans_contenu(e):
         return False
 
 
-def dossier_vide(chemin):
-    """Vrai si le dossier ne contient rien, ou seulement ce que Windows y range de lui-même (_sans_contenu) : un dossier
-    Images vidé, ou que OneDrive n'a pas encore rempli, garde son desktop.ini. Lève OSError s'il est injoignable."""
-    with os.scandir(chemin_systeme(chemin)) as it:
-        return all(_sans_contenu(e) for e in it)
+def _vrai_fichier(e):
+    """Fichier qui compte comme du contenu : ni dossier, ni lien, ni fichier que Windows range de lui-même."""
+    return e.is_file(follow_symlinks=False) and not _sans_contenu(e)
+
+
+def dossier_vide(chemin, limite=VIDE_DOSSIERS_MAX):
+    """Vrai si le dossier ne contient aucun vrai fichier (_vrai_fichier), à aucune profondeur : un dossier Images vidé, ou
+    que OneDrive n'a pas encore rempli, garde son desktop.ini et ses sous-dossiers Pellicule et Images enregistrées, qui
+    n'ont chacun que le leur. Mêmes sous-dossiers que l'inventaire (Parcours : ni cachés, ni système, ni liens).
+    S'arrête au premier vrai fichier ; au-delà de `limite` dossiers regardés sans en trouver, répond faux (on ne sait
+    pas : l'inventaire tranchera). Lève OSError si le dossier lui-même est injoignable."""
+    pile = [chemin_systeme(chemin)]
+    premier = True
+    while pile:
+        if limite <= 0:
+            return False
+        limite -= 1
+        d = pile.pop()
+        try:
+            with os.scandir(d) as it:
+                entrees = list(it)
+        except OSError:
+            if premier:
+                raise
+            continue                             # sous-dossier illisible : ses photos sont gardées de toute façon
+        premier = False
+        racine_disque = _racine_de_disque(d)
+        for e in entrees:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    if not Parcours._dossier_ignore(e, racine_disque):
+                        pile.append(e.path)
+                elif _vrai_fichier(e):
+                    return False
+            except OSError:
+                continue
+    return True
 
 
 def memes_photos(connus, n=ECHANTILLON_VOLUME):
@@ -180,13 +213,18 @@ class Parcours:
         # Sous-dossiers exclus (clés de cle_chemin) : jamais parcourus.
         self.exclus = frozenset(exclus)
         self.echecs = []           # clés (cle_chemin) des sous-dossiers illisibles, terminées par os.sep
-        self.vide = False          # le dossier ne contient rien, ou seulement desktop.ini et autres (dossier_vide)
+        self.contenu = False       # au moins un vrai fichier trouvé, à n'importe quelle profondeur (_vrai_fichier)
         self.courant = racine      # dossier en cours de lecture (pour l'affichage)
         self.sautes = 0            # fichiers et dossiers au nom impossible à enregistrer
 
     def sous_echec(self, chemin):
         k = cle_chemin(chemin)
         return any(k.startswith(e) for e in self.echecs)
+
+    @property
+    def vide(self):
+        """Aucun vrai fichier trouvé, à aucune profondeur (comme dossier_vide) ; a un sens une fois le parcours fini."""
+        return not self.contenu
 
     def __iter__(self):
         pile = [chemin_systeme(self.racine)]
@@ -202,13 +240,13 @@ class Parcours:
                 k = cle_chemin(d)
                 self.echecs.append(k if k.endswith(os.sep) else k + os.sep)
                 continue
-            if premier:
-                self.vide, premier = all(_sans_contenu(e) for e in entrees), False
+            premier = False
             self.courant = chemin_affiche(d)
             racine_disque = _racine_de_disque(d)
             for e in entrees:
                 if not enregistrable(e.name):
                     self.sautes += 1
+                    self.contenu = True              # un nom bizarre, mais bien quelque chose
                     continue
                 try:
                     if e.is_dir(follow_symlinks=False):
@@ -216,6 +254,8 @@ class Parcours:
                                 self.exclus and cle_chemin(e.path) in self.exclus):
                             pile.append(e.path)
                     elif e.is_file(follow_symlinks=False):
+                        if not self.contenu and not _sans_contenu(e):
+                            self.contenu = True
                         r = self._image(e)
                         if r:
                             yield r
@@ -909,9 +949,10 @@ class Indexeur:
             bilan['nouvelles'] += ajoutees
             return                               # arrêt demandé : rien n'est déclaré disparu
         if parcours.vide and connus:
-            # Un partage réseau monté sans son disque paraît vide ; un dossier Images que OneDrive n'a pas encore rempli
-            # ne contient que desktop.ini : prudence, on garde tout. (Des photos supprimées d'un dossier qui garde un
-            # autre contenu, même un simple document ou un sous-dossier, sont bien retirées.)
+            # Aucun vrai fichier, à aucune profondeur : un partage réseau monté sans son disque paraît vide, un dossier
+            # Images que OneDrive n'a pas encore rempli ne garde que desktop.ini (et ses sous-dossiers Pellicule…, qui
+            # n'ont que le leur). Prudence, on garde tout. Des photos supprimées d'un dossier qui garde un vrai fichier,
+            # même un simple document au fond d'un sous-dossier, sont bien retirées.
             journal.info('dossier vide alors que des photos y étaient connues, considéré injoignable : %s', racine)
             self.base.marquer_dossier(did, disponible=False)
             bilan['injoignables'].append(racine)
