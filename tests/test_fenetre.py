@@ -1138,6 +1138,20 @@ class TestPage(unittest.TestCase):
         self.assertIn("E.serveur.mode === 'fenetre' || E.serveur.mode === 'edge'", page)   # enFenetre : dépôts refusés
         self.assertIn("ev.preventDefault();\n      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';", page)
 
+    def test_plus_de_branches_mortes_de_la_copie(self):
+        """0.4.1 : depuis la 0.4.0, le serveur ne répond plus 410 et ne renvoie plus « retirees » (Copier, Copier dans
+        un dossier, Ouvrir, Afficher dans le dossier : une photo introuvable est un refus 404 ou 409) ; la page n'en
+        garde plus trace."""
+        import re
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        self.assertIsNone(re.search(r'statut\s*===?\s*410', page))
+        self.assertNotIn('r.retirees', page)
+        source = (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8')
+        self.assertIsNone(re.search(r'\b410\b', source))
+        copie = source[source.index('    def _a_copier(self, ids):'):source.index('    def creer_raccourcis(self):')]
+        self.assertIn('def copier_vers(self, ids):', copie)
+        self.assertNotIn('retirees', copie)
+
     def test_recherche_ne_garde_pas_les_anciennes_cases(self):
         """Constat R4 : avant de vider les grilles, chaque recherche désabonne leurs cases de l'observateur des
         miniatures (sinon ~31 nœuds et 5 écouteurs restent en mémoire à chaque recherche, toute la séance ; mesuré
@@ -1175,6 +1189,7 @@ import myphotos.serveur as s
 s.dossiers_proposes = lambda: []
 s.dossier_images = lambda: os.environ.get('MYPHOTOS_ESSAI_VIDE')      # dossier vide : jamais les vraies Images
 s.mettre_au_presse_papiers = lambda *a, **k: note('presse_papiers')
+s.mettre_texte_au_presse_papiers = lambda *a, **k: note('presse_papiers_texte')
 s.mettre_a_la_corbeille = corbeille
 s.montrer_dans_dossier = lambda *a, **k: note('explorateur', *a)
 os.startfile = lambda *a, **k: note('startfile', *a)

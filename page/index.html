@@ -3205,14 +3205,13 @@ async function copierPhotos(ids) {
   occuper(true);
   try {
     const r = await api('/api/copier', {ids});
-    if (r.retirees && r.retirees.length) photosRetirees(r.retirees);
     const n = r.copiees, refus = r.nb_refusees || 0;
     let t = `${n > 1 ? `${nombre.format(n)} photos copiées` : 'Photo copiée'}. Collez-${n > 1 ? 'les' : 'la'} où vous voulez avec Ctrl+V : dans un dossier, un e-mail, un document…`;
     if (refus) t += ` ${refus > 1 ? `${nombre.format(refus)} photos n’ont pas pu être copiées` : 'Une photo n’a pas pu être copiée'} : ${raisonsGroupees(r.refusees, refus)[0]}`;
     annoncer(t, refus ? 'erreur' : 'info');
     return r;
   } catch (err) {
-    if (err.statut === 410) photosRetirees(ids, err.message); else annoncer(err.message, 'erreur');
+    annoncer(err.message, 'erreur');
     return null;
   } finally {
     occuper(false);
@@ -3227,11 +3226,10 @@ async function copierPhotosVers(ids) {
   annoncer('Une fenêtre s’ouvre pour choisir où copier les photos.');
   try {
     const r = await api('/api/copier-vers', {ids});
-    if (r.retirees && r.retirees.length) photosRetirees(r.retirees);
     if (!r.annule) suivreCopie(r.copie);
     return r;
   } catch (err) {
-    if (err.statut === 410) photosRetirees(ids, err.message); else annoncer(err.message, 'erreur');
+    annoncer(err.message, 'erreur');
     return null;
   } finally {
     occuper(false);
@@ -4232,12 +4230,11 @@ function brancher() {
   $('#v-ouvrir').addEventListener('click', async () => {
     const id = V.id;
     try { await api('/api/ouvrir', {id}); annoncer('La photo s’ouvre dans la visionneuse de Windows…'); }
-    catch (err) { if (err.statut === 410) photosRetirees([id], err.message); else annoncer(err.message, 'erreur'); }
+    catch (err) { annoncer(err.message, 'erreur'); }
   });
   $('#v-montrer').addEventListener('click', async () => {
-    const id = V.id;
-    try { await api('/api/montrer', {id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
-    catch (err) { if (err.statut === 410) photosRetirees([id], err.message); else annoncer(err.message, 'erreur'); }
+    try { await api('/api/montrer', {id: V.id}); annoncer('Le dossier de la photo s’ouvre dans l’Explorateur…'); }
+    catch (err) { annoncer(err.message, 'erreur'); }
   });
 
   // Réglages et fenêtres
