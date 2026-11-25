@@ -455,18 +455,22 @@ class TestJeton(EssaiServeur):
 
     def test_adresse_d_entree(self):
         """La fenêtre, Edge, le navigateur et la relance ouvrent « /?jeton=… » : cookie HttpOnly, SameSite=Strict,
-        Path=/, sans date (le temps de la séance), puis « / » sans le jeton dans l'adresse."""
+        Path=/, sans date (le temps de la séance), puis « /?entree=1 » (le cookie est-il revenu ?), puis « / » sans le
+        jeton dans l'adresse."""
         j = jeton_essai()
         for page in ('/', '/index.html'):
             with self.subTest(page=page):
                 statut, e, corps = requete('GET', f'{page}?jeton={j}', entetes=self.NAVIGATION, jeton=False)
-                self.assertEqual((statut, e['location'], corps), (303, '/', b''))
+                self.assertEqual((statut, e['location'], corps), (303, '/?entree=1', b''))
                 self.assertEqual(e['cache-control'], 'no-store')
                 self.assertEqual(e['referrer-policy'], 'no-referrer')
                 morceaux = [m.strip() for m in e['set-cookie'].split(';')]
                 self.assertEqual(morceaux[0], f'myphotos-{PORT}={j}')
                 self.assertEqual(set(morceaux[1:]), {'Path=/', 'HttpOnly', 'SameSite=Strict'})
                 biscuit = morceaux[0].split('=', 1)[1]
+                statut, e, corps = requete('GET', '/?entree=1', entetes=self.NAVIGATION, jeton=biscuit)
+                self.assertEqual((statut, e['location'], corps), (303, '/', b''))
+                self.assertNotIn('set-cookie', e)
                 statut, _, corps = requete('GET', '/', entetes=self.NAVIGATION, jeton=biscuit)
                 self.assertEqual(statut, 200)
                 self.assertIn(b'<title>MyPhotos</title>', corps)
@@ -476,13 +480,40 @@ class TestJeton(EssaiServeur):
             with self.subTest(faux=faux):
                 self.assert_refus(*requete('GET', '/?' + urllib.parse.urlencode({'jeton': faux}),
                                            entetes=self.NAVIGATION, jeton=False), '/')
-        # Adresse d'entrée périmée (historique) avec un cookie valable : « / », sans nouveau cookie.
-        statut, e, _ = requete('GET', '/?jeton=perime', entetes=self.NAVIGATION)
-        self.assertEqual((statut, e['location']), (303, '/'))
-        self.assertNotIn('set-cookie', e)
+        # Adresse d'entrée périmée (historique) avec un cookie valable : « / », sans nouveau cookie ; de même avec le
+        # bon jeton et le cookie déjà là.
+        for adresse in ('/?jeton=perime', f'/?jeton={j}'):
+            statut, e, _ = requete('GET', adresse, entetes=self.NAVIGATION)
+            self.assertEqual((statut, e['location']), (303, '/'))
+            self.assertNotIn('set-cookie', e)
         # Un autre site peut mener à l'adresse d'entrée, mais sans le jeton il n'obtient que la petite page.
         self.assert_refus(*requete('GET', '/?jeton=devine', jeton=False, entetes=dict(
             self.NAVIGATION, **{'Sec-Fetch-Site': 'cross-site'})), '/')
+        self.vivant()
+
+    def test_navigateur_qui_refuse_les_cookies(self):
+        """Relecture adverse de la 0.4.0 (mode navigateur) : un navigateur réglé pour bloquer les cookies arrivait sur
+        « Ouvrez MyPhotos depuis son raccourci », alors qu'il venait de l'ouvrir ainsi. À l'arrivée de la redirection
+        d'entrée (« /?entree=1 », marqueur non secret) sans cookie valable, une page dit quoi faire ; une requête
+        ordinaire n'obtient toujours que la petite page, et l'API son JSON."""
+        j = jeton_essai()
+        statut, e, corps = requete('GET', f'/?jeton={j}', entetes=self.NAVIGATION, jeton=False)
+        self.assertEqual((statut, e['location']), (303, '/?entree=1'))
+        for jeton in (False, 'faux', j + 'x'):                     # cookie refusé (absent) ou abîmé
+            for page in ('/?entree=1', '/index.html?entree=1'):
+                with self.subTest(jeton=jeton, page=page):
+                    statut, e, corps = requete('GET', page, entetes=self.NAVIGATION, jeton=jeton)
+                    self.assertEqual(statut, 403)
+                    self.assertNotIn('set-cookie', e)
+                    self.assertTrue(e['content-type'].startswith('text/html'))
+                    texte = corps.decode('utf-8')
+                    self.assertIn('refuse les cookies de MyPhotos', texte)
+                    self.assertIn('autorisez-les pour 127.0.0.1', texte)
+                    self.assertNotIn(j, texte)
+                    self.assertNotIn('<script', texte)
+        for chemin in ('/', '/?entree=0', '/?autre=1', '/api/etat?entree=1', f'/miniature/{INCONNU}?entree=1'):
+            with self.subTest(chemin=chemin):
+                self.assert_refus(*requete('GET', chemin, entetes=self.NAVIGATION, jeton=False), chemin.split('?')[0])
         self.vivant()
 
     def test_jamais_dans_le_journal(self):
@@ -542,6 +573,86 @@ class TestJetonFonctions(unittest.TestCase):
             # Dossier de données impossible à écrire : MyPhotos marche quand même (seule la relance ne rouvrira rien).
             with mock.patch.object(Path, 'write_text', side_effect=PermissionError('refusé')):
                 self.assertRegex(serveur.creer_jeton(Path(d) / 'autre'), r'^[A-Za-z0-9_-]{43}$')
+
+    @staticmethod
+    def droits(chemin):
+        """Liste de droits (DACL) d'un fichier, en SDDL."""
+        import ctypes
+        a = ctypes.WinDLL('advapi32', use_last_error=True)
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        v, u = ctypes.c_void_p, ctypes.c_uint32
+        a.GetNamedSecurityInfoW.argtypes = [ctypes.c_wchar_p, ctypes.c_int, u, v, v, v, v, ctypes.POINTER(v)]
+        a.GetNamedSecurityInfoW.restype = u
+        a.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [v, u, u, ctypes.POINTER(v), v]
+        k.LocalFree.argtypes, k.LocalFree.restype = [v], v
+        sd, texte = v(), v()
+        assert a.GetNamedSecurityInfoW(str(chemin), 1, 4, None, None, None, None, ctypes.byref(sd)) == 0
+        try:
+            assert a.ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, 4, ctypes.byref(texte), None)
+            try:
+                return ctypes.wstring_at(texte.value)
+            finally:
+                k.LocalFree(texte)
+        finally:
+            k.LocalFree(sd)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_jeton_prive_meme_dans_un_dossier_partage(self):
+        """Relecture adverse de la 0.4.0 : « jeton » n'était privé que si le dossier de données l'était ; avec
+        MYPHOTOS_DOSSIER sur D:\\… (« Utilisateurs authentifiés : modification », hérité), les autres comptes le
+        lisaient. Il est désormais créé (et son « .part ») avec une liste de droits protégée : notre compte seul."""
+        from myphotos import fenetre, serveur
+        with tempfile.TemporaryDirectory() as d:
+            partage = Path(d) / 'comme-D'
+            partage.mkdir()
+            r = subprocess.run(['icacls', str(partage), '/grant', '*S-1-5-11:(OI)(CI)M'], capture_output=True,
+                               creationflags=SANS_FENETRE)
+            self.assertEqual(r.returncode, 0)
+            temoin = partage / 'temoin.txt'
+            temoin.write_text('x', encoding='ascii')
+            self.assertIn('(A;ID;0x1301bf;;;AU)', self.droits(temoin))           # le dossier est bien large
+            chemin = partage / 'donnees' / 'jeton'
+            jeton = serveur.creer_jeton(chemin)
+            self.assertEqual(self.droits(chemin), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+            self.assertEqual(serveur.lire_jeton(chemin), jeton)                  # et nous le lisons toujours
+            # Un « .part » laissé par un arrêt brutal (droits hérités) est remplacé par un fichier privé.
+            (chemin.parent / 'jeton.part').write_text('reste', encoding='ascii')
+            jeton = serveur.creer_jeton(chemin)
+            self.assertEqual(self.droits(chemin), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+            self.assertEqual(serveur.lire_jeton(chemin), jeton)
+            self.assertEqual(serveur.droits_prives(), f'D:P(A;;FA;;;{fenetre.sid_compte()})')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_jeton_lu_pendant_son_remplacement(self):
+        """Relecture adverse de la 0.4.0 : une relance lit « jeton » à l'instant où la MyPhotos qui démarre le remplace,
+        et Windows refuse le remplacement. Avant : l'ancien jeton restait, et chaque relance de la séance se croyait
+        face à un autre compte. Le remplacement est réessayé (1 s) : le nouveau jeton est écrit dès la fin de la
+        lecture."""
+        from myphotos import serveur
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            ancien = serveur.creer_jeton(chemin)
+            lecture = open(chemin, encoding='ascii')
+            minuteur = threading.Timer(0.3, lecture.close)
+            minuteur.start()
+            try:
+                nouveau = serveur.creer_jeton(chemin)
+            finally:
+                minuteur.join(5)
+                lecture.close()
+            self.assertNotEqual(nouveau, ancien)
+            self.assertEqual(serveur.lire_jeton(chemin), nouveau)
+            # Lecture tenue plus longtemps : MyPhotos démarre quand même (jeton rendu), l'ancien reste dans le fichier,
+            # et aucun jeton ne traîne dans un « .part ».
+            lecture = open(chemin, encoding='ascii')
+            try:
+                with mock.patch.object(serveur, 'JETON_PAUSE_S', 0.01):
+                    troisieme = serveur.creer_jeton(chemin)
+            finally:
+                lecture.close()
+            self.assertRegex(troisieme, r'^[A-Za-z0-9_-]{43}$')
+            self.assertEqual(serveur.lire_jeton(chemin), nouveau)
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['jeton'])
 
     def test_comparaison(self):
         from myphotos import serveur
@@ -2354,11 +2465,46 @@ class TestChoixDossier(unittest.TestCase):
         self.assertIsNone(self.appels[-1][2])
 
     def test_delai_depasse(self):
-        """Fenêtre laissée ouverte au-delà du délai : la requête répond « annulé » ; la fenêtre, toujours ouverte, en
-        refuse une seconde jusqu'à sa fermeture."""
-        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir)
-        self.reponses = ['E:\\Tard']
+        """Relecture adverse (déjà en 0.3.0) : au bout du délai, la requête répondait « annulé » mais la fenêtre
+        restait ouverte, et le dossier choisi ensuite était perdu. Désormais elle est fermée comme par « Annuler »,
+        par son fil (dialogue.fermer) ; la demande suivante est acceptée aussitôt."""
+        fermes = []
+
+        def fermer(fil):
+            fermes.append(fil)
+            self.reponses[:] = [None]                       # la fenêtre de Windows rend « annulé »
+            self.relacher.set()
+            return 1
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=fermer)
+        self.reponses = ['E:\Tard']
         self.assertIsNone(choix.demander(delai=0.2))
+        self.assertEqual(len(set(fermes)), 1)
+        self.assertIsInstance(fermes[0], int)               # le fil de la fenêtre (identifiant Windows)
+        self.assertFalse(choix._ouverte.is_set())
+        self.relacher.clear()
+        self.reponses = ['E:\Ensuite']
+        threading.Timer(0.2, self.relacher.set).start()
+        self.assertEqual(choix.demander(delai=10), 'E:\Ensuite')   # la suivante, sans « déjà ouverte »
+
+    def test_choix_fait_au_moment_du_delai(self):
+        """Dossier choisi à l'instant où le délai expire : il est rendu, pas perdu."""
+        def fermer(_fil):
+            self.relacher.set()                             # la fenêtre rend le dossier choisi, pas « annulé »
+            return 1
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=fermer)
+        self.reponses = ['E:\Juste à temps']
+        self.assertEqual(choix.demander(delai=0.2), 'E:\Juste à temps')
+
+    def test_fenetre_qui_ne_se_ferme_pas(self):
+        """Elle ne se ferme pas (FERMETURE_S) : la page l'apprend (« toujours ouverte », 409), et en refuse une
+        seconde jusqu'à sa fermeture."""
+        choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=lambda _fil: 0)
+        self.reponses = ['E:\Tard']
+        with mock.patch.object(self.serveur, 'FERMETURE_S', 0.3):
+            with self.assertRaises(self.serveur.Refus) as e:
+                choix.demander(delai=0.2)
+        self.assertEqual(e.exception.statut, 409)
+        self.assertIn('toujours ouverte', str(e.exception))
         with self.assertRaises(self.serveur.Refus):
             choix.demander()
         self.relacher.set()

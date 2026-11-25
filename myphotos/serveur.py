@@ -146,10 +146,22 @@ EN_TETE = 'X-MyPhotos'
 # MyPhotos sur deux ports ne se marchent pas dessus), adresse d'entrée « /?jeton=… », refus sans rien révéler.
 COOKIE_JETON = 'myphotos-{port}'
 PARAMETRE_JETON = 'jeton'
+PARAMETRE_ARRIVEE = 'entree'           # « /?entree=1 » : marqueur NON secret, posé par la redirection d'entrée
 JETON_REFUSE = 'Ouvrez MyPhotos depuis son raccourci.'
+# Relance : le port est tenu par un programme d'un autre compte Windows (ou que Windows ne laisse pas identifier) ;
+# rien ne lui est envoyé (fenetre.port_tenu_par).
+PORT_PRIS = ('MyPhotos ne peut pas démarrer : le port {port} est déjà utilisé par un autre programme, ou par MyPhotos '
+             'ouvert sur un autre compte de cet ordinateur.')
 PAGE_REFUS = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
               f'<p>{JETON_REFUSE}</p></html>').encode('utf-8')
+# Mode navigateur : le navigateur a refusé le cookie du jeton (réglage « bloquer les cookies ») ; dit seulement à
+# l'arrivée de la redirection d'entrée (« /?entree=1 »), jamais à une requête ordinaire.
+COOKIES_REFUSES = ('Votre navigateur refuse les cookies de MyPhotos : autorisez-les pour 127.0.0.1 (MyPhotos, sur cet '
+                   'ordinateur), puis ouvrez de nouveau MyPhotos depuis son raccourci.')
+PAGE_COOKIES = ('<!doctype html><html lang="fr"><meta charset="utf-8"><title>MyPhotos</title>'
+                f'<p>{COOKIES_REFUSES}</p></html>').encode('utf-8')
 _JETON = re.compile(r'[A-Za-z0-9_-]{32,128}')
+JETON_ESSAIS, JETON_PAUSE_S = 20, 0.05     # fichier « jeton » lu à l'instant par une relance : 1 s pour le remplacer
 PAGES = ('/', '/index.html')
 CORPS_MAX = 64 * 1024              # corps JSON d'un POST
 LISTE_MAX = 500                    # photos par page de résultats
@@ -162,6 +174,7 @@ MATERIEL_VALIDITE_S = 600
 COTE_CONVERSION = 2560             # TIFF : converti en JPEG de 2560 px au plus pour la visionneuse
 MARGE_DISQUE = 200 * 1024 * 1024
 CHOIX_DOSSIER_S = 900              # la fenêtre « Choisir un dossier » attend au plus 15 minutes
+FERMETURE_S = 5.0                  # … puis elle est fermée (comme « Annuler ») ; 5 s au plus pour qu'elle le soit
 ATTENTE_ARRET_S = 60               # relance pendant qu'une MyPhotos s'arrête : on attend qu'elle libère le port
 PORT_LIBERE_S = 10                 # port tenu sans réponse (MyPhotos qui finit de s'arrêter) : on réessaie 10 s
 ORDRE_MOTEURS = ('rapide', 'base', 'precis', 'tres_precis')
@@ -405,7 +418,9 @@ def _dll(nom):
                          'GetDriveTypeW': ([w], u), 'GetVolumePathNameW': ([w, w, u], b),
                          'GetVolumeNameForVolumeMountPointW': ([w, w, u], b), 'GetShortPathNameW': ([w, w, u], u),
                          'CreateFileW': ([w, u, u, v, u, u, v], v), 'CloseHandle': ([v], b),
-                         'GetFinalPathNameByHandleW': ([v, w, u, u], u)},
+                         'GetFinalPathNameByHandleW': ([v, w, u, u], u),
+                         'WriteFile': ([v, ctypes.c_char_p, u, ctypes.POINTER(u), v], b), 'LocalFree': ([v], v)},
+            'advapi32': {'ConvertStringSecurityDescriptorToSecurityDescriptorW': ([w, u, ctypes.POINTER(v), v], b)},
             'shell32': {'SHGetKnownFolderPath': ([v, u, v, ctypes.POINTER(v)], ctypes.c_long),
                         'ILCreateFromPathW': ([w], v), 'ILFree': ([v], None),
                         'SHOpenFolderAndSelectItems': ([v, u, v, u], ctypes.c_long),
@@ -997,11 +1012,73 @@ def creer_jeton(chemin=None):
     provisoire = chemin.with_name(chemin.name + '.part')
     try:
         chemin.parent.mkdir(parents=True, exist_ok=True)
-        provisoire.write_text(jeton, encoding='ascii')
-        os.replace(provisoire, chemin)
+        provisoire.unlink(missing_ok=True)               # reste d'un arrêt brutal : recréé avec ses propres droits
+        ecrire_prive(provisoire, jeton.encode('ascii'))
+        remplacer_fichier(provisoire, chemin)            # le fichier renommé garde ses droits
     except OSError:
         journal.warning('jeton d\'accès impossible à écrire dans les données : une relance ne rouvrira pas la page')
+        try:
+            provisoire.unlink(missing_ok=True)           # pas de jeton qui traîne à côté
+        except OSError:
+            pass
     return jeton
+
+
+class _ATTRIBUTS_SECURITE(ctypes.Structure):
+    """SECURITY_ATTRIBUTES."""
+    _fields_ = [('nLength', ctypes.c_uint32), ('lpSecurityDescriptor', ctypes.c_void_p), ('bInheritHandle', ctypes.c_int)]
+
+
+def droits_prives():
+    """SDDL d'une liste de droits PROTÉGÉE (rien d'hérité du dossier), qui ne donne accès qu'à notre compte Windows ;
+    « OW » (le propriétaire du fichier) si notre SID est illisible."""
+    sid = fenetre.sid_compte()
+    return f'D:P(A;;FA;;;{sid})' if sid else 'D:P(A;;FA;;;OW)'
+
+
+def ecrire_prive(chemin, octets):
+    """Crée le fichier `chemin` (qui ne doit pas exister) avec droits_prives(), dès sa création (CreateFileW) : il
+    reste privé même quand le dossier ne l'est pas. Relecture adverse de la 0.4.0 : avec MYPHOTOS_DOSSIER sur un
+    autre disque (D:\\…, « Utilisateurs authentifiés : modification » hérité), les autres comptes lisaient le jeton."""
+    if os.name != 'nt':
+        fd = os.open(chemin, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(octets)
+        return
+    k32 = _dll('kernel32')
+    descripteur = ctypes.c_void_p()
+    if not _dll('advapi32').ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            droits_prives(), 1, ctypes.byref(descripteur), None):                  # SDDL_REVISION_1
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        attributs = _ATTRIBUTS_SECURITE(ctypes.sizeof(_ATTRIBUTS_SECURITE), descripteur.value, 0)
+        h = k32.CreateFileW(str(chemin), 0x40000000, 0, ctypes.addressof(attributs), 1, 0x80, None)
+        if not h or h == ctypes.c_void_p(-1).value:      # GENERIC_WRITE, aucun partage, CREATE_NEW, NORMAL
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            ecrit = ctypes.c_uint32()
+            if not k32.WriteFile(h, octets, len(octets), ctypes.byref(ecrit), None) or ecrit.value != len(octets):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            k32.CloseHandle(h)
+    finally:
+        k32.LocalFree(descripteur)
+
+
+def remplacer_fichier(source, cible, essais=None, pause=None):
+    """os.replace, réessayé un moment (JETON_ESSAIS × JETON_PAUSE_S) : Windows refuse de remplacer un fichier qu'un
+    autre programme lit à cet instant (une relance qui lit le jeton, un antivirus). Relecture adverse de la 0.4.0 :
+    sans cela, l'ancien jeton restait dans le fichier, et chaque relance de la séance se croyait face à un autre
+    compte."""
+    essais = JETON_ESSAIS if essais is None else essais
+    pause = JETON_PAUSE_S if pause is None else pause
+    for i in range(max(1, essais)):
+        try:
+            return os.replace(source, cible)
+        except PermissionError:
+            if i >= essais - 1:
+                raise
+            time.sleep(pause)
 
 
 def lire_jeton(chemin=None):
@@ -1038,12 +1115,19 @@ class ChoixDossier:
     au-dessus, posée au milieu de la fenêtre de MyPhotos (zone : celle d'Edge, donnée par fenetre.FenetreEdge) quand
     on la connaît. Une seule à la fois ; annuler renvoie None. Depuis la 0.4.0, sans tkinter ni Tcl/Tk.
 
+    Délai dépassé (CHOIX_DOSSIER_S) : la fenêtre est fermée comme par « Annuler » (dialogue.fermer, par son fil),
+    pour qu'aucun choix fait ensuite ne se perde ; un choix fait à cet instant est rendu. Si elle ne se ferme pas
+    (FERMETURE_S), la page l'apprend (« toujours ouverte », 409). Avant : la requête répondait « annulé », la fenêtre
+    restait ouverte, et le dossier choisi ensuite était perdu.
+
     Modes « edge » et « navigateur » seulement : dans la fenêtre de MyPhotos, fenetre.ChoixDossierFenetre la
     remplace (la même fenêtre de Windows, qui appartient alors à la fenêtre MyPhotos)."""
 
-    def __init__(self, ouvrir=None):
+    def __init__(self, ouvrir=None, fermer=None):
         self._ouvrir = ouvrir or dialogue.ouvrir_devant    # (titre, initial, zone) -> chemin ou None
+        self._fermer = fermer or dialogue.fermer           # (identifiant Windows du fil) -> fenêtres fermées
         self.zone = None                                   # () -> (gauche, haut, droite, bas) ou None
+        self._fil_id = None                                # fil de la fenêtre ouverte (identifiant Windows)
         self._ouverte = threading.Event()
         self._verrou = threading.Lock()
 
@@ -1063,10 +1147,28 @@ class ChoixDossier:
         try:
             return reponse.result(timeout=delai)
         except concurrent.futures.TimeoutError:
-            return None
+            return self._expirer(reponse, delai)
+
+    def _expirer(self, reponse, delai):
+        journal.info('fenêtre « Choisir un dossier » ouverte depuis %d s : fermée', delai)
+        fin = time.monotonic() + FERMETURE_S
+        while True:
+            fil = self._fil_id
+            if fil:
+                try:
+                    self._fermer(fil)
+                except Exception:
+                    journal.debug('fenêtre « Choisir un dossier » impossible à fermer', exc_info=True)
+            try:
+                return reponse.result(timeout=0.25)        # fermée : None ; choisie à l'instant : le dossier
+            except concurrent.futures.TimeoutError:
+                if time.monotonic() >= fin:
+                    raise Refus("La fenêtre de choix d'un dossier est toujours ouverte : choisissez-y un dossier ou "
+                                "fermez-la, puis réessayez.", 409)
 
     def _fil(self, reponse, initial, titre):
         resultat = erreur = None
+        self._fil_id = threading.get_native_id()
         try:
             zone = None
             if self.zone is not None:
@@ -1080,6 +1182,7 @@ class ChoixDossier:
             journal.exception('fenêtre de choix de dossier')
             erreur = Refus("La fenêtre de choix d'un dossier n'a pas pu s'ouvrir.", 503)
         # La fenêtre est fermée avant que la réponse parte : la demande suivante est acceptée.
+        self._fil_id = None
         self._ouverte.clear()
         if erreur is not None:
             reponse.set_exception(erreur)
@@ -3114,34 +3217,46 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         """Jeton d'accès, pour TOUTE requête (page, API, miniatures, photos, et les routes à venir : contrôle fait ici,
         avant l'aiguillage). Le cookie myphotos-<port> doit porter le jeton du serveur. Seule autre entrée : l'adresse
         d'entrée « /?jeton=… » (fenêtre, Edge, navigateur, relance), qui pose le cookie (HttpOnly, SameSite=Strict,
-        Path=/) et redirige vers « / » : le jeton ne reste ni dans l'adresse affichée ni dans l'historique de la page.
+        Path=/) et redirige vers « /?entree=1 », puis, le cookie reçu, vers « / » : le jeton ne reste ni dans l'adresse
+        affichée ni dans l'historique de la page.
+
+        « /?entree=1 » (marqueur non secret) sans cookie valable : le navigateur a refusé le cookie (réglage « bloquer
+        les cookies ») ; une page le dit (PAGE_COOKIES), au lieu de « Ouvrez MyPhotos depuis son raccourci ».
 
         Rend True si la requête continue ; sinon la réponse est déjà partie : redirection, ou refus 403 sans rien
         révéler (« Ouvrez MyPhotos depuis son raccourci » ; JSON pour /api/…, avec « jeton: requis » pour qu'une
         relance reconnaisse une MyPhotos qui n'est pas la sienne)."""
         jeton = self.server.jeton
         valide = bool(jeton) and self._cookie_ok(jeton)
-        if methode == 'GET' and chemin in PAGES and PARAMETRE_JETON in requete:
+        arrivee = False
+        if methode == 'GET' and chemin in PAGES and (PARAMETRE_JETON in requete or PARAMETRE_ARRIVEE in requete):
             try:
-                donnes = urllib.parse.parse_qs(requete, keep_blank_values=True, max_num_fields=20).get(PARAMETRE_JETON)
+                params = urllib.parse.parse_qs(requete, keep_blank_values=True, max_num_fields=20)
             except ValueError:
                 raise Refus('Requête refusée.', 400)
+            donnes = params.get(PARAMETRE_JETON)
+            arrivee = (params.get(PARAMETRE_ARRIVEE) or [''])[-1] == '1'
             if donnes:
                 entree = jeton_egal(donnes[-1], jeton)
                 if entree or valide:            # jeton juste, ou adresse d'entrée périmée avec un cookie valable
                     entetes = {'Location': '/', 'Cache-Control': 'no-store'}
-                    if entree:
+                    if entree and not valide:
                         entetes['Set-Cookie'] = (f'{nom_cookie(self.server.server_port)}={jeton}; Path=/; HttpOnly; '
                                                  'SameSite=Strict')
+                        entetes['Location'] = f'/?{PARAMETRE_ARRIVEE}=1'     # le cookie est-il bien revenu ?
                     self._envoyer(303, b'', 'text/plain; charset=utf-8', entetes)
                     return False
+            elif arrivee and valide:
+                self._envoyer(303, b'', 'text/plain; charset=utf-8', {'Location': '/', 'Cache-Control': 'no-store'})
+                return False
         if valide:
             return True
         self.close_connection = True
         if chemin.startswith('/api/'):
             self._json({'erreur': JETON_REFUSE, 'jeton': 'requis'}, 403)
         else:
-            self._envoyer(403, PAGE_REFUS, 'text/html; charset=utf-8', {'Cache-Control': 'no-store'})
+            self._envoyer(403, PAGE_COOKIES if arrivee else PAGE_REFUS, 'text/html; charset=utf-8',
+                          {'Cache-Control': 'no-store'})
         return False
 
     def _corps(self):
@@ -3524,8 +3639,17 @@ def main(argv=None):
         try:
             serveur = Serveur((config.HOTE, config.PORT), Gestionnaire)
         except OSError as e:
+            # Qui tient le port ? AVANT d'envoyer quoi que ce soit (jeton, page) : seulement un programme de NOTRE
+            # compte Windows. Un autre compte, ou un programme qui squatte le port, n'obtient ni cookie ni page (relecture
+            # adverse de la 0.4.0 : sa page s'ouvrait avec notre jeton, et un service worker volait le suivant).
+            tenu = fenetre.port_tenu_par(config.PORT)
+            if tenu == 'autre':
+                journal.warning('port %d tenu par un programme d\'un autre compte Windows (ou illisible) : rien ne lui '
+                                'est envoyé', config.PORT)
+                alerter(PORT_PRIS.format(port=config.PORT))
+                return 1
             jeton_lu = lire_jeton()              # celui de la MyPhotos qui tient le port (mêmes données), relu à chaque tour
-            etat = etat_instance(config.PORT, jeton_lu or '')
+            etat = etat_instance(config.PORT, jeton_lu or '') if tenu == 'nous' else None
             if etat is None:
                 if time.monotonic() < patience_port:
                     time.sleep(0.5)              # une MyPhotos qui s'arrête garde le port un instant sans répondre
@@ -3542,7 +3666,8 @@ def main(argv=None):
             # Sa page s'ouvre par l'adresse d'entrée si elle exige le jeton (0.4.0 et plus), par « / » sinon.
             entree = adresse_entree(config.PORT, jeton_lu) if etat.get('acces_par_jeton') and jeton_lu else adresse
             code = fenetre.relancer(etat, entree, config.PORT, demande, ouvrir_page, informer,
-                                    etat_actuel=lambda: etat_instance(config.PORT, jeton_lu or ''))
+                                    etat_actuel=lambda: (etat_instance(config.PORT, jeton_lu or '')
+                                                         if fenetre.port_tenu_par(config.PORT) == 'nous' else None))
             if code is None and time.monotonic() < patience:
                 time.sleep(0.5)                  # elle s'arrêtait en fait : on attend qu'elle libère le port
                 continue

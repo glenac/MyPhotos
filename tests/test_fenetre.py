@@ -451,6 +451,10 @@ class TestRelance(unittest.TestCase):
         patcher = mock.patch.object(fenetre, 'tenir_mutex')
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Port « tenu par notre compte » (fenetre.port_tenu_par) : jamais la vraie table des ports de cet ordinateur.
+        patcher = mock.patch.object(fenetre, 'port_tenu_par', return_value='nous')
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_decisions(self):
         ancienne = {'nom': 'MyPhotos', 'version': '0.2.0'}
@@ -507,18 +511,65 @@ class TestRelance(unittest.TestCase):
         self.assertFalse(fenetre.autre_compte({'version': '0.2.0'}, moi))
 
     def test_jeton_refuse(self):
-        """0.4.0 : la MyPhotos déjà lancée refuse notre jeton d'accès (elle tourne pour un autre compte Windows : son
-        jeton est dans SES données) : message, et rien n'est ouvert ; sans page, rien du tout."""
+        """0.4.0 : notre MyPhotos (port tenu par notre compte, vérifié avant) refuse le jeton lu dans nos données
+        (autres données, ou jeton pas encore écrit) : sa fenêtre revient si l'événement de notre session répond
+        (relecture adverse : avant, faux message « autre compte ») ; sinon un message, et rien n'est ouvert."""
         etat = {'nom': 'MyPhotos', 'jeton_refuse': True}
-        for demande in ('fenetre', 'navigateur'):
-            page, infos, signal = self.relancer(etat, demande)
+        page, infos, signal = self.relancer(etat, 'fenetre')
+        signal.assert_called_once_with(1)
+        page.assert_not_called()
+        infos.assert_not_called()
+        for demande, signal_ok in (('fenetre', False), ('navigateur', True)):
+            page, infos, signal = self.relancer(etat, demande, signal_ok=signal_ok)
             page.assert_not_called()
-            signal.assert_not_called()
-            infos.assert_called_once_with(fenetre.AUTRE_COMPTE)
+            infos.assert_called_once_with(fenetre.JETON_REFUSE)
         page, infos, signal = self.relancer(etat, 'sans_page')
         page.assert_not_called()
         infos.assert_not_called()
         signal.assert_not_called()
+
+    def test_main_port_d_un_autre_compte(self):
+        """Relecture adverse de la 0.4.0 : le port est tenu par un programme d'un AUTRE compte Windows (ou que Windows
+        ne laisse pas identifier). Rien ne lui est envoyé : ni /api/etat avec notre jeton, ni la page ; un message."""
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            serveur.creer_jeton(chemin)
+            with mock.patch.object(serveur, 'Serveur', side_effect=OSError('port pris')), \
+                    mock.patch.object(fenetre, 'port_tenu_par', return_value='autre'), \
+                    mock.patch.object(config, 'JETON', chemin), \
+                    mock.patch.object(serveur, 'etat_instance') as etat, \
+                    mock.patch.object(serveur, 'configurer_journal'), \
+                    mock.patch.object(serveur, 'ouvrir_page') as page, \
+                    mock.patch.object(fenetre, 'signaler_premier_plan') as signal, \
+                    mock.patch.object(serveur, 'informer') as infos, \
+                    mock.patch.object(serveur, 'alerter') as alerte:
+                for argv in ([], ['--navigateur']):
+                    self.assertEqual(serveur.main(argv), 1)
+        etat.assert_not_called()
+        page.assert_not_called()
+        signal.assert_not_called()
+        infos.assert_not_called()
+        self.assertEqual(alerte.call_args[0][0], serveur.PORT_PRIS.format(port=config.PORT))
+        self.assertIn('autre compte', alerte.call_args[0][0])
+
+    def test_main_port_libere_puis_pris(self):
+        """Plus personne n'écoute (une MyPhotos finit de s'arrêter) : on réessaie, sans rien envoyer ; si le port
+        reste pris sans écouteur au-delà de PORT_LIBERE_S, le message d'avant."""
+        essais = []
+
+        def serveur_(*_a, **_k):
+            essais.append(1)
+            if len(essais) < 3:
+                raise OSError('port pris')
+            raise RuntimeError('démarré')
+        with mock.patch.object(serveur, 'Serveur', side_effect=serveur_), \
+                mock.patch.object(fenetre, 'port_tenu_par', return_value=None), \
+                mock.patch.object(serveur, 'etat_instance') as etat, \
+                mock.patch.object(serveur, 'configurer_journal'), \
+                mock.patch.object(serveur.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'démarré'):
+                serveur.main([])
+        etat.assert_not_called()
 
     def test_main_adresse_de_relance(self):
         """Relance : la page d'une MyPhotos 0.4.0 (ou plus) s'ouvre par l'adresse d'entrée, avec le jeton lu dans les
@@ -707,6 +758,110 @@ class TestRelance(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- navigation
+
+@unittest.skipUnless(os.name == 'nt', 'Windows')
+class TestPortTenu(unittest.TestCase):
+    """Relecture adverse de la 0.4.0 : la relance faisait confiance à n'importe quel programme qui tenait le port (un
+    autre compte Windows recevait notre jeton dans le cookie de /api/etat, puis notre page s'ouvrait chez lui avec
+    « ?jeton= »). Désormais, fenetre.port_tenu_par vérifie, AVANT tout envoi, que le programme qui écoute sur
+    127.0.0.1:<port> tourne sous NOTRE compte (table des ports de Windows, puis compte du processus)."""
+
+    PORT = int(os.environ.get('MYPHOTOS_ESSAI_PORT') or 7896) + 8
+
+    def ecouter(self, adresse='127.0.0.1'):
+        s = socket.socket()
+        s.bind((adresse, self.PORT))
+        s.listen()
+        self.addCleanup(s.close)
+        return s
+
+    def test_vrais_ecouteurs(self):
+        if not _port_libre(self.PORT):
+            self.skipTest(f'port {self.PORT} déjà pris')
+        self.assertIsNone(fenetre.port_tenu_par(self.PORT))               # personne
+        s = self.ecouter()
+        self.assertEqual(fenetre.ecouteurs(self.PORT), [os.getpid()])
+        self.assertEqual(fenetre.port_tenu_par(self.PORT), 'nous')
+        s.close()
+        self.assertIsNone(fenetre.port_tenu_par(self.PORT))
+        self.ecouter('0.0.0.0')                                           # toutes les adresses : compte aussi
+        self.assertEqual(fenetre.port_tenu_par(self.PORT), 'nous')
+        self.assertRegex(fenetre.sid_compte(), r'^S-1-5-')
+        self.assertEqual(fenetre.sid_du_processus(os.getpid()), fenetre.sid_compte())
+        self.assertEqual(fenetre.sid_du_processus(4), '')                 # le système : Windows refuse, donc « autre »
+
+    def test_autre_compte_ou_illisible(self):
+        moi = fenetre.sid_compte()
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=[1234]), \
+                mock.patch.object(fenetre, 'sid_du_processus', return_value='S-1-5-21-1-2-3-1001'):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=[1234, 5678]), \
+                mock.patch.object(fenetre, 'sid_du_processus', side_effect=lambda p=None: moi if p == 1234 else ''):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')          # un seul écouteur douteux suffit
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=None):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')          # table illisible : rien n'est envoyé
+        with mock.patch.object(fenetre, 'ecouteurs', side_effect=OSError('refusé')):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')
+        with mock.patch.object(fenetre, 'ecouteurs', return_value=[1234]), \
+                mock.patch.object(fenetre, 'sid_compte', return_value=''):
+            self.assertEqual(fenetre.port_tenu_par(1), 'autre')          # notre compte illisible
+
+    def test_relance_face_a_un_faux_serveur(self):
+        """Bout en bout, comme la preuve du relecteur : un faux serveur tient le port et se présente comme une
+        MyPhotos 0.4.0 en mode navigateur. Le même programme vu comme tournant sous un AUTRE compte (son processus est
+        celui de l'essai : son compte est simulé) ne reçoit RIEN, et rien ne s'ouvre ; vu comme le nôtre, la relance
+        l'interroge comme avant (témoin : sans la vérification, le jeton partait)."""
+        if not _port_libre(self.PORT):
+            self.skipTest(f'port {self.PORT} déjà pris')
+        import http.server
+        recues = []
+
+        class Faux(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                recues.append((self.path, self.headers.get('Cookie')))
+                corps = json.dumps({'nom': 'MyPhotos', 'version': '0.4.0', 'mode': 'navigateur',
+                                    'acces_par_jeton': True}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(corps)))
+                self.end_headers()
+                self.wfile.write(corps)
+        faux = http.server.ThreadingHTTPServer(('127.0.0.1', self.PORT), Faux)
+        threading.Thread(target=faux.serve_forever, daemon=True).start()
+        self.addCleanup(faux.server_close)
+        self.addCleanup(faux.shutdown)
+        vrai = fenetre.sid_du_processus
+        with tempfile.TemporaryDirectory() as d:
+            chemin = Path(d) / 'jeton'
+            jeton = serveur.creer_jeton(chemin)
+            for autre_compte in (True, False):
+                recues.clear()
+
+                def sid(pid=None, autre_compte=autre_compte):
+                    return 'S-1-5-21-1-2-3-1001' if autre_compte and pid == os.getpid() else vrai(pid)
+                with mock.patch.object(fenetre, 'tenir_mutex'), \
+                        mock.patch.object(fenetre, 'sid_du_processus', side_effect=sid), \
+                        mock.patch.object(config, 'PORT', self.PORT), \
+                        mock.patch.object(config, 'JETON', chemin), \
+                        mock.patch.object(serveur, 'SANS_PAGE', False), \
+                        mock.patch.object(serveur, 'configurer_journal'), \
+                        mock.patch.object(serveur, 'ouvrir_page') as page, \
+                        mock.patch.object(serveur, 'informer'), \
+                        mock.patch.object(serveur, 'alerter') as alerte:
+                    code = serveur.main(['--navigateur'])
+                if autre_compte:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(recues, [])                          # ni /api/etat, ni cookie
+                    page.assert_not_called()                              # ni page « ?jeton= »
+                    alerte.assert_called_once_with(serveur.PORT_PRIS.format(port=self.PORT))
+                else:
+                    self.assertEqual(code, 0)
+                    self.assertEqual(recues, [('/api/etat', f'myphotos-{self.PORT}={jeton}')])
+                    page.assert_called_once_with(serveur.adresse_entree(self.PORT, jeton))
+
 
 class TestNavigation(unittest.TestCase):
     PORT = 7942
@@ -965,6 +1120,24 @@ class TestPage(unittest.TestCase):
                         "E.serveur.mode === 'fenetre'"):
             self.assertIn(attendu, page)
 
+    def test_aucune_navigation_sortante(self):
+        """Relecture adverse de la 0.4.0 : le cookie du jeton part vers tous les ports de 127.0.0.1. En mode Edge
+        (profil à part), aucune navigation ne doit quitter la page : aucun lien vers une autre adresse, aucun
+        window.open, location.assign/replace ni formulaire envoyé ; les liens des miniatures restent dans la page
+        (« # ») ; « Nouveautés » et « Télécharger » passent par le serveur ; un dépôt (lien glissé) est refusé en mode
+        Edge comme dans la fenêtre."""
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        import re
+        for motif in (r'href\s*=\s*["\'](?!#|data:image/)', r'window\.open\s*\(', r'location\.(assign|replace)\s*\(',
+                      r'location\.href\s*=', r'location\s*=[^=]', r'target\s*=\s*["\']_', r'<form[^>]*\baction\s*=',
+                      r'\.submit\s*\(', r'https?://'):
+            trouves = [m.group(0) for m in re.finditer(motif, page)]
+            self.assertEqual(trouves, [], motif)
+        for lien in re.findall(r"href: *([^,}]+)", page):
+            self.assertTrue(lien.startswith(('adresse(', '`#')), lien)        # miniatures : un fragment de la page
+        self.assertIn("E.serveur.mode === 'fenetre' || E.serveur.mode === 'edge'", page)   # enFenetre : dépôts refusés
+        self.assertIn("ev.preventDefault();\n      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';", page)
+
     def test_recherche_ne_garde_pas_les_anciennes_cases(self):
         """Constat R4 : avant de vider les grilles, chaque recherche désabonne leurs cases de l'observateur des
         miniatures (sinon ~31 nœuds et 5 écouteurs restent en mémoire à chaque recherche, toute la séance ; mesuré
@@ -1031,12 +1204,21 @@ def _port_libre(port):
 
 
 ENFANT_CHOIX = '''\
-"""Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON."""
-import json, os, sys
+"""Essai réel de « Choisir un dossier » des replis : dialogue.ouvrir_devant, résultat en JSON. Avec un 3e argument
+(délai en secondes) : deux demandes de serveur.ChoixDossier, laissées sans réponse au-delà de ce délai."""
+import json, os, sys, time
 sys.path.insert(0, os.environ['MYPHOTOS_ESSAI_RACINE'])
-from myphotos import dialogue
+from myphotos import dialogue, serveur
 try:
-    sortie = {'chemin': dialogue.ouvrir_devant(sys.argv[1], sys.argv[2])}
+    if len(sys.argv) > 3:
+        choix = serveur.ChoixDossier()
+        sortie = {'demandes': []}
+        for _ in range(2):
+            debut = time.monotonic()
+            r = choix.demander(initial=sys.argv[2], delai=float(sys.argv[3]), titre=sys.argv[1])
+            sortie['demandes'].append({'chemin': r, 'duree_s': round(time.monotonic() - debut, 1)})
+    else:
+        sortie = {'chemin': dialogue.ouvrir_devant(sys.argv[1], sys.argv[2])}
 except Exception as e:
     sortie = {'erreur': repr(e)}
 with open(os.environ['MYPHOTOS_ESSAI_SORTIE'], 'w', encoding='utf-8') as f:
@@ -1135,6 +1317,49 @@ class TestChoixDossierReel(unittest.TestCase):
         self.assertLess(abs((x1 + x2) // 2 - (g + d) // 2), (d - g) // 8, c)   # … et au milieu
         self.assertLess(abs((y1 + y2) // 2 - (h + b) // 2), (b - h) // 8, c)
         self.assertEqual(c['code'], 0)
+
+    def test_delai_depasse_la_fenetre_se_ferme(self):
+        """Relecture adverse (déjà en 0.3.0) : au bout du délai, la vraie fenêtre est fermée comme par « Annuler »
+        (avant, elle restait ouverte et le choix fait ensuite était perdu) ; la demande suivante s'ouvre aussitôt,
+        sans « déjà ouverte ». Rien n'est touché par l'essai : elle se ferme d'elle-même."""
+        O = self.O
+        import processus_essai
+        sortie = self.dossier / 'sortie-delai.json'
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
+        env.update(MYPHOTOS_ESSAI_RACINE=str(RACINE), MYPHOTOS_ESSAI_SORTIE=str(sortie))
+        nom_bureau = f'MyPhotosChoixDelai{os.getpid()}'
+        hbureau = O.creer_bureau(nom_bureau)
+        fil = O.FilBureau(hbureau)
+        job = processus_essai.Job()
+        hproc = None
+        try:
+            _pid, hproc = O.lancer([sys.executable, str(self.dossier / 'enfant.py'), self.TITRE, str(self.propose),
+                                    '3'], nom_bureau, str(self.dossier), env, job)
+            vues = set()
+
+            def boite():
+                return next((f['hwnd'] for f in fil.faire(lambda: O.fenetres(set(job.pids())))
+                             if f['classe'] == '#32770' and f['visible']), None)
+            fin = time.monotonic() + 60
+            while O.code_sortie(hproc) is None and time.monotonic() < fin:
+                h = boite()
+                if h:
+                    vues.add(h)
+                time.sleep(0.2)
+            self.assertTrue(O.attendre_processus(hproc, 5), 'les fenêtres ne se ferment pas d\'elles-mêmes')
+            self.assertEqual(O.code_sortie(hproc), 0)
+            self.assertEqual(len(vues), 2, vues)                                # deux fenêtres, l'une après l'autre
+            d = json.loads(sortie.read_text(encoding='utf-8'))
+            self.assertEqual([x['chemin'] for x in d['demandes']], [None, None], d)
+            for x in d['demandes']:
+                self.assertTrue(3 <= x['duree_s'] < 3 + 6, d)                   # délai, puis fermeture (5 s au plus)
+            self.assertTrue(job.attendre_vide(10), O.du_job(job))
+        finally:
+            if hproc is not None and O.code_sortie(hproc) is None:
+                job.terminer()
+            O.fermer_handle(hproc)
+            job.fermer()
+            O.fermer_bureau(hbureau)
 
     def test_annuler_puis_choisir(self):
         sortie, constats = self.ouvrir('annuler')
