@@ -18,11 +18,17 @@ from myphotos import requete                                                    
 from myphotos.requete import (Analyse, FiltreDates, Periode, analyser, contient,    # noqa: E402
                               intervalles, normaliser, paques)
 
-requete._STRICT = True            # une erreur de lecture d'une date remonte, au lieu d'être ignorée en silence
-
 AUJ = date(2026, 11, 26)          # un jeudi
 D = date.fromisoformat
 TOUS_LES_ANS = 2027 - 1900 + 1    # fête ou mois sans année : de 1900 à l'an prochain (128 périodes)
+
+
+def setUpModule():
+    requete._STRICT = True        # pendant ces essais, une erreur de lecture d'une date remonte au lieu d'être ignorée
+
+
+def tearDownModule():
+    requete._STRICT = False
 
 
 def bornes(a):
