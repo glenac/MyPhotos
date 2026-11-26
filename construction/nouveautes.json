@@ -1,4 +1,7 @@
 {
+ "0.4.2": [
+  "La version de MyPhotos s’affiche sous son nom, en haut à gauche : vous voyez d’un coup d’œil laquelle est installée."
+ ],
  "0.4.1": [
   "« Plus comme celle-ci » : dans la visionneuse, les photos qui ressemblent le plus à celle affichée.",
   "Diaporama en plein écran, depuis la visionneuse (3, 5 ou 10 secondes par photo).",

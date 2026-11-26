@@ -163,7 +163,7 @@ Il vérifie ensuite que la mémoire et la place libre suffisent. **Très précis
 
 ## Les mises à jour
 
-Depuis la 0.4.0, MyPhotos peut vous proposer ses nouvelles versions et s'installer lui-même, en un clic. Il ne le fait qu'avec votre accord : la question est posée à l'étape **Analyse** du premier lancement ou, si vous venez d'une version plus ancienne, dans un bandeau en haut de la page. Pour changer d'avis : **Réglages**, section « Nouvelles versions », case **Me proposer les nouvelles versions de MyPhotos**. Le bouton **Rechercher une nouvelle version** vérifie tout de suite, même si la case est décochée.
+Depuis la 0.4.0, MyPhotos peut vous proposer ses nouvelles versions et s'installer lui-même, en un clic. Il ne le fait qu'avec votre accord : la question est posée à l'étape **Analyse** du premier lancement ou, si vous venez d'une version plus ancienne, dans un bandeau en haut de la page. Pour changer d'avis : **Réglages**, section « Nouvelles versions », case **Me proposer les nouvelles versions de MyPhotos**. Le bouton **Rechercher une nouvelle version** vérifie tout de suite, même si la case est décochée. La version utilisée s'affiche sous le nom MyPhotos, en haut à gauche de la page (depuis la 0.4.2).
 
 **Quand une nouvelle version sort**, un bandeau l'annonce en haut de la page :
 
@@ -368,7 +368,7 @@ Des idées pour les versions suivantes, sans date promise :
 
 **First run.** MyPhotos opens in its own window, with a three-step assistant: « Votre ordinateur » (MyPhotos describes your PC and recommends an engine; click « Télécharger »), « Vos photos » (pick your photo folders with « Ajouter » or « Ajouter un dossier… »), and « Analyse » (each photo is analysed once; you can start searching right away with « Commencer à chercher »). Before a folder is added, MyPhotos lists its largest subfolders with their photo counts; screenshot and wallpaper folders are unticked by default and become excluded subfolders.
 
-**Window.** Closing the window stops MyPhotos (it asks first if work is in progress); launching MyPhotos again while it runs brings its window back. MyPhotos.exe alone can create its own desktop and Start menu shortcuts (« Réglages » > « Raccourci »). Since 0.4.1, « Réglages » > « Copier pour demander de l'aide » copies a short report (versions, engine, folders, recent log lines; never your searches) to paste into an e-mail to whoever helps you.
+**Window.** Closing the window stops MyPhotos (it asks first if work is in progress); launching MyPhotos again while it runs brings its window back. MyPhotos.exe alone can create its own desktop and Start menu shortcuts (« Réglages » > « Raccourci »). Since 0.4.1, « Réglages » > « Copier pour demander de l'aide » copies a short report (versions, engine, folders, recent log lines; never your searches) to paste into an e-mail to whoever helps you. Since 0.4.2, the version number shows under the MyPhotos name, top left.
 
 **Refresh and exclude.** « Actualiser » (above the photos and in « Réglages ») rescans all folders right away: new photos are added, deleted ones are forgotten, unreachable drives keep their photos, and MyPhotos reports what changed. In « Réglages », « Exclure un sous-dossier… » hides a subfolder from MyPhotos without deleting anything; « Ne plus exclure » brings it back. A photo whose file has disappeared is forgotten as soon as you open it, unless its drive is simply unplugged.
 
