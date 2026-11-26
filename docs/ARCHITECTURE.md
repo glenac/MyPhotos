@@ -71,7 +71,7 @@ Les quatre moteurs sont des modèles **SigLIP 2** de Google (Apache-2.0) dans le
 
 **Texte.** La requête est mise en minuscules, découpée par `tokenizers`, terminée par le jeton de fin et complétée jusqu'à 64 jetons.
 
-**Calcul.** `Moteur` ouvre une session ONNX Runtime par moitié. Il essaie d'abord DirectML (carte 0), puis se replie sur le processeur si la carte refuse. Le moteur de texte est chargé à la première recherche, et un préchauffage le charge dès l'activation du moteur, pour que la première vraie recherche soit rapide. Une recherche coûte environ 11 ms sur la carte graphique et 90 ms sur le processeur (moteur Standard).
+**Calcul.** `Moteur` ouvre une session ONNX Runtime par moitié. Tout import d'ONNX Runtime passe par `modele.onnxruntime()`, qui coupe sa télémétrie (activée par défaut dans ses versions officielles pour Windows) avant toute session (0.5.0). Il essaie d'abord DirectML (carte 0), puis se replie sur le processeur si la carte refuse. Le moteur de texte est chargé à la première recherche, et un préchauffage le charge dès l'activation du moteur, pour que la première vraie recherche soit rapide. Une recherche coûte environ 11 ms sur la carte graphique et 90 ms sur le processeur (moteur Standard).
 
 ### 3. Analyse (`indexation.py`)
 

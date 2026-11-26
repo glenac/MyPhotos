@@ -85,7 +85,7 @@ Le moteur d'inférence qui fait tourner SigLIP 2, sur la carte graphique (Direct
 
 - **Licence** : MIT, « Copyright (c) Microsoft Corporation ».
 - **Obligations** : joindre la mention de droits d'auteur et le texte de la licence MIT ; joindre `ThirdPartyNotices.txt` (6 121 lignes), qui couvre les composants compilés dans la bibliothèque : ONNX, Protocol Buffers, Abseil, FlatBuffers, Eigen, Microsoft GSL, SafeInt, nlohmann/json, HowardHinnant/date, pybind11, etc. Eigen est sous **MPL-2.0** : il faut indiquer où obtenir son code source, publié sur [gitlab.com/libeigen/eigen](https://gitlab.com/libeigen/eigen) et référencé par les sources d'ONNX Runtime ; Microsoft propose aussi ces sources sur http://3rdpartysource.microsoft.com, comme l'indique l'en-tête de `ThirdPartyNotices.txt`.
-- **Vie privée** : `Privacy.md` précise que la télémétrie TraceLogging est « turned ON by default in the official builds » pour Windows ; elle se coupe par l'API (`onnxruntime.disable_telemetry_events()` en Python).
+- **Vie privée** : `Privacy.md` précise que la télémétrie TraceLogging est « turned ON by default in the official builds » pour Windows ; elle se coupe par l'API (`onnxruntime.disable_telemetry_events()` en Python) ; MyPhotos l'appelle au démarrage, avant toute session (`modele.onnxruntime()`, depuis la 0.5.0).
 - **Liens** : [github.com/microsoft/onnxruntime](https://github.com/microsoft/onnxruntime), [licence](https://github.com/microsoft/onnxruntime/blob/main/LICENSE), [Privacy.md](https://github.com/microsoft/onnxruntime/blob/main/docs/Privacy.md).
 
 ## DirectML

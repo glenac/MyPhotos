@@ -1838,3 +1838,58 @@ class TestDossierPresqueVide(EssaiAvecImages):
         self.assertEqual((b['retirees'], b['injoignables']), (2, []))
         self.assertEqual(self.base.compter()['total'], 0)
         self.assertTrue(self.base.dossier(self.d['id'])['disponible'])
+
+
+# ---------------------------------------------------------------- télémétrie d'ONNX Runtime coupée
+
+class TestTelemetrieOnnx(unittest.TestCase):
+    """La télémétrie d'ONNX Runtime (« turned ON by default in the official builds » sous Windows, Privacy.md du
+    paquet) est coupée avant toute session : tout import d'onnxruntime dans myphotos passe par modele.onnxruntime()."""
+
+    def faux(self, **attributs):
+        import types
+        return types.SimpleNamespace(**attributs)
+
+    def test_coupee_une_seule_fois(self):
+        ort = self.faux(disable_telemetry_events=mock.Mock())
+        with mock.patch.dict(sys.modules, {'onnxruntime': ort}), mock.patch.object(modele, '_TELEMETRIE_TRAITEE', False):
+            self.assertIs(modele.onnxruntime(), ort)
+            self.assertIs(modele.onnxruntime(), ort)
+        ort.disable_telemetry_events.assert_called_once_with()
+
+    def test_api_absente_ou_refusee(self):
+        for ort in (self.faux(), self.faux(disable_telemetry_events=mock.Mock(side_effect=RuntimeError('refus')))):
+            with mock.patch.dict(sys.modules, {'onnxruntime': ort}), \
+                    mock.patch.object(modele, '_TELEMETRIE_TRAITEE', False):
+                self.assertIs(modele.onnxruntime(), ort)         # MyPhotos continue sans
+                self.assertTrue(modele._TELEMETRIE_TRAITEE)
+
+    def test_moteur_et_materiel_passent_par_elle(self):
+        """Avant la première session : le moteur ; et l'analyse du matériel, qui liste les fournisseurs."""
+        from myphotos import materiel
+        appels = []
+        ort = self.faux(disable_telemetry_events=lambda: appels.append('coupee'), __version__='1.24.4',
+                        get_available_providers=lambda: appels.append('fournisseurs') or ['CPUExecutionProvider'])
+        with mock.patch.dict(sys.modules, {'onnxruntime': ort}), mock.patch.object(modele, '_TELEMETRIE_TRAITEE', False):
+            self.assertEqual(materiel._onnxruntime(), {'version': '1.24.4', 'fournisseurs': ['CPUExecutionProvider']})
+        self.assertEqual(appels, ['coupee', 'fournisseurs'])
+        with mock.patch.object(modele, 'onnxruntime', side_effect=RuntimeError('passe par onnxruntime()')):
+            with self.assertRaisesRegex(RuntimeError, 'passe par onnxruntime'):
+                modele.Moteur('base', charger_texte=False)
+
+    def test_vrai_paquet(self):
+        """Le paquet installé (onnxruntime-directml) offre bien l'API, et l'appel réel ne lève rien."""
+        import onnxruntime
+        self.assertTrue(callable(getattr(onnxruntime, 'disable_telemetry_events', None)))
+        with mock.patch.object(modele, '_TELEMETRIE_TRAITEE', False):
+            self.assertIs(modele.onnxruntime(), onnxruntime)
+
+    def test_aucun_autre_import(self):
+        import re
+        trouves = []
+        for f in sorted(Path(modele.__file__).parent.glob('*.py')):
+            for n, ligne in enumerate(f.read_text(encoding='utf-8').splitlines(), 1):
+                if re.match(r'\s*(import\s+onnxruntime|from\s+onnxruntime)\b', ligne):
+                    trouves.append(f'{f.name}:{n}')
+        self.assertEqual(len(trouves), 1, trouves)               # celui de modele.onnxruntime(), et lui seul
+        self.assertTrue(trouves[0].startswith('modele.py:'), trouves)

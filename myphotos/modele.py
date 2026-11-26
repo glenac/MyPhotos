@@ -10,6 +10,7 @@ Choix (23/11/2026, détails dans PASSATION.md) :
 - variantes int8 écartées : vecteurs trop abîmés (fidélité 0,76 en vision, 0,95 en texte).
 """
 import hashlib
+import logging
 import os
 import threading
 import time
@@ -360,6 +361,25 @@ def indice_carte(carte):
     return carte
 
 
+# Télémétrie d'ONNX Runtime : « turned ON by default in the official builds » sous Windows (Privacy.md du paquet :
+# événements TraceLogging, transmis par Windows selon ses réglages de diagnostic). MyPhotos la coupe avant toute
+# session, par l'API prévue pour cela. Tout import d'onnxruntime dans myphotos passe par onnxruntime() (essai).
+_TELEMETRIE_TRAITEE = False
+
+
+def onnxruntime():
+    """Le module onnxruntime, sa télémétrie coupée (une fois par processus ; si l'API manque, on continue sans)."""
+    global _TELEMETRIE_TRAITEE
+    import onnxruntime as ort
+    if not _TELEMETRIE_TRAITEE:
+        try:
+            ort.disable_telemetry_events()
+        except Exception:
+            logging.getLogger(__name__).debug("télémétrie d'ONNX Runtime non coupée", exc_info=True)
+        _TELEMETRIE_TRAITEE = True
+    return ort
+
+
 class Moteur:
     """Les deux moitiés du modèle : vision (photos -> vecteurs) et texte (mots -> vecteur).
 
@@ -372,7 +392,7 @@ class Moteur:
 
     def __init__(self, cle=None, vision=None, texte=None, materiel='auto', fils=None, charger_texte=True,
                  charger_vision=True, racine=None, materiel_texte=None, carte=0):
-        import onnxruntime as ort
+        ort = onnxruntime()                          # télémétrie coupée avant toute session
         self.ort = ort
         self.carte = indice_carte(carte)
         self.cle = cle or MODELE_DEFAUT
