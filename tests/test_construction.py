@@ -151,6 +151,27 @@ class TestFenetre(unittest.TestCase):
         self.assertNotIn('import tkinter', (RACINE / 'myphotos' / 'serveur.py').read_text(encoding='utf-8'))
 
 
+class TestDonneesEmbarquees(unittest.TestCase):
+    """Fichiers de données lus par le code à côté de lui (config.CODE) : embarqués et contrôlés."""
+
+    def test_sources_presentes(self):
+        for source, destination in construire.DONNEES:
+            self.assertTrue(Path(source).exists(), source)
+            self.assertFalse(Path(destination).is_absolute(), destination)
+
+    def test_lieux(self):
+        """Lieux (0.5.0) : myphotos/lieux.bin est rangé là où myphotos/lieux.py le cherche, vérifié par le contrôle
+        final, jamais retiré, et assez petit pour le garde-fou de publication."""
+        from myphotos import lieux
+        fichier = (RACINE / 'myphotos' / 'lieux.bin').resolve()
+        destinations = {Path(s).resolve(): d for s, d in construire.DONNEES}
+        self.assertEqual(destinations.get(fichier), 'myphotos')
+        self.assertIn('myphotos\\lieux.bin', construire.OBLIGATOIRES)
+        self.assertFalse(construire.retire('myphotos\\lieux.bin'))
+        self.assertEqual(Path(lieux.FICHIER).relative_to(config.CODE).as_posix(), 'myphotos/lieux.bin')
+        self.assertLess(fichier.stat().st_size, 2_000_000)
+
+
 class TestLicencesRust(unittest.TestCase):
     def test_licences_qui_demandent_leurs_mentions(self):
         a_noter = ['MIT', 'BSD-2-Clause', '(MIT OR Apache-2.0) AND Unicode-3.0', '', None, 'MIT | Apache-2.0']

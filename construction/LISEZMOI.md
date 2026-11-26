@@ -228,6 +228,9 @@ conséquence : ils réessaient le lendemain).
 
 - Python 3.14, le paquet `myphotos`, `page\` et `construction\MyPhotos.ico`, qui sert d'icône à la
   fenêtre de MyPhotos et, dans les replis, à la fenêtre « Choisir un dossier » (barre des tâches).
+- Les lieux (0.5.0) : `myphotos\lieux.bin` (1,7 Mo), villes, départements, régions et pays tirés de GeoNames
+  (CC BY 4.0) par `outils/preparer_lieux.py` ; `construire.py` le range dans `myphotos\` (là où
+  `myphotos/lieux.py` le cherche, `config.CODE`) et le contrôle final vérifie sa présence.
 - onnxruntime-directml 1.24.4 : le module Python, `DirectML.dll` et `onnxruntime_providers_shared.dll`.
   Les fournisseurs disponibles sont `DmlExecutionProvider` (carte graphique) et `CPUExecutionProvider`.
 - numpy (avec OpenBLAS), Pillow, tokenizers, OpenSSL pour le téléchargement en HTTPS, et SQLite. Depuis la

@@ -4,7 +4,7 @@ Le code source de MyPhotos (ce dépôt) est publié sous licence MIT, © 2026 gl
 
 **MyPhotos.exe** est construit avec PyInstaller. En plus du code de MyPhotos, il embarque l'interpréteur Python et les bibliothèques listées ci-dessous, chacune sous sa propre licence. Ce document indique, pour chaque composant, sa licence, ce qu'elle impose à qui redistribue l'exécutable, et où trouver le texte complet. Il ne remplace pas ces textes, qui font foi.
 
-Inventaire du 23/11/2026, complété le 24/11/2026 pour la 0.3.0 (fenêtre de MyPhotos et installateur), établi à partir des fichiers de licence des paquets installés (versions figées de `requirements.txt`, Python 3.14.10), du script de construction `construction/construire.py` (listes `EXCLUS`, `RETIRES` et `OBLIGATOIRES`) et du contenu d'une construction d'essai. **À refaire à chaque changement de version d'un paquet, de Python ou de PyInstaller, et à chaque modification de ces listes.**
+Inventaire du 23/11/2026, complété le 24/11/2026 pour la 0.3.0 (fenêtre de MyPhotos et installateur) et le 26/11/2026 pour la 0.5.0 (données de lieux), établi à partir des fichiers de licence des paquets installés (versions figées de `requirements.txt`, Python 3.14.10), du script de construction `construction/construire.py` (listes `EXCLUS`, `RETIRES` et `OBLIGATOIRES`) et du contenu d'une construction d'essai. **À refaire à chaque changement de version d'un paquet, de Python ou de PyInstaller, et à chaque modification de ces listes.**
 
 ## En résumé
 
@@ -30,6 +30,7 @@ Inventaire du 23/11/2026, complété le 24/11/2026 pour la 0.3.0 (fenêtre de My
 | [typing_extensions](#proxy_tools-bottle-et-typing_extensions) | 4.16.0 | PSF-2.0 | oui |
 | [Runtime Microsoft Visual C++](#runtime-microsoft-visual-c) | 14.x | « Microsoft Distributable Code » | oui |
 | [PyInstaller](#pyinstaller) (chargeur) | 6.22.3 | GPL-2.0-or-later avec exception pour le chargeur | oui, le chargeur seulement |
+| [GeoNames](#données-de-lieux-geonames) (villes, régions et pays : `myphotos\lieux.bin`) | extrait du 26/11/2026 | CC BY 4.0 (Creative Commons Attribution 4.0) | oui |
 | [Inno Setup](#inno-setup-installateur) (installateur) | 6.7.4 | licence Inno Setup (type Zlib) | **non** : seulement dans `MyPhotos-<version>-installation.exe` |
 | [LZMA SDK](#inno-setup-installateur) (décompresseur de l'installateur) | fourni avec Inno Setup 6.7.4 | domaine public | **non** : seulement dans l'installateur |
 | [SigLIP 2](#le-moteur-de-reconnaissance-siglip-2) (Google) | 2025 | Apache-2.0 | **non** : téléchargé par l'utilisateur |
@@ -78,6 +79,7 @@ Ces phrases doivent figurer dans la documentation du produit. Elles sont reprodu
 
 - libjpeg-turbo (licence IJG, clause 2) : *This software is based in part on the work of the Independent JPEG Group.* (Ce logiciel repose en partie sur le travail de l'Independent JPEG Group.)
 - FreeType (FTL), seulement si une construction embarque le module `_imagingft` de Pillow : *Portions of this software are copyright © The FreeType Project (https://freetype.org). All rights reserved.* (Ce logiciel repose en partie sur le travail de l'équipe FreeType.)
+- GeoNames (CC BY 4.0), depuis la 0.5.0 : *Données de lieux : GeoNames (https://www.geonames.org), sous licence Creative Commons Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/), modifiées par MyPhotos (sélection, noms, format).* Voir [Données de lieux](#données-de-lieux-geonames).
 
 ## ONNX Runtime (onnxruntime-directml)
 
@@ -268,6 +270,15 @@ Outil de construction : depuis la 0.3.0, `MyPhotos-<version>-installation.exe` 
 - **Licence commerciale** : jrsoftware demande aux « utilisateurs commerciaux » (organisation ou indépendant à but lucratif dont le revenu annuel dépasse 5 000 USD, dons reçus compris) d'acheter une licence commerciale ([isorder.php](https://jrsoftware.org/isorder.php)). Ce n'est pas le cas de MyPhotos aujourd'hui ; à revoir si cela change.
 - **Texte joint** : l'installateur pose le `license.txt` d'Inno Setup dans `licences\InnoSetup\`, à côté du désinstallateur.
 - **LZMA SDK** : le décompresseur de l'installateur vient du LZMA SDK d'Igor Pavlov, placé dans le **domaine public** ([7-zip.org/sdk.html](https://www.7-zip.org/sdk.html)) : aucune obligation.
+
+## Données de lieux (GeoNames)
+
+Depuis la 0.5.0, MyPhotos retrouve sans Internet la ville, le département, la région et le pays des photos qui ont une position GPS. Les données viennent de **GeoNames** ([www.geonames.org](https://www.geonames.org)), base géographique publiée par l'équipe de GeoNames sous licence **Creative Commons Attribution 4.0** ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
+
+- **Fichiers d'origine** (extraits du 26/11/2026, [download.geonames.org/export/dump](https://download.geonames.org/export/dump/)) : `cities500.zip`, `FR.zip` et les fichiers des territoires d'outre-mer (`GP`, `MQ`, `GF`, `RE`, `YT`, `PM`, `BL`, `MF`, `WF`, `PF`, `NC`, `TF`), `admin1CodesASCII.txt`, `admin2Codes.txt`, `countryInfo.txt` et `alternateNamesV2.zip`. La date et la taille de chacun sont notées dans l'en-tête du fichier produit.
+- **Ce que MyPhotos en a fait** (modifications, comme la licence demande de l'indiquer) : `outils/preparer_lieux.py` en garde une sélection (toutes les communes de France, les villes et villages d'au moins 1 000 habitants des pays voisins et des lieux de vacances habituels, les villes d'au moins 5 000 habitants du reste du monde, leurs régions et leurs pays), choisit les noms en français, ajoute des noms de recherche (anciennes régions, communes nouvelles, noms sans article), arrondit les populations et les positions, rattache l'outre-mer à la France, et range le tout dans un format compact, `myphotos/lieux.bin`, **embarqué dans MyPhotos.exe**.
+- **Obligations** : citer GeoNames comme source, donner le lien vers la licence, indiquer que les données ont été modifiées : c'est l'objet de cette section, reprise dans le README (« Crédits et licences »), et du champ `licence` de l'en-tête du fichier. Aucune autre condition : utilisation, y compris commerciale, et redistribution libres.
+- **Sans garantie** : GeoNames fournit ses données « en l'état », sans garantie d'exactitude ni d'exhaustivité. Le lieu que MyPhotos donne à une photo est celui de la ville connue qui l'emporte à 30 km au plus.
 
 ## Le moteur de reconnaissance (SigLIP 2)
 

@@ -89,6 +89,7 @@ COPYRIGHT = 'Copyright (c) 2026 glenac (MIT)'
 DONNEES = [
     (RACINE / 'page', 'page'),                          # la page unique
     (ICONE, 'construction'),                            # icône de la fenêtre MyPhotos (et de « Choisir un dossier »)
+    (RACINE / 'myphotos' / 'lieux.bin', 'myphotos'),    # lieux (0.5.0) : GeoNames, préparé par outils/preparer_lieux.py
 ]
 
 # Fenêtre de MyPhotos : modules que pywebview choisit à l'exécution (guilib), et pythonnet.
@@ -155,6 +156,7 @@ OBLIGATOIRES = [
     '_cffi_backend.cp314-win_amd64.pyd',
     'page\\index.html',
     'construction\\MyPhotos.ico',
+    'myphotos\\lieux.bin',                              # lieux des photos (0.5.0), sans Internet
 ]
 
 

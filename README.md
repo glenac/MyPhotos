@@ -294,13 +294,13 @@ python -m venv .venv
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (429 essais) :
+**Tests** (466 essais) :
 
 ```powershell
-.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature
+.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux
 ```
 
-`test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`, `--dossier`, `--installateur`) et les règles de l'installateur (`construction/MyPhotos.iss`) ; son essai réel (compilation, installation dans un dossier d'essai, mise à jour, désinstallations) ne tourne qu'à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`). `test_fenetre` essaie la fenêtre et ses replis (Edge, navigateur), la relance et la fermeture ; ses essais réels, sur un bureau Windows invisible et pilotés par le protocole DevTools, ne tournent qu'à la demande (`MYPHOTOS_ESSAI_FENETRE=1`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
+`test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_lieux` essaie les lieux (noms, proximité, base, calcul en arrière-plan) sur les données embarquées et des images générées avec des positions GPS fabriquées ; il relit une base de la 0.5 avec le `base.py` de la 0.4.1, tiré de l'historique du dépôt (`git show`). `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`, `--dossier`, `--installateur`) et les règles de l'installateur (`construction/MyPhotos.iss`) ; son essai réel (compilation, installation dans un dossier d'essai, mise à jour, désinstallations) ne tourne qu'à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`). `test_fenetre` essaie la fenêtre et ses replis (Edge, navigateur), la relance et la fermeture ; ses essais réels, sur un bureau Windows invisible et pilotés par le protocole DevTools, ne tournent qu'à la demande (`MYPHOTOS_ESSAI_FENETRE=1`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
 
 **Construction de MyPhotos.exe** (un seul fichier, sans console, avec PyInstaller, dans un environnement séparé) :
 
@@ -312,7 +312,7 @@ construction\construire.ps1
 
 Le résultat est `dist\MyPhotos.exe`. `construction\construire.ps1 --essai` construit le programme d'essai (`construction/essai_exe.py`), qui vérifie la chaîne de construction après une mise à jour de Python, d'ONNX Runtime ou de PyInstaller. Une fois MyPhotos.exe essayé, `construction\construire.ps1 --paquet` prépare la publication : l'archive `MyPhotos-<version>-windows.zip` (avec le mode d'emploi et les licences des composants) et les empreintes SHA-256. `construction\construire.ps1 --dossier` construit la version « dossier » (`dist\MyPhotos\`, déjà décompressée), puis `construction\construire.ps1 --installateur` en fait `dist\MyPhotos-<version>-installation.exe` avec Inno Setup 6 (`construction/MyPhotos.iss`). Détails : [construction/LISEZMOI.md](construction/LISEZMOI.md).
 
-**Outils** : `outils/evaluation.py` mesure la qualité de la recherche et règle les seuils (résumé dans `outils/EVALUATION.md`) ; `outils/banc_essai.py` compare la vitesse et la fidélité des variantes d'un moteur ; `outils/telecharger_tout.py` télécharge tous les fichiers d'un moteur ; `outils/calibrer_doublons.py` règle les seuils des doublons sur des images publiques (résumé dans `outils/DOUBLONS.md`) ; `outils/verifier_publication.py` vérifie qu'aucune donnée personnelle n'entre dans le dépôt.
+**Outils** : `outils/evaluation.py` mesure la qualité de la recherche et règle les seuils (résumé dans `outils/EVALUATION.md`) ; `outils/banc_essai.py` compare la vitesse et la fidélité des variantes d'un moteur ; `outils/telecharger_tout.py` télécharge tous les fichiers d'un moteur ; `outils/calibrer_doublons.py` règle les seuils des doublons sur des images publiques (résumé dans `outils/DOUBLONS.md`) ; `outils/verifier_publication.py` vérifie qu'aucune donnée personnelle n'entre dans le dépôt ; `outils/preparer_lieux.py` prépare `myphotos/lieux.bin` à partir de GeoNames (sources téléchargées une fois, hors du dépôt, dans `%LOCALAPPDATA%\MyPhotos-construction\cache\geonames`).
 
 ## Architecture
 
@@ -328,6 +328,7 @@ Le flux : **matériel → moteur → analyse → recherche**. Au premier lancem
 | `myphotos/base.py` | index SQLite et miniatures |
 | `myphotos/recherche.py` | recherche par mots, seuils « sûres » et « moins sûres » |
 | `myphotos/doublons.py` | doublons : copies identiques, copies retouchées, rafales |
+| `myphotos/lieux.py` | lieux des photos (0.5.0) : ville, département, région et pays d'une position GPS, sans Internet, et lieu retrouvé par son nom (données GeoNames de `myphotos/lieux.bin`) |
 | `myphotos/fenetre.py` | la fenêtre de MyPhotos (pywebview, WebView2), ses replis (Edge en mode application, navigateur), la relance et la fermeture |
 | `myphotos/raccourci.py` | raccourcis du Bureau et du menu Démarrer (MyPhotos.exe seul) |
 | `myphotos/mise_a_jour.py` | mise à jour proposée : manifeste signé de la dernière version, téléchargement contrôlé, installation et relance |
@@ -342,6 +343,7 @@ Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md
 - **MyPhotos** : licence MIT, © 2026 glenac. Voir [LICENSE](LICENSE).
 - **Moteur de reconnaissance** : SigLIP 2, © Google, licence Apache-2.0, dans les exports ONNX publiés par onnx-community sur Hugging Face. MyPhotos le télécharge depuis Hugging Face ; il n'est pas inclus dans MyPhotos.exe.
 - **Composants embarqués dans MyPhotos.exe** : Python, ONNX Runtime, DirectML, NumPy, Pillow, tokenizers, pywebview et les DLL WebView2 de Microsoft, pythonnet et le chargeur de PyInstaller, chacun sous sa propre licence. L'installateur est fait avec Inno Setup. Voir [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Lieux des photos** : données de [GeoNames](https://www.geonames.org), sous licence [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/), modifiées par MyPhotos (sélection des villes, noms en français, format compact) : `myphotos/lieux.bin`, préparé par `outils/preparer_lieux.py` et inclus dans MyPhotos.exe. Rien ne part sur Internet pour trouver le lieu d'une photo.
 - **Choix des moteurs** : banc d'essai multilingue du projet Immich (jeu Crossmodal-3600).
 - **Captures d'écran** : photos de Wikimedia Commons versées dans le domaine public (CC0). Voir [docs/captures/CREDITS.md](docs/captures/CREDITS.md).
 
