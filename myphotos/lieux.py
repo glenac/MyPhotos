@@ -45,9 +45,11 @@ FICHIER = Path(config.CODE) / 'myphotos' / 'lieux.bin'
 MAGIQUE = b'MyPhotos-lieux\x00'          # 15 octets, puis le numéro du format sur 1 octet (le zéro : fichier binaire)
 FORMAT = 1
 
-# La ville retenue est à 30 km au plus : en France, une commune est toujours à moins de 10 km ; ailleurs, les villes
-# connues sont plus espacées (villes d'au moins 15 000 habitants dans le reste du monde, souvent à 20-40 km l'une de
-# l'autre), et au-delà de 30 km le nom d'une ville ne dit plus où la photo a été prise (en mer, en pleine montagne).
+# La ville retenue est à 30 km au plus. Écart mesuré entre une ville et sa plus proche voisine : en France
+# métropolitaine, 2,2 km en médiane et 5,5 km pour 99 % des communes ; dans les pays proches, 3,3 et 19,7 km ; ailleurs
+# (villes de 5 000 habitants), 10 km en médiane et 35 km pour 90 % d'entre elles. Une photo prise entre deux villes
+# voisines est donc presque toujours à moins de 30 km de l'une d'elles ; au-delà, le nom d'une ville ne dit plus où la
+# photo a été prise (en mer, en pleine montagne, dans le désert).
 RAYON_KM = 30.0
 # Sans ville à moins de 30 km, le pays de la ville la plus proche est retenu jusqu'à 100 km (au large des côtes, safari,
 # désert), sans ville ni région : assez près pour que ce soit presque toujours le bon pays.
@@ -72,9 +74,9 @@ _PREFIXES = {'pays': 'p:', 'region': 'r:', 'departement': 'd:', 'ville': 'v:'}
 # Lettres que la décomposition Unicode ne sépare pas de leur accent ou de leur ligature.
 _LETTRES = str.maketrans({'œ': 'oe', 'æ': 'ae', 'ø': 'o', 'ł': 'l', 'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i',
                           'ħ': 'h', 'ŧ': 't', 'ŀ': 'l', 'ĸ': 'k'})
-_COMBINANTS = re.compile('[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]+')
+_COMBINANTS = re.compile('[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]+')
 # Tout ce qui n'est ni lettre ni chiffre sépare deux mots : apostrophes (' ’ ʼ ʻ), tirets, points, virgules, espaces…
-_SEPARATEURS = re.compile('[\\W_ʰ-˿]+')
+_SEPARATEURS = re.compile('[\\W_\u02b0-\u02ff]+')
 _ABREGES = {'st': 'saint', 'ste': 'sainte'}
 
 
