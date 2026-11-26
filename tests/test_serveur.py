@@ -905,6 +905,10 @@ class TestReponses(EssaiServeur):
         statut, _, corps = requete('GET', '/')
         self.assertEqual(statut, 200)
         page = corps.decode('utf-8')
+        # La version, sous le nom en haut à gauche, est écrite par le serveur dès l'envoi de la page (0.4.2).
+        from myphotos import config
+        self.assertIn(f'<span id="marque-version" class="marque-version">version {config.VERSION}</span>', page)
+        self.assertEqual(page.count('id="marque-version"'), 1)
         # Le logo de l'en-tête est l'icône de MyPhotos : son image de 64 px, une seule fois dans la page.
         self.assertNotIn('href="#logo"', page)
         self.assertEqual(page.count('class="logo"'), 4)

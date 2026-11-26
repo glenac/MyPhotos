@@ -3312,6 +3312,9 @@ class Page:
         texte = self._cache[1]
         if taille in TAILLES_TEXTE and taille != 'normale':
             texte = texte.replace('<html lang="fr">', f'<html lang="fr" data-taille="{taille}">', 1)
+        # La version sous le nom, en haut à gauche, dès l'affichage (config.VERSION : chiffres et points seulement).
+        texte = texte.replace('<span id="marque-version" class="marque-version"></span>',
+                              f'<span id="marque-version" class="marque-version">version {config.VERSION}</span>', 1)
         return (texte.replace('<script>', f'<script nonce="{nonce}">')
                 .replace('<style>', f'<style nonce="{nonce}">')).encode('utf-8')
 
