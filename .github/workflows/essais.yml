@@ -25,6 +25,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Tout l'historique : tests.test_lieux relit une base 0.5 avec le base.py de la 0.4.1 (git show).
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -46,7 +48,7 @@ jobs:
           MYPHOTOS_MODELES: ${{ runner.temp }}\modeles-absents
         run: |
           New-Item -ItemType Directory -Force $env:MYPHOTOS_ESSAI_UI, $env:MYPHOTOS_MODELES | Out-Null
-          python -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature
+          python -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux
 
       - name: Garde-fou de publication
         env:

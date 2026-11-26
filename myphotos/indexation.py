@@ -6,6 +6,10 @@ et les disparues. Un dossier injoignable (disque débranché, Freebox éteinte) 
 Analyse : pour chaque photo, miniature (360 px), date de prise de vue, position GPS éventuelle et
 vecteur du modèle ; les plus récentes d'abord, écrites par lots. Une analyse interrompue reprend où
 elle en était. Les photos ne sont jamais modifiées, seulement lues.
+
+Lieux (0.5.0) : ensuite (et toutes les 30 s pendant une longue analyse), la ville, le département, la
+région et le pays des photos qui ont une position GPS, sans Internet (lieux.py), par lots ; refaits quand
+les données de lieux changent de version.
 """
 import ctypes
 import io
@@ -24,7 +28,7 @@ from datetime import datetime, timedelta
 import numpy as np
 from PIL import Image, ImageFile, UnidentifiedImageError
 
-from . import config, modele
+from . import config, lieux, modele
 from .base import (chemin_affiche, chemin_systeme, cle_chemin, dedans, enregistrable, identite_volume, iso_depuis_ns,
                    maintenant, nom_long)
 
@@ -48,6 +52,8 @@ PART_ADOPTION = 0.9
 RECENTES_VOLUME = 5
 ECHANTILLON_VOLUME = 20        # photos connues, réparties, cherchées à leur chemin (memes_photos)
 VIDE_DOSSIERS_MAX = 2000       # dossier_vide : dossiers regardés au plus avant de répondre « pas vide »
+LIEUX_LOT = 2000               # photos localisées par lot (0,1 s environ : 50 µs par photo)
+LIEUX_PENDANT_S = 30.0         # pendant une longue analyse, lieux des photos déjà analysées toutes les 30 s
 
 # Formats lus (ceux de config.EXTENSIONS), quel que soit le nom du fichier. Pillow en connaît d'autres, dont EPS, qui
 # lance Ghostscript, un programme extérieur : un « .jpg » qui serait en fait un PostScript ne doit pas y arriver.
@@ -627,15 +633,19 @@ class Indexeur:
     base : base.Base ; fabrique_moteur(materiel='auto'|'processeur') -> modele.Moteur, appelée au premier
     besoin (jamais au démarrage) ; cle_modele : clé du modèle, retenue avec chaque vecteur ;
     fils_decodage : fils de lecture des images (défaut min(4, cœurs / 2)) ;
-    inventaire_auto_s : refaire l'inventaire tout seul toutes les N secondes une fois fini (None = non).
+    inventaire_auto_s : refaire l'inventaire tout seul toutes les N secondes une fois fini (None = non) ;
+    source_lieux : lieux.Lieux qui localise les photos (défaut : l'instance partagée, lieux.lieux()).
     """
 
-    def __init__(self, base, fabrique_moteur, cle_modele, fils_decodage=None, inventaire_auto_s=None):
+    def __init__(self, base, fabrique_moteur, cle_modele, fils_decodage=None, inventaire_auto_s=None,
+                 source_lieux=None):
         self.base = base
         self.fabrique_moteur = fabrique_moteur
         self.cle_modele = cle_modele
         self.fils_decodage = max(1, int(fils_decodage or min(4, max(1, (os.cpu_count() or 2) // 2))))
         self.inventaire_auto_s = inventaire_auto_s
+        self.source_lieux = source_lieux
+        self._lieux_t = 0.0                      # time.monotonic() de la dernière localisation pendant l'analyse
         self._moteur = None
         self._pool = None
         self._priorite = _Priorite()
@@ -863,6 +873,9 @@ class Indexeur:
             self._analyser()
             if self._interrompu():
                 return
+            self._localiser()
+            if self._interrompu():
+                return
             # Le moteur est GARDÉ entre deux passages : avec DirectML, détruire une session pendant qu'une autre
             # vit encore (celle de la recherche) fait planter le processus (constaté le 23/11/2026).
             self._comptes_perimes()
@@ -1060,6 +1073,37 @@ class Indexeur:
         bilan['nouvelles'] += max(0, ajoutees)
         self.base.marquer_dossier(did, disponible=True, vu=maintenant(), volume=volume)
 
+    # ------------------------------------------------ lieux (0.5.0)
+
+    def _localiser(self):
+        """Lieux des photos analysées qui ont une position GPS valide (lieux.py, sans Internet), par lots de
+        LIEUX_LOT : celles qui n'en ont pas encore, ou dont le lieu vient d'une autre version des données. S'arrête
+        à l'arrêt, à une pause ou à une demande d'inventaire (la suite au passage suivant). Une erreur est notée au
+        journal sans arrêter l'analyse. Renvoie le nombre de photos localisées."""
+        n = 0
+        try:
+            source = self.source_lieux if self.source_lieux is not None else lieux.lieux()
+            version = source.version                 # charge les données, une fois (0,2 s environ)
+            if not version:
+                return 0
+            while not self._interrompu() and self._en_marche.is_set():
+                lot = self.base.a_localiser(LIEUX_LOT, version)
+                lignes = []
+                for pid, lat, lon in lot:
+                    r = source.localiser(lat, lon) or {}
+                    lignes.append((pid, r.get('ville'), r.get('departement'), r.get('region'), r.get('pays'),
+                                   r.get('distance'), version))
+                if lignes:
+                    self.base.enregistrer_lieux(lignes)
+                    n += len(lignes)
+                if len(lot) < LIEUX_LOT:
+                    break
+        except Exception:
+            journal.exception('lieux des photos')
+        if n:
+            journal.info('lieux : %d photo(s) localisée(s)', n)
+        return n
+
     # ------------------------------------------------ analyse
 
     def _charger_moteur(self, materiel):
@@ -1209,6 +1253,10 @@ class Indexeur:
                                     'largeur': r.get('largeur'), 'hauteur': r.get('hauteur')})
                 if len(analyses) + len(erreurs) >= ECRITURE_N or time.monotonic() - derniere >= ECRITURE_S:
                     ecrire()
+                    if time.monotonic() - self._lieux_t >= LIEUX_PENDANT_S:
+                        # Longue analyse : les photos déjà analysées ont leur lieu sans attendre la fin.
+                        self._lieux_t = time.monotonic()
+                        self._localiser()
             else:
                 vectoriser()                     # fin de la file : le dernier lot, même incomplet
             ecrire()                             # en cas d'arrêt, le lot pas encore vectorisé sera refait
