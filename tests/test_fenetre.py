@@ -1165,6 +1165,37 @@ class TestPage(unittest.TestCase):
         self.assertIn('def copier_vers(self, ids):', copie)
         self.assertNotIn('retirees', copie)
 
+    def test_javascript_de_la_page(self):
+        """Le script de la page se lit sans erreur de syntaxe (node --check), s'il y a Node.js sur cette machine (les
+        machines de GitHub Actions l'ont) ; un seul script, celui qui porte le nonce de la page."""
+        import re
+        import shutil
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        scripts = re.findall(r'<script[^>]*>(.*?)</script>', page, re.S)
+        self.assertEqual(len(scripts), 1)
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node.js absent : syntaxe du script non vérifiée')
+        with tempfile.TemporaryDirectory() as d:
+            fichier = Path(d) / 'page.js'
+            fichier.write_text(scripts[0], encoding='utf-8')
+            r = subprocess.run([node, '--check', str(fichier)], capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr[-2000:])
+
+    def test_dates_et_lieux_sans_html_venu_des_donnees(self):
+        """0.5.0 : puces, lieu de la visionneuse et « Ce jour-là » écrivent leurs textes par textContent (el(), nœuds
+        texte) : un nom de lieu n'est jamais du HTML. Le seul innerHTML de la page pose les icônes constantes."""
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        self.assertEqual(page.count('innerHTML'), 1)
+        self.assertIn('t.innerHTML = ICONES[nom];', page)
+        for absent in ('insertAdjacentHTML', 'outerHTML', 'document.write', 'eval(', 'new Function'):
+            self.assertNotIn(absent, page)
+        for fonction in ('function majFiltres(', 'function puceFiltre(', 'function rendreCeJour('):
+            debut = page.index(fonction)
+            corps = page[debut:page.index('\n}\n', debut)]
+            self.assertNotIn('HTML', corps, fonction)
+        self.assertIn("$('#v-lieu-texte').textContent = lieu ? lieu.libelle : '';", page)
+
     def test_recherche_ne_garde_pas_les_anciennes_cases(self):
         """Constat R4 : avant de vider les grilles, chaque recherche désabonne leurs cases de l'observateur des
         miniatures (sinon ~31 nœuds et 5 écouteurs restent en mémoire à chaque recherche, toute la séance ; mesuré

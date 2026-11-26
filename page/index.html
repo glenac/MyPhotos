@@ -634,6 +634,61 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 .choix-taille .t-grande { font-size: 1.15em; }
 .choix-taille .t-tres-grande { font-size: 1.3em; }
 
+/* ------------------------------------------------ dates et lieux (0.5.0) */
+/* Puces des dates et des lieux reconnus dans la recherche : « 📅 Noël 2019 × », « 📍 Bretagne × ». */
+.filtres { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 18px 0 0; }
+.filtre {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: calc(44px * var(--e));
+  padding: 0 4px 0 calc(14px * var(--e)); border-radius: 999px; border: 1px solid var(--bordure);
+  background: var(--accent-doux); color: var(--texte); font-weight: 600;
+}
+.filtre-icone { flex: none; }
+.filtre-texte { min-width: 0; overflow-wrap: anywhere; }
+.filtre-retirer {
+  display: inline-grid; place-items: center; flex: none; width: calc(40px * var(--e)); height: calc(40px * var(--e));
+  border: none; border-radius: 50%; background: transparent; color: var(--texte); cursor: pointer;
+}
+.filtre-retirer:hover { background: var(--surface); color: var(--danger); }
+.filtre-retirer .icone { width: 1.3em; height: 1.3em; stroke-width: 2.4; }
+.sans-position { margin: 10px 0 0; }
+/* « Ce jour-là » : en tête de toutes les photos, les photos du même jour les années passées. */
+.ce-jour {
+  margin: 18px 0 2px; padding: 6px 18px 14px; border: 1px solid var(--bordure); border-radius: var(--rayon);
+  background: var(--surface);
+}
+.ce-jour > summary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: calc(48px * var(--e)); cursor: pointer;
+  list-style: none; border-radius: 10px;
+}
+.ce-jour > summary::-webkit-details-marker { display: none; }
+.ce-jour > summary .icone { transition: transform .2s; }
+.ce-jour[open] > summary .icone { transform: rotate(90deg); }
+.ce-jour-titre { font-size: 1.2rem; font-weight: 650; }
+.ce-jour-date { color: var(--texte-doux); }
+/* Les années côte à côte quand la place le permet (une année chargée prend toute la largeur), sinon l'une sous
+   l'autre : le bloc reste court en tête des photos. */
+.ce-jour-annees { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px 36px; margin-top: 6px; }
+.cj-annee { min-width: 0; max-width: 100%; }
+.cj-tete { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; margin: 0 0 8px; }
+.cj-titre { margin: 0; font-size: 1.08rem; }
+.cj-jour { color: var(--texte-doux); }
+.cj-tete .bouton-lien { margin-left: auto; }
+/* Une bande par année : douze miniatures au plus, qui défilent de côté sur un écran étroit. */
+.cj-bande {
+  display: grid; grid-auto-flow: column; grid-auto-columns: calc(132px * var(--e)); gap: 6px; overflow-x: auto;
+  padding-bottom: 6px; scroll-snap-type: x proximity; overscroll-behavior-x: contain;
+}
+.cj-bande .case { scroll-snap-align: start; }
+.cj-autres { flex: 1 1 100%; margin: 0; }
+/* Visionneuse : le lieu de la photo, sous sa date ; un clic montre toutes les photos de ce lieu. */
+.v-lieu { margin: 0 0 2px; }
+.v-lieu-bouton {
+  display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 2px 0; border: none;
+  background: none; color: #cfe0ff; font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+}
+.v-lieu-bouton:hover { color: #fff; }
+.v-lieu-texte { min-width: 0; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: 3px; }
+
 /* ------------------------------------------------ largeur */
 @media (max-width: 900px) {
   :root { --tuile-min: calc(132px * var(--e)); --gouttiere: 16px; }
@@ -655,6 +710,8 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 }
 @media (max-width: 560px) {
   :root { --tuile-min: calc(104px * var(--e)); }
+  .ce-jour { padding: 4px 12px 12px; }
+  .cj-bande { grid-auto-columns: calc(112px * var(--e)); }
   html { font-size: calc(106% * var(--e)); }
   .recherche .bouton { padding: 0 16px; }
   .recherche .bouton span { display: none; }
@@ -831,7 +888,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
         <div class="champ">
           <svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
           <label for="q" class="visuellement-cache">Rechercher dans vos photos</label>
-          <input id="q" type="search" placeholder="Que cherchez-vous ? Par exemple : chien" autocomplete="off" spellcheck="false" enterkeyhint="search" maxlength="200">
+          <input id="q" type="search" placeholder="Que cherchez-vous ? Par exemple : chien, Noël 2019, plage en Bretagne" autocomplete="off" spellcheck="false" enterkeyhint="search" maxlength="200">
         </div>
         <button class="bouton principal" type="submit"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Chercher</span></button>
       </form>
@@ -879,6 +936,11 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
       <button class="puce" type="button" data-q="coucher de soleil">coucher de soleil</button>
       <button class="puce" type="button" data-q="fleurs">fleurs</button>
     </div>
+    <!-- « Ce jour-là » (0.5.0) : en tête de toutes les photos, celles prises le même jour les années passées. -->
+    <details id="ce-jour" class="ce-jour" open hidden>
+      <summary><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg><span class="ce-jour-titre">Ce jour-là</span><span id="ce-jour-date" class="ce-jour-date"></span></summary>
+      <div id="ce-jour-annees" class="ce-jour-annees"></div>
+    </details>
     <div id="semblables-tete" class="semblables-tete" hidden>
       <button id="semblables-retour" class="bouton" type="button"><svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg><span id="semblables-retour-texte">Revenir à toutes les photos</span></button>
       <div class="semblables-ligne">
@@ -886,6 +948,10 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
         <h1 id="semblables-titre" tabindex="-1">Photos qui ressemblent à celle-ci</h1>
       </div>
     </div>
+    <!-- Dates et lieux reconnus dans la recherche (0.5.0) : une puce chacun ; × la retire (ses mots sont alors cherchés
+         dans les photos, comme avant). -->
+    <div id="filtres" class="filtres" role="group" aria-label="Dates et lieux de la recherche" hidden></div>
+    <p id="sans-position" class="note sans-position" hidden></p>
     <div class="ligne-compte">
       <p id="compte" class="compte" aria-live="polite"></p>
       <p id="maj" class="maj" hidden>De nouvelles photos sont prêtes. <button id="maj-bouton" class="bouton-lien" type="button">Mettre à jour</button></p>
@@ -947,6 +1013,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   <div class="v-infos">
     <div class="v-texte">
       <p id="v-date" class="v-date"></p>
+      <p id="v-lieu" class="v-lieu" hidden><button id="v-lieu-bouton" class="v-lieu-bouton" type="button" title="Voir toutes les photos prises à cet endroit"><span aria-hidden="true">📍</span><span id="v-lieu-texte" class="v-lieu-texte"></span></button></p>
       <p id="v-dossier" class="v-dossier"></p>
     </div>
     <span id="v-position" class="v-position"></span>
@@ -2051,17 +2118,24 @@ const R = {
   // « Plus comme celle-ci » : photo de référence, sa fiche {id, date}, l'écran d'où l'on vient (bouton « Revenir »),
   // et le message du serveur quand rien ne peut encore être montré.
   semblables: null, reference: null, retour: null, messageSemblables: null,
+  // Dates et lieux (0.5.0) : textes des puces retirées (renvoyés au serveur : ils redeviennent des mots), puces de la
+  // dernière réponse, mots cherchés dans les photos une fois les dates et les lieux retirés, photos sans position GPS.
+  ignorer: [], puces: [], mots: null, sansPosition: null,
 };
+const IGNORER_MAX = 8;             // puces retirées gardées dans l'adresse (le serveur en accepte 10)
 const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
 const infosPhotos = new Map();
 
-/** Adresse d'une recherche, des photos semblables à une photo (#semblables=…) ou d'une photo ; sur l'écran
- *  « Doublons » : #doublons, ou #doublons&photo=… */
-function adresse(q, photo, semblables = R.semblables) {
+/** Adresse d'une recherche (avec ses puces retirées : &sans=…), des photos semblables à une photo (#semblables=…) ou
+ *  d'une photo ; sur l'écran « Doublons » : #doublons, ou #doublons&photo=… */
+function adresse(q, photo, semblables = R.semblables, ignorer = R.ignorer) {
   if (E.vue === 'doublons') return photo ? `#doublons&photo=${photo}` : '#doublons';
   const p = new URLSearchParams();
   if (semblables) p.set('semblables', String(semblables));
-  else if (q) p.set('q', q);
+  else if (q) {
+    p.set('q', q);
+    for (const x of ignorer || []) p.append('sans', x);
+  }
   if (photo) p.set('photo', String(photo));
   const s = p.toString();
   return s ? '#' + s : location.pathname;
@@ -2070,9 +2144,14 @@ function lireAdresse() {
   const p = new URLSearchParams(location.hash.slice(1));
   const id = p.get('photo') || '', ref = p.get('semblables') || '';
   return {q: (p.get('q') || '').trim().replace(/\s+/g, ' ').slice(0, 200), photo: /^[1-9]\d{0,17}$/.test(id) ? +id : null,
-    semblables: /^[1-9]\d{0,17}$/.test(ref) ? +ref : null,
+    ignorer: textesIgnores(p.getAll('sans')), semblables: /^[1-9]\d{0,17}$/.test(ref) ? +ref : null,
     reglages: p.has('reglages'), moteurs: p.has('moteurs'), doublons: p.has('doublons')};
 }
+
+/** Textes de puces retirées : propres, sans doublon, IGNORER_MAX au plus. */
+const textesIgnores = (liste) => [...new Set((liste || []).map((x) => String(x).trim().replace(/\s+/g, ' ').slice(0, 200))
+  .filter(Boolean))].slice(0, IGNORER_MAX);
+const memesTextes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 function synchroniser() {
   if (E.ecran !== 'appli') return;
@@ -2083,8 +2162,8 @@ function synchroniser() {
     if (E.vue !== 'photos') montrerPhotos();
     if (a.semblables) {
       if (a.semblables !== R.semblables) chercher('', null, a.semblables);
-    } else if (a.q !== R.q || R.semblables) {
-      chercher(a.q, null);
+    } else if (a.q !== R.q || R.semblables || !memesTextes(a.ignorer, R.ignorer)) {
+      chercher(a.q, null, null, a.ignorer);
     }
   }
   const v = $('#visionneuse');
@@ -2102,18 +2181,23 @@ window.addEventListener('popstate', synchroniser);
 window.addEventListener('hashchange', synchroniser);
 
 /** Recherche (q), toutes les photos (q vide) ou, avec `semblables` (identifiant d'une photo), les photos qui lui
- *  ressemblent le plus (« Plus comme celle-ci »). */
-function chercher(q, historique = 'pousser', semblables = null) {
+ *  ressemblent le plus (« Plus comme celle-ci »). ignorer : textes des puces retirées (0.5.0), cherchés comme des mots. */
+function chercher(q, historique = 'pousser', semblables = null, ignorer = []) {
   q = semblables ? '' : (q || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  ignorer = q ? textesIgnores(ignorer) : [];
   if (E.vue !== 'photos') montrerPhotos();  // une recherche depuis l'écran « Doublons » ramène aux photos
-  // Autre recherche : la sélection ne suit pas ; même liste mise à jour : elle reste.
-  if (q !== R.q || semblables !== R.semblables) viderSelection();
+  // Autre recherche (ou puce retirée) : la sélection ne suit pas ; même liste mise à jour : elle reste.
+  if (q !== R.q || semblables !== R.semblables || !memesTextes(ignorer, R.ignorer)) viderSelection();
   if (semblables !== R.semblables) {
     R.retour = semblables ? (history.state && history.state.retour) || null : null;
     R.reference = null;
   }
   $('#q').value = q;
   R.q = q;
+  R.ignorer = ignorer;
+  R.puces = [];
+  R.mots = null;
+  R.sansPosition = null;
   R.semblables = semblables;
   R.messageSemblables = null;
   R.mode = semblables ? 'semblables' : q ? 'recherche' : 'dates';
@@ -2143,7 +2227,9 @@ function chercher(q, historique = 'pousser', semblables = null) {
   $('#maj').hidden = true;
   $('#compte').textContent = semblables ? 'Recherche des photos qui se ressemblent…'
     : q ? `Recherche de « ${q} »…` : 'Chargement des photos…';
+  majFiltres(null);
   majTeteSemblables();
+  if (R.mode === 'dates') chargerCeJour(); else majCeJour();
   for (const b of document.querySelectorAll('.puce')) b.setAttribute('aria-pressed', String(b.dataset.q === q));
   if (historique === 'pousser' && location.hash !== adresse(q) && !(location.hash === '' && !q)) history.pushState(null, '', adresse(q));
   else if (historique === 'remplacer') history.replaceState(null, '', adresse(q));
@@ -2153,14 +2239,19 @@ function chercher(q, historique = 'pousser', semblables = null) {
 function rafraichir() {
   if (R.mode === null) return;
   const y = window.scrollY;
-  chercher(R.q, null, R.semblables);
+  chercher(R.q, null, R.semblables, R.ignorer);
   if (y < 400) window.scrollTo(0, 0);
 }
 
-function urlPage(debut, n) {
+function urlPage(debut, n, proches = false) {
   if (R.mode === 'semblables') return `/api/semblables/${R.semblables}?debut=${debut}&n=${n}`;
-  return R.mode === 'dates' ? `/api/photos?debut=${debut}&n=${n}`
-    : `/api/recherche?q=${encodeURIComponent(R.q)}&debut=${debut}&n=${n}`;
+  if (!R.q) return `/api/photos?debut=${debut}&n=${n}`;
+  const p = new URLSearchParams({q: R.q});
+  for (const x of R.ignorer) p.append('ignorer', x);
+  if (proches) p.set('proches', '1');
+  p.set('debut', String(debut));
+  p.set('n', String(n));
+  return `/api/recherche?${p}`;    // dates et lieux seuls : le serveur répond par date (mode « dates »)
 }
 
 async function chargerPrincipal() {
@@ -2171,6 +2262,8 @@ async function chargerPrincipal() {
   try {
     const d = await api(urlPage(L.suivant, N_PAGE));
     if (jeton !== R.jeton) return;
+    if (Array.isArray(d.puces)) majFiltres(d);
+    if (d.mode === 'dates' && R.q) R.mode = 'dates';    // dates et lieux seuls : leurs photos, par date
     if (d.preparation) attendrePreparation(L, chargerPrincipal);
     else if (d.mode === 'dates') ajouterDates(d);
     else if (d.mode === 'semblables') ajouterSemblables(d);
@@ -2217,7 +2310,7 @@ function attendrePreparation(L, relancer) {
   if (L === R.principal) {
     $('#compte').replaceChildren(el('span', {classe: 'roue', 'aria-hidden': 'true'}),
       R.mode === 'semblables' ? 'Préparation… Les photos qui se ressemblent arrivent dans un instant.'
-        : R.q ? `Préparation… La recherche de « ${R.q} » commence dans un instant.` : 'Préparation…');
+        : R.q ? `Préparation… La recherche de « ${motsCherches()} » commence dans un instant.` : 'Préparation…');
   }
   const jeton = R.jeton;
   clearTimeout(R.relance);
@@ -2234,7 +2327,7 @@ function voirProches() {
   R.prochesDemandees = true;
   if (!$('#vide').hidden) {                  // aucun résultat : le grand message laisse la place aux photos proches
     $('#vide').hidden = true;
-    $('#compte').textContent = `Aucune photo ne correspond à « ${R.q} ».`;
+    $('#compte').textContent = `Aucune photo ne correspond à « ${motsCherches()} ».`;
   }
   majProches();
   $('#proches-titre').focus({preventScroll: true});
@@ -2247,7 +2340,7 @@ async function chargerProches() {
   L.enCours = true;
   const jeton = R.jeton;
   try {
-    const d = await api(`/api/recherche?q=${encodeURIComponent(R.q)}&proches=1&debut=${L.suivant}&n=${N_PROCHES}`);
+    const d = await api(urlPage(L.suivant, N_PROCHES, true));
     if (jeton !== R.jeton) return;
     if (d.preparation) { attendrePreparation(L, chargerProches); return; }
     ajouterTuiles(L, d.proches || [], $('#grille-proches'), 'proches');
@@ -2276,7 +2369,7 @@ function majProches() {
   s.classList.toggle('seule', rien);
   $('#proches-appel').hidden = R.prochesDemandees;
   $('#proches-liste').hidden = !R.prochesDemandees;
-  $('#proches-note').textContent = `Elles ne correspondent sans doute pas à « ${R.q} » : ce sont seulement celles qui s’en approchent le plus.`;
+  $('#proches-note').textContent = `Elles ne correspondent sans doute pas à « ${motsCherches()} » : ce sont seulement celles qui s’en approchent le plus.`;
   $('#proches-suite').hidden = !R.prochesDemandees || L.fin || !L.ids.length;
 }
 
@@ -2466,7 +2559,8 @@ function texteRetour() {
  *  L'entrée de l'historique de la photo devient celle de ces photos : « Revenir » (ou Échap) ramène à la liste d'avant. */
 function voirSemblables(id) {
   if (!id) return;
-  const retour = E.vue === 'doublons' ? {doublons: true} : R.semblables ? {semblables: R.semblables} : {q: R.q || ''};
+  const retour = E.vue === 'doublons' ? {doublons: true} : R.semblables ? {semblables: R.semblables}
+    : {q: R.q || '', ignorer: R.ignorer};
   const v = $('#visionneuse');
   const remplacer = v.open && V.pousse;
   if (v.open) {
@@ -2494,7 +2588,7 @@ function revenirDesSemblables() {
   } else if (r.semblables) {
     chercher('', 'pousser', r.semblables);
   } else {
-    chercher(r.q || '', 'pousser');
+    chercher(r.q || '', 'pousser', null, r.ignorer || []);
   }
   window.scrollTo(0, 0);
 }
@@ -2523,6 +2617,14 @@ function majCompte() {
     c.replaceChildren(el('strong', {texte: pluriel(n, 'photo')}));
     if (n) { vide.hidden = true; return; }
     c.replaceChildren();
+    if (R.q) {                                // dates et lieux seuls (0.5.0) : aucune photo ne correspond
+      remplacer(vide, icone('loupe'), el('h2', {texte: `Aucune photo ne correspond à « ${R.q} »`}),
+        el('p', {texte: R.puces.length ? 'Retirez une date ou un lieu (×) pour élargir la recherche.'
+          : 'Essayez un autre mot, par exemple « plage » ou « fleurs ».'}),
+        incomplet ? el('p', {classe: 'note', texte: 'L’analyse n’est pas finie : d’autres photos pourront apparaître.'}) : null);
+      vide.hidden = false;
+      return;
+    }
     if (!s.nb_dossiers) {
       vide.replaceChildren(icone('dossier'), el('h2', {texte: 'Aucun dossier de photos'}),
         el('p', {texte: 'Indiquez à MyPhotos où se trouvent vos photos.'}),
@@ -2542,10 +2644,10 @@ function majCompte() {
   const moinsSures = (n) => `${pluriel(n, 'photo')} moins sûre${n > 1 ? 's' : ''}`;
   let morceaux;
   if (sures) {
-    morceaux = [el('strong', {texte: pluriel(sures, 'photo')}), ` pour « ${R.q} »`];
+    morceaux = [el('strong', {texte: pluriel(sures, 'photo')}), ` pour « ${motsCherches()} »`];
     if (peut) morceaux.push(` · ${moinsSures(peut)}`);
   } else if (peut) {
-    morceaux = [`Aucune photo sûre pour « ${R.q} » · `, el('strong', {texte: moinsSures(peut)})];
+    morceaux = [`Aucune photo sûre pour « ${motsCherches()} » · `, el('strong', {texte: moinsSures(peut)})];
   } else {
     morceaux = [];                            // le grand message « Aucune photo ne correspond… » suffit
   }
@@ -2557,8 +2659,9 @@ function majCompte() {
   $('#moins-sures-titre').textContent = `Moins sûres (${nombre.format(peut)})`;
   if (!sures && peut && !details.open) details.open = true;
   if (!sures && !peut) {
-    remplacer(vide, icone('loupe'), el('h2', {texte: `Aucune photo ne correspond à « ${R.q} »`}),
-      el('p', {texte: 'Essayez un autre mot, par exemple « plage » ou « fleurs ».'}),
+    remplacer(vide, icone('loupe'), el('h2', {texte: `Aucune photo ne correspond à « ${motsCherches()} »`}),
+      el('p', {texte: R.puces.length ? 'Retirez une date ou un lieu (×) pour élargir la recherche, ou essayez un autre mot.'
+        : 'Essayez un autre mot, par exemple « plage » ou « fleurs ».'}),
       incomplet ? el('p', {classe: 'note', texte: 'L’analyse n’est pas finie : d’autres photos pourront apparaître.'}) : null,
       R.totalProches > 0 ? el('button', {classe: 'bouton', type: 'button', onclick: voirProches},
         'Voir les photos les plus proches') : null);
@@ -2651,14 +2754,129 @@ function majBandeau(e) {
   bouton.onclick = action ? action.faire : null;
 }
 
+// ============================================================ dates et lieux (0.5.0)
+/** Mots cherchés dans les photos : la recherche sans ses dates ni ses lieux (« plage » pour « plage en Bretagne »). */
+const motsCherches = () => R.mots || R.q;
+
+/** Puces des dates et des lieux reconnus dans la recherche, et phrase des photos sans position GPS ; d = réponse du
+ *  serveur, ou null pour tout effacer. Textes par textContent seulement (un nom de lieu n'est jamais du HTML). */
+function majFiltres(d) {
+  if (d) {
+    R.puces = (d.puces || []).filter((p) => p && typeof p.libelle === 'string' && typeof p.texte === 'string');
+    R.mots = typeof d.mots === 'string' && d.mots ? d.mots : null;
+    R.sansPosition = Number.isInteger(d.sans_position) ? d.sans_position : null;
+  }
+  const zone = $('#filtres');
+  remplacer(zone, R.puces.map(puceFiltre));
+  zone.hidden = !R.puces.length;
+  const note = $('#sans-position'), n = R.sansPosition;
+  note.hidden = !(n > 0 && R.puces.some((p) => p.type === 'lieu'));
+  if (!note.hidden) {
+    note.textContent = n > 1 ? `${nombre.format(n)} photos n’ont pas de position GPS : elles ne peuvent pas être retrouvées par lieu.`
+      : '1 photo n’a pas de position GPS : elle ne peut pas être retrouvée par lieu.';
+  }
+}
+
+function puceFiltre(p) {
+  const lieu = p.type === 'lieu';
+  return el('span', {classe: `filtre ${lieu ? 'lieu' : 'date'}`},
+    el('span', {classe: 'filtre-icone', 'aria-hidden': 'true', texte: lieu ? '📍' : '📅'}),
+    el('span', {classe: 'visuellement-cache', texte: lieu ? 'Lieu : ' : 'Date : '}),
+    el('span', {classe: 'filtre-texte', texte: p.libelle}),
+    el('button', {classe: 'filtre-retirer', type: 'button', 'aria-label': `Retirer « ${p.libelle} »`,
+      title: `Retirer « ${p.libelle} » : ces mots seront cherchés dans les photos`, onclick: () => retirerFiltre(p)},
+    icone('croix')));
+}
+
+/** × d'une puce : la même recherche, sans ce filtre ; son texte redevient un mot. */
+function retirerFiltre(p) {
+  chercher(R.q, 'pousser', null, [...R.ignorer, p.texte]);
+  $('#q').focus({preventScroll: true});
+}
+
+// ---------------- « Ce jour-là » : en tête de toutes les photos, les photos du même jour les années passées
+const CJ = {jour: null, annees: [], groupes: new Map(), jeton: 0, tout: false};
+const CE_JOUR_ANNEES = 3;          // années montrées d'abord ; les autres derrière « Voir les autres années »
+
+async function chargerCeJour() {
+  const jeton = ++CJ.jeton;
+  try {
+    const d = await api('/api/ce-jour');
+    if (jeton !== CJ.jeton) return;
+    CJ.jour = d.jour || null;
+    CJ.annees = Array.isArray(d.annees) ? d.annees : [];
+  } catch (err) {
+    if (jeton !== CJ.jeton) return;
+    CJ.annees = [];                         // rien à montrer : jamais un message pour un à-côté
+  }
+  rendreCeJour();
+}
+
+function rendreCeJour() {
+  for (const a of document.querySelectorAll('#ce-jour-annees a.tuile')) observateurImages.unobserve(a);
+  CJ.groupes = new Map();
+  const zone = $('#ce-jour-annees');
+  const sections = [];
+  for (const g of CJ.annees) {
+    const photos = (g.photos || []).filter((p) => p && Number.isSafeInteger(p.id));
+    if (!photos.length) continue;
+    const groupe = `cejour:${g.annee}`;
+    CJ.groupes.set(groupe, {ids: photos.map((p) => p.id), total: photos.length, fin: true});
+    const jour = dateLongue(g.jour);
+    const titre = majuscule(g.libelle || '');
+    const total = Number.isInteger(g.total) ? g.total : photos.length;
+    sections.push(el('section', {classe: 'cj-annee', 'aria-label': `${titre}, ${jour}`,
+      hidden: !CJ.tout && sections.length >= CE_JOUR_ANNEES},
+      el('div', {classe: 'cj-tete'}, el('h3', {classe: 'cj-titre', texte: titre}),
+        el('span', {classe: 'cj-jour', texte: `${jour} · ${pluriel(total, 'photo')}`}),
+        total > photos.length ? el('button', {classe: 'bouton-lien', type: 'button',
+          onclick: () => { chercher(dateCourte(g.jour)); window.scrollTo(0, 0); }},
+        `Voir les ${nombre.format(total)} photos de ce jour`) : null),
+      el('div', {classe: 'cj-bande'}, photos.map((p) => tuile(p, groupe)))));
+  }
+  const cachees = sections.filter((s) => s.hidden).length;
+  const autres = cachees ? el('p', {classe: 'cj-autres'}, el('button', {classe: 'bouton', type: 'button', onclick: (ev) => {
+    CJ.tout = true;
+    for (const s of zone.querySelectorAll('.cj-annee[hidden]')) s.hidden = false;
+    ev.currentTarget.closest('.cj-autres').remove();
+    setTimeout(() => chargerSiVisibles([...zone.querySelectorAll('.case')]), 30);
+  }}, cachees > 1 ? `Voir les ${nombre.format(cachees)} autres années` : 'Voir l’autre année')) : null;
+  remplacer(zone, sections, autres);
+  const d = lireDate(CJ.jour);
+  $('#ce-jour-date').textContent = d ? `Le ${d.j === 1 ? '1er' : d.j} ${MOIS[d.m - 1]}, les années passées` : '';
+  majCeJour();
+  setTimeout(() => chargerSiVisibles([...zone.querySelectorAll('.case')]), 30);
+}
+
+/** Le bloc ne se montre que sur toutes les photos, et seulement s'il a des photos. */
+function majCeJour() {
+  $('#ce-jour').hidden = !(R.mode === 'dates' && !R.q && !R.semblables && CJ.groupes.size);
+}
+
+/** Visionneuse : clic sur le lieu de la photo, toutes les photos de ce lieu. */
+function chercherLieu() {
+  const q = V.lieu && V.lieu.recherche;
+  if (!q) return;
+  const v = $('#visionneuse');
+  const remplacerEntree = v.open && V.pousse;
+  if (v.open) {
+    V.pousse = false;
+    fermerVisionneuse(false);
+  }
+  chercher(q, remplacerEntree ? 'remplacer' : 'pousser');
+  window.scrollTo(0, 0);
+}
+
 // ============================================================ visionneuse
-const V = {id: null, groupe: null, pousse: false, jeton: 0, retiree: null};   // retiree : sa place dans la liste
+const V = {id: null, groupe: null, pousse: false, jeton: 0, retiree: null, lieu: null};   // retiree : sa place dans la liste
 // Groupe « doublons:<id> » : la visionneuse passe d'une photo à l'autre du même groupe de doublons.
 const estDoublons = (groupe) => typeof groupe === 'string' && groupe.startsWith('doublons:');
+const estCeJour = (groupe) => typeof groupe === 'string' && groupe.startsWith('cejour:');
 const listeGroupe = (groupe) => (groupe === 'principal' ? R.principal : groupe === 'peut' ? R.peut
-  : groupe === 'proches' ? R.proches : estDoublons(groupe) ? listeDoublons(groupe.slice(9)) : null);
+  : groupe === 'proches' ? R.proches : estDoublons(groupe) ? listeDoublons(groupe.slice(9))
+    : estCeJour(groupe) ? CJ.groupes.get(groupe) || null : null);
 const listeDe = (groupe) => { const L = listeGroupe(groupe); return L ? L.ids : null; };
-const chargeurDe = (groupe) => (estDoublons(groupe) ? async () => {} : groupe === 'peut' ? chargerPeut
+const chargeurDe = (groupe) => (estDoublons(groupe) || estCeJour(groupe) ? async () => {} : groupe === 'peut' ? chargerPeut
   : groupe === 'proches' ? chargerProches : chargerPrincipal);
 function groupeDe(id) {
   if (E.vue === 'doublons') {
@@ -2723,10 +2941,18 @@ function montrerPhoto(id) {
   $('#v-date').textContent = connue ? dateLongue(connue.date) : '';
   $('#v-dossier').textContent = '';
   $('#v-dossier').title = '';
+  V.lieu = null;
+  $('#v-lieu').hidden = true;
   majNavigation();
   api(`/api/photo/${id}`).then((p) => {
     if (V.jeton !== jeton) return;
     $('#v-date').textContent = dateLongue(p.date);
+    // Lieu de la photo (0.5.0) : « Brest, Finistère, Bretagne, France » ; un clic montre les photos de ce lieu.
+    const lieu = p.lieu && typeof p.lieu.libelle === 'string' && typeof p.lieu.recherche === 'string' ? p.lieu : null;
+    V.lieu = lieu;
+    $('#v-lieu-texte').textContent = lieu ? lieu.libelle : '';
+    $('#v-lieu-bouton').setAttribute('aria-label', lieu ? `${lieu.libelle} : voir toutes les photos prises à cet endroit` : '');
+    $('#v-lieu').hidden = !lieu;
     const dossier = $('#v-dossier');
     dossier.textContent = `Dossier : ${p.dossier}`;
     dossier.title = `${p.dossier}\\${p.nom}`;
@@ -2798,6 +3024,7 @@ function photosRetirees(ids, message) {
     e.hidden = false;
     for (const b of BOUTONS_VISIONNEUSE) $(b).disabled = true;
     $('#v-date').textContent = '';
+    $('#v-lieu').hidden = true;
     $('#v-dossier').textContent = '';
   }
   retirerPhotos(ids);
@@ -3416,6 +3643,13 @@ function retirerPhotos(ids) {
     R.proches.suivant = Math.max(0, R.proches.suivant - retirees.proches);
     R.totalProches = Math.max(0, R.totalProches - retirees.proches);
   }
+  for (const [g, L] of CJ.groupes) {
+    L.ids = L.ids.filter((x) => !partis.has(x));
+    L.total = L.ids.length;
+    if (!L.ids.length) CJ.groupes.delete(g);
+  }
+  for (const s of [...document.querySelectorAll('#ce-jour-annees .cj-annee')]) if (!s.querySelector('.case')) s.remove();
+  majCeJour();
   for (const id of partis) infosPhotos.delete(id);
   changerSelection([...partis], false);
   if (R.mode !== null) majCompte();
@@ -4212,6 +4446,7 @@ function brancher() {
   $('#v-suiv').addEventListener('click', () => photoVoisine(1));
   $('#v-fermer').addEventListener('click', () => fermerVisionneuse());
   $('#v-semblables').addEventListener('click', () => voirSemblables(V.id));
+  $('#v-lieu-bouton').addEventListener('click', chercherLieu);
   $('#v-diaporama').addEventListener('click', lancerDiaporama);
   $('#semblables-retour').addEventListener('click', revenirDesSemblables);
 

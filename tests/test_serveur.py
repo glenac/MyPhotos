@@ -4223,6 +4223,18 @@ class TestDatesEtLieuxHttp(unittest.TestCase):
         self.assertIsNone(self.proc.poll())
 
 
+    def test_page(self):
+        page = requete('GET', '/', **self.kw)[2].decode('utf-8')
+        for attendu in ('id="filtres"', 'id="sans-position"', 'id="ce-jour"', 'Ce jour-là', 'id="v-lieu"',
+                        "'/api/ce-jour'", "p.append('ignorer', x)", 'Noël 2019, plage en Bretagne'):
+            self.assertIn(attendu, page)
+        # Textes des puces et du lieu par textContent seulement : jamais innerHTML hors des icônes constantes.
+        self.assertEqual(page.count('innerHTML'), 1)
+        self.assertIn("t.innerHTML = ICONES[nom];", page)
+        self.assertNotIn('insertAdjacentHTML', page)
+        self.assertNotIn('outerHTML', page)
+
+
 class TestDatesEtLieuxVitesse(unittest.TestCase):
     """Vitesse de la liste filtrée et de « Ce jour-là » sur 50 000 photos factices (vecteurs de 8 dimensions, lieux
     écrits directement) ; bornes larges pour une machine lente. Mesures sur 100 000 photos : docs/ARCHITECTURE.md."""
