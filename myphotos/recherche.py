@@ -3,6 +3,10 @@
 Le cosinus entre les deux vecteurs donne un score ; modele.probabilite le convertit en probabilité
 (0 à 1, calibrée par le modèle) que la photo corresponde. Deux seuils, réglés pour chaque moteur
 (REGLAGES), séparent les résultats sûrs des « peut-être ».
+
+Dates et lieux (0.5.0) : requete.py lit les dates et les lieux d'une recherche ; la recherche par mots peut alors être
+limitée aux photos de ces dates et de ces lieux (Filtre), avec les mêmes seuils et le même classement. Ce module donne
+aussi la façon dont MyPhotos reconnaît un lieu dans une recherche (chercheur_lieux, idents_des_lieux).
 """
 import re
 import threading
@@ -12,6 +16,7 @@ from collections import OrderedDict
 
 import numpy as np
 
+from . import lieux as _lieux
 from . import modele
 
 # Réglages par moteur, mesurés sur un jeu d'images publiques étiquetées (outils/evaluation.py, résumé dans
@@ -120,7 +125,7 @@ class Recherche:
 
     # ------------------------------------------------ recherche
 
-    def chercher(self, texte, debut=0, n=200, proches=False):
+    def chercher(self, texte, debut=0, n=200, proches=False, filtre=None):
         """Photos qui correspondent au texte, de la plus probable à la moins probable.
 
         Renvoie None si le texte est vide (afficher alors les photos par date), sinon
@@ -132,6 +137,9 @@ class Recherche:
         proches=True : ces photos restantes, de la plus proche à la moins proche, pour qui veut aller voir au-delà
         des résultats ({…, proches: [...]} ; la page [debut, debut + n) court sur elles seules). Les seuils
         (REGLAGES) sont les mêmes : rien n'est « repêché » parmi les résultats.
+
+        filtre (0.5.0) : Filtre (ou tout objet qui a masque(ids, dates)) : seules les photos qu'il garde sont
+        classées, avec les mêmes seuils ; analysees compte alors ces photos-là. Sans filtre, rien ne change.
         """
         t0 = time.perf_counter()
         requete = normaliser_requete(texte)
@@ -141,11 +149,15 @@ class Recherche:
         n = None if n is None else max(0, int(n))
         r = reglages(self.cle_modele)
         q = self._vecteur_texte(requete, r['gabarit'])
-        ids, mat = self._vecteurs()
+        ids, mat, dates = self._vecteurs_dates()
         if mat is None or len(ids) == 0 or mat.shape[1] != q.shape[0]:
             scores = np.empty(0, np.float32)
         else:
             scores = mat @ q
+        if filtre is not None:
+            # Le produit porte sur toute la matrice (la copier coûterait plus) ; on ne garde que les photos filtrées.
+            garde_f = np.flatnonzero(np.asarray(filtre.masque(ids, dates), dtype=bool)) if len(scores) else []
+            ids, scores = ids[garde_f], scores[garde_f]
         proba = modele.probabilite(scores, self.cle_modele) if len(scores) else np.empty(0)
         garde = np.flatnonzero(proba >= r['seuil_peut_etre'])
         minimum = int(r.get('minimum') or 0)
@@ -250,10 +262,18 @@ class Recherche:
 
     def _vecteurs_numerotes(self):
         """(ids, matrice, numéro du chargement), lus ensemble : le numéro change à chaque rechargement."""
+        return self._charger()[:3]
+
+    def _vecteurs_dates(self):
+        """(ids, matrice, dates datetime64 de prise de vue, sinon du fichier), lus ensemble (0.5.0)."""
+        ids, mat, _numero, dates = self._charger()
+        return ids, mat, dates
+
+    def _charger(self):
         with self._verrou_matrice:
             t = time.monotonic()
             if self._matrice is not None and t - self._controle < self._intervalle:
-                return self._ids, self._matrice, self._chargement
+                return self._ids, self._matrice, self._chargement, self._dates
             self._controle = t
             g = self.base.generation()
             if self._matrice is None or g != self._generation:
@@ -262,7 +282,7 @@ class Recherche:
                 self._ids, self._matrice, self._dates, self._generation = ids, mat, dates, g
                 self._chargement += 1
                 self._intervalle = max(RECHARGEMENT_MIN_S, 3 * (time.perf_counter() - debut))
-            return self._ids, self._matrice, self._chargement
+            return self._ids, self._matrice, self._chargement, self._dates
 
     # ------------------------------------------------ entretien
 
@@ -297,3 +317,118 @@ class Recherche:
         fil = threading.Thread(target=travail, name='myphotos-prechauffage', daemon=True)
         fil.start()
         return fil
+
+
+# ---------------------------------------------------------------- dates et lieux d'une recherche (0.5.0)
+
+class Filtre:
+    """Photos auxquelles une recherche par mots est limitée : dates (requete.FiltreDates, ou None) et identifiants des
+    photos des lieux (n'importe quel itérable, ou None : pas de filtre de lieu). masque(ids, dates) -> booléens, pour
+    les vecteurs en mémoire (dates datetime64 de base.vecteurs : prise de vue, sinon date du fichier, en heure locale)."""
+
+    def __init__(self, dates=None, ids=None):
+        self.dates = dates if dates else None
+        self.ids = None if ids is None else np.fromiter((int(i) for i in ids), np.int64)
+
+    def masque(self, ids, dates):
+        m = np.ones(len(ids), dtype=bool)
+        if self.dates is not None:
+            m &= self.dates.masque(dates)
+        if self.ids is not None:
+            m &= np.isin(ids, self.ids)
+        return m
+
+
+# Noms de lieux qui sont aussi des mots de tous les jours (formes de lieux.normaliser) : un lieu seulement avec une
+# majuscule (« Orange », « photos de Nice ») ou une préposition sans article (« à orange », « en vienne ») ; « à la
+# plage », « au port », « à l'aube », « un lot de photos », « avion » restent des mots. Les autres noms de lieux sont
+# reconnus tels quels, mais seulement là où il y a des photos : la liste ne garde que les collisions probables (mots
+# cherchés dans des photos, noms de communes, de départements ou de villes connues). Une erreur reste possible
+# (« Nancy », « Florence » sont aussi des prénoms) : le × de la puce la défait.
+MOTS_COURANTS = frozenset("""
+    orange mer nice tours pau vienne sens bar port ile plage
+    reunion montagne campagne bourg mont bois foret jardin riviere fontaine falaise rocher plaine lac plan rue cours pont
+    chateau ecole college ville vignes champs marche cascade volcan bains moulins salon piano avion train velo cheval ski
+    nord sud est ouest centre cher lot somme aube landes allier creuse manche
+    champagne bordeaux cognac camembert brie roquefort munster chablis chantilly vichy perrier
+    grand bonne belle eu ri vitre vire cannes rennes lourdes corse lys rose condom tulle ham gap
+    mobile alliance normal bath reading spa deal march street best essen chili
+    """.split()) | {'le port', 'la plage', 'la mer', 'la montagne', 'la cote', 'la tour', 'la reunion'}
+
+
+def _parents(e):
+    """Idents de ce qui contient l'endroit e (département, région, pays)."""
+    return {x for x in (e.departement, e.region, None if e.type == 'pays' else 'p:' + e.pays) if x}
+
+
+def chercheur_lieux(presents, source=None):
+    """chercher_lieu pour requete.analyser : comment MyPhotos reconnaît un lieu dans une recherche.
+
+    presents : {ident: nombre de photos} (base.lieux_presents) ; source : lieux.Lieux (défaut : l'instance partagée).
+    Un nom n'est un lieu que s'il y a des photos (une recherche ne se vide jamais à cause d'un lieu sans photo), et
+    seulement avec une majuscule ou une préposition sans article si c'est aussi un mot courant (MOTS_COURANTS).
+    Entre homonymes (Paris en France et au Texas, Brest en Bretagne et en Biélorussie), celui qui a le plus de photos ;
+    à égalité, le plus grand (pays, région, département, puis ville la plus peuplée, ordre de lieux.chercher). Un nom
+    qui en désigne plusieurs à la fois les réunit : une commune nouvelle et ses anciennes communes (« Annecy », avec
+    Seynod et Annecy-le-Vieux ; « Les Sables-d'Olonne »), un nom de région d'autrefois (« Alsace » : Bas-Rhin et
+    Haut-Rhin ; « Provence »). Renvoie None, ou {'libelle', 'idents', 'candidats', 'nombres', 'photos'} : libelle pour
+    la puce, idents à réunir, candidats (Endroit de lieux.py qui ont des photos) et leurs nombres de photos (pour
+    idents_des_lieux), photos des lieux réunis."""
+    if source is None:
+        source = _lieux.lieux()
+
+    def chercher(nom, indices):
+        if not presents or not nom:
+            return None
+        if nom in MOTS_COURANTS and not (indices.get('majuscule')
+                                         or (indices.get('preposition') and not indices.get('article'))):
+            return None
+        candidats = [e for e in source.chercher(nom) if presents.get(e.ident)]
+        if not candidats:
+            return None
+        exacts = [e for e in candidats if _lieux.normaliser(e.nom) == nom]
+        meilleur = max(exacts or candidats, key=lambda e: presents[e.ident])     # max : le premier à égalité
+        # Même nom, même type, même département (ou région) : une commune nouvelle et ses anciennes communes, ou les
+        # départements d'une région d'autrefois. Jamais un homonyme exact (deux communes homonymes ne sont jamais dans
+        # le même département).
+        zone = meilleur.departement or meilleur.region if meilleur.type == 'ville' else meilleur.region
+        reunis = [meilleur] + [e for e in candidats if e is not meilleur and e not in exacts and e.type == meilleur.type
+                               and zone and (e.departement or e.region if e.type == 'ville' else e.region) == zone]
+        if len(reunis) > 1 and meilleur not in exacts:
+            texte = (indices.get('texte') or nom).strip()
+            libelle = texte[:1].upper() + texte[1:]
+        else:
+            libelle = meilleur.nom
+        return {'libelle': libelle, 'idents': [e.ident for e in reunis], 'candidats': candidats,
+                'nombres': {e.ident: presents[e.ident] for e in candidats},
+                'photos': sum(presents[e.ident] for e in reunis)}
+    return chercher
+
+
+def idents_des_lieux(trouves):
+    """Idents à réunir pour filtrer les photos par les lieux d'une recherche (objets de chercheur_lieux, dans l'ordre).
+
+    Plusieurs lieux : l'un OU l'autre (« Bretagne Normandie »). Mais un lieu qui en contient un autre de la même
+    recherche le précise : « Brest Finistère » = Brest, « Paris Texas » = le Paris du Texas, « Saint-Denis La Réunion »
+    = celle de La Réunion (le lien d'un lieu, dans la visionneuse, s'écrit ainsi quand son nom a un homonyme)."""
+    trouves = [t for t in trouves if isinstance(t, dict) and t.get('idents')]
+    res = []
+    for k, lieu in enumerate(trouves):
+        autres = [set(t['idents']) for j, t in enumerate(trouves) if j != k]
+        mes_idents = set(lieu['idents'])
+        if any(_parents(e) & mes_idents for j, t in enumerate(trouves) if j != k for e in t.get('candidats', ())):
+            continue                                 # il contient un autre lieu de la recherche : l'autre dit où
+        candidats = lieu.get('candidats', ())
+
+        def dedans(e):
+            return any(_parents(e) & a for a in autres)
+        if not autres or any(dedans(e) for e in candidats if e.ident in mes_idents):
+            res += lieu['idents']
+            continue
+        nombres = lieu.get('nombres', {})
+        autres_choix = [e for e in candidats if dedans(e)]
+        if autres_choix:                             # un homonyme dans l'autre lieu : celui-là, le plus photographié
+            res.append(max(autres_choix, key=lambda e: nombres.get(e.ident, 0)).ident)
+        else:
+            res += lieu['idents']
+    return list(dict.fromkeys(res))

@@ -59,6 +59,7 @@ MYPHOTOS_TELECHARGEMENT_FACTICE=1 simule le téléchargement du moteur (essais d
 de MYPHOTOS_MODELES servent ensuite) ; MYPHOTOS_INACTIVITE_S change le délai d'arrêt automatique (180 s).
 """
 import base64
+import calendar
 import concurrent.futures
 import ctypes
 import errno
@@ -88,12 +89,15 @@ import urllib.error
 import urllib.parse
 import zlib
 from collections import deque
+from datetime import date
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import config, dialogue, fenetre, materiel, mise_a_jour, modele, raccourci
 from . import doublons as _doublons
+from . import lieux as _lieux
 from . import recherche as _recherche
+from . import requete as _requete
 from .base import (Base, DossierRefuse, chemin_affiche, chemin_systeme, cle_chemin, dedans, identite_volume,
                    maintenant, normaliser_chemin)
 from .indexation import _BALISES_LIENS, Indexeur, Parcours, dossier_vide, examiner_dossier
@@ -196,6 +200,10 @@ SEMBLABLES_PAS_ANALYSEE = ("Cette photo n'est pas encore analysée : MyPhotos ne
                            "lui ressemblent. Réessayez un peu plus tard.")
 # Taille du texte de la page (0.4.1), gardée dans la table meta (le profil de la fenêtre est effacé à chaque fermeture).
 TAILLES_TEXTE = ('normale', 'grande', 'tres-grande')
+# Dates et lieux (0.5.0) : textes des puces retirées par la page (paramètre « ignorer » de /api/recherche), au plus 10 ;
+# « Ce jour-là » : au plus 12 miniatures par année.
+IGNORER_MAX = 10
+CE_JOUR_N = 12
 
 # Images que le navigateur affiche telles quelles ; les autres extensions de config.EXTENSIONS (TIFF) sont
 # converties en JPEG à la volée.
@@ -270,6 +278,11 @@ _ANGLAIS = (
     (re.compile(r'\bno such (?:table|column)\b[^.;)]*', re.I), 'un fichier de MyPhotos est incomplet'),
     (re.compile(r'\bout of memory\b', re.I), 'mémoire insuffisante'),
 )
+
+
+def aujourd_hui():
+    """Date du jour de cet ordinateur (heure locale) : dates relatives des recherches, « Ce jour-là » (0.5.0)."""
+    return date.today()
 
 
 class Refus(Exception):
@@ -1673,6 +1686,10 @@ class Application:
         self._doublons_annulee = False           # arrêtée par l'utilisateur : la page ne la relance plus seule
         # Bouton « Actualiser » : {numero (demande d'inventaire), indexeur, debut}, une à la fois.
         self._actualisation = None
+        # Lieux qui ont des photos (0.5.0) : ((génération, numéro des lieux), {ident: nombre}), pour la recherche ;
+        # dernière liste filtrée par dates et lieux (clé, [(id, date)]), pour ses pages suivantes.
+        self._cache_lieux = None
+        self._cache_filtre = None
         # Mise à jour proposée (mise_a_jour.py) : une vérification par jour, seulement si l'utilisateur l'a acceptée.
         self.mises_a_jour = mise_a_jour.Gestion(self.base.meta_get, self.base.meta_set, self.arreter,
                                                 self.travaux_en_cours, journal, **_essai_mise_a_jour())
@@ -2612,12 +2629,71 @@ class Application:
 
     # ------------------------------------------------ photos
 
-    def chercher(self, q, debut, n, proches=False):
+    def chercher(self, q, debut, n, proches=False, ignorer=()):
         """Résultats d'une recherche (mode 'recherche'), ou, avec proches=True, les photos suivantes sous les seuils
         (mode 'proches', « moins probables »). Pendant la préparation du moteur : réponse vide marquée
-        preparation=True, que la page relance d'elle-même, jamais une erreur."""
+        preparation=True, que la page relance d'elle-même, jamais une erreur.
+
+        Dates et lieux (0.5.0) : la recherche passe d'abord par requete.analyser (date du jour de cet ordinateur ;
+        ignorer : textes des puces retirées par la page, qui redeviennent des mots). Sans date ni lieu, rien ne
+        change : la recherche de la 0.4.1, telle quelle. Sinon, la réponse porte en plus les puces ([{type, libelle,
+        texte}]), les mots qui restent, et, quand un lieu filtre, sans_position : le nombre de photos analysées sans
+        position GPS, qu'aucun lieu ne peut retrouver. S'il reste des mots, la recherche par mots est limitée aux
+        photos de ces dates et de ces lieux (mêmes seuils, mêmes pages, « moins sûres » et « les plus proches »
+        comprises) ; sinon, ces photos par date (mode 'dates', comme toutes les photos, sans le moteur)."""
         if not (q or '').strip():
             return self.photos_par_date(debut, n)
+        a = self.analyser_recherche(q, ignorer)
+        if a is None:
+            return dict(self._chercher_mots(q, debut, n, proches), puces=[])
+        dates = _requete.FiltreDates(a.periodes)
+        idents = _recherche.idents_des_lieux(a.lieux) if a.lieux else None
+        info = {'requete': _recherche.normaliser_requete(q), 'puces': a.puces, 'mots': a.mots,
+                'sans_position': self.base.sans_position() if idents is not None else None}
+        if not a.mots:
+            r = self.base.page_filtree(self._liste_filtree(dates.intervalles if dates else None, idents), debut, n)
+            return dict(mode='dates', debut=r['debut'], suivant=r['debut'] + len(r['photos']), total=r['total'],
+                        photos=r['photos'], **info)
+        filtre = _recherche.Filtre(dates if dates else None,
+                                   self.base.ids_des_lieux(idents) if idents is not None else None)
+        return dict(self._chercher_mots(a.mots, debut, n, proches, filtre), **info)
+
+    def _liste_filtree(self, intervalles, idents):
+        """base.liste_filtree, gardée pour les pages suivantes de la même recherche tant que l'index et les lieux ne
+        changent pas (France entière, 60 000 photos sur 100 000 : 80 ms ; ensuite, chaque page est immédiate)."""
+        cle = (self.base.generation(), self.base.numero_lieux, None if intervalles is None else tuple(intervalles),
+               None if idents is None else tuple(idents))
+        c = self._cache_filtre
+        if c is None or c[0] != cle:
+            c = self._cache_filtre = (cle, self.base.liste_filtree(intervalles, idents))
+        return c[1]
+
+    def _lieux_presents(self):
+        """base.lieux_presents() (0,2 s pour 70 000 photos), gardé tant que l'index et les lieux ne changent pas."""
+        cle = (self.base.generation(), self.base.numero_lieux)
+        c = self._cache_lieux
+        if c is None or c[0] != cle:
+            c = self._cache_lieux = (cle, self.base.lieux_presents())
+        return c[1]
+
+    def analyser_recherche(self, q, ignorer=()):
+        """requete.analyser, avec la façon de MyPhotos de reconnaître un lieu (recherche.chercheur_lieux : seulement
+        les lieux qui ont des photos) : une Analyse, ou None quand rien n'est filtré (aucune puce). Une panne ici ne
+        fait jamais échouer la recherche : elle se fait alors sans date ni lieu."""
+        try:
+            try:
+                presents = self._lieux_presents()
+            except sqlite3.Error:
+                presents = {}
+            chercher_lieu = _recherche.chercheur_lieux(presents) if presents else None
+            a = _requete.analyser(q, aujourd_hui(), chercher_lieu, ignorer)
+        except Exception:
+            journal.exception('dates et lieux de la recherche (%d caractères)', len(q or ''))   # jamais le texte
+            return None
+        return a if a.puces else None
+
+    def _chercher_mots(self, q, debut, n, proches=False, filtre=None):
+        """Recherche par mots (0.4.1) ; filtre (recherche.Filtre, 0.5.0) : limitée aux photos qu'il garde."""
         r = self.recherche
         prep = self._preparation
         if not self.changement and r is not None and prep is not None and prep['etat'] == 'en_cours':
@@ -2627,7 +2703,10 @@ class Application:
         if r is None:
             raise Refus('La recherche sera possible dès que le moteur de reconnaissance sera installé.', 503)
         try:
-            res = r.chercher(q, debut, n, proches=True) if proches else r.chercher(q, debut, n)
+            if filtre is not None:
+                res = r.chercher(q, debut, n, proches=proches, filtre=filtre)
+            else:
+                res = r.chercher(q, debut, n, proches=True) if proches else r.chercher(q, debut, n)
         except getattr(_recherche, 'MoteurIndisponible', RuntimeError) as e:
             raise Refus(sans_jargon(str(e)), 503)
         except Exception:
@@ -2726,7 +2805,71 @@ class Application:
         return {'id': p['id'], 'nom': p['nom'], 'dossier': os.path.dirname(p['chemin']), 'date': p['date'],
                 'date_prise': p['date_prise'] is not None, 'largeur': p['largeur'], 'hauteur': p['hauteur'],
                 'taille': p['taille'], 'disponible': p['disponible'], 'miniature': p['miniature'],
-                'analysee': p['analysee']}
+                'analysee': p['analysee'], 'lieu': self.lieu_photo(pid)}
+
+    def lieu_photo(self, pid):
+        """Lieu d'une photo pour la visionneuse (0.5.0) : {libelle : « Brest, Finistère, Bretagne, France », recherche :
+        le texte à chercher pour voir les photos de ce lieu}, ou None (pas de position GPS, lieu pas encore trouvé, en
+        pleine mer). recherche est le nom du lieu ; si un homonyme a lui aussi des photos (Saint-Denis en
+        Seine-Saint-Denis et à La Réunion), suivi du nom de ce qui le contient, que la recherche sait combiner."""
+        try:
+            l = self.base.lieu_photo(pid)
+        except sqlite3.Error:
+            return None
+        if not l:
+            return None
+        source = _lieux.lieux()
+        e = next((x for x in (source.endroit(l.get(k)) for k in ('ville', 'departement', 'region', 'pays')
+                              if l.get(k)) if x is not None), None)
+        if e is None:
+            return None
+        recherche, nom = e.nom, _lieux.normaliser(e.nom)
+        try:
+            presents = self._lieux_presents()
+        except sqlite3.Error:
+            presents = {}
+        parents = source.parents(e)
+        idents_parents = {x.ident for x in parents}
+        homonyme = any(x.ident != e.ident and presents.get(x.ident) and _lieux.normaliser(x.nom) == nom
+                       and x.ident not in idents_parents and e.ident not in _recherche._parents(x)
+                       for x in source.chercher(nom))
+        if homonyme:
+            autre = next((x.nom for x in parents if _lieux.normaliser(x.nom) != nom), None)
+            if autre:
+                recherche = f'{e.nom} {autre}'
+        return {'libelle': source.libelle(e), 'recherche': recherche}
+
+    def ce_jour(self, n=CE_JOUR_N):
+        """« Ce jour-là » (0.5.0) : les photos prises le même jour et le même mois que la date du jour, les années
+        passées : {jour, annees: [{annee, il_y_a, libelle (« Il y a 3 ans »), total, photos (au plus n, réparties sur
+        la journée, dans l'ordre), jour (AAAA-MM-JJ)}]}, la plus récente d'abord ; aucune année sans photo. Le
+        29 février d'une année bissextile revient le 28 février des autres années ; le 29 février, seulement les
+        29 février d'avant."""
+        jour = aujourd_hui()
+        jours = [f'{jour.month:02d}-{jour.day:02d}']
+        if (jour.month, jour.day) == (2, 28) and not calendar.isleap(jour.year):
+            jours.append('02-29')
+        par_annee = {}
+        for p in self.base.photos_du_jour(jours, f'{jour.year:04d}-01-01'):
+            try:
+                annee = int(p['date'][:4])
+            except (TypeError, ValueError):
+                continue
+            par_annee.setdefault(annee, []).append(p)
+        annees = []
+        for annee in sorted(par_annee, reverse=True):
+            toutes = par_annee[annee]
+            liste = toutes
+            if len(toutes) > n:                      # réparties sur la journée, la première et la dernière comprises
+                liste = ([toutes[round(k * (len(toutes) - 1) / (n - 1))] for k in range(n)] if n > 1
+                         else toutes[:max(0, n)])
+            if not liste:
+                continue
+            ecart = jour.year - annee
+            annees.append({'annee': annee, 'il_y_a': ecart,
+                           'libelle': 'Il y a 1 an' if ecart == 1 else f'Il y a {ecart} ans',
+                           'total': len(toutes), 'photos': liste, 'jour': toutes[0]['date'][:10]})
+        return {'jour': jour.isoformat(), 'annees': annees}
 
     def fichier_photo(self, pid, chercher=False):
         """(fiche, chemin habituel, chemin système, extension) d'une photo connue, qui est bien une image.
@@ -3652,13 +3795,17 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             return self._json(app.doublons(self._entier(params, 'depuis', 0, 0, 10 ** 9)))
         if chemin in ('/api/recherche', '/api/photos'):
             q = (params.get('q') or [''])[-1] if chemin == '/api/recherche' else ''
-            if len(q) > 1000:
+            # Textes des puces retirées (0.5.0) : ils redeviennent des mots.
+            ignorer = (params.get('ignorer') or []) if chemin == '/api/recherche' else []
+            if len(q) > 1000 or len(ignorer) > IGNORER_MAX or any(len(x) > 1000 for x in ignorer):
                 raise Refus('Recherche trop longue.', 400)
             debut = self._entier(params, 'debut', 0, 0, 10 ** 8)
             n = self._entier(params, 'n', LISTE_DEFAUT, 1, LISTE_MAX)
             if (params.get('proches') or [''])[-1] == '1' and q.strip():
-                return self._json(app.chercher(q, debut, n, proches=True))   # « voir les plus proches »
-            return self._json(app.chercher(q, debut, n))
+                return self._json(app.chercher(q, debut, n, proches=True, ignorer=ignorer))   # « les plus proches »
+            return self._json(app.chercher(q, debut, n, ignorer=ignorer))
+        if chemin == '/api/ce-jour':                       # « Ce jour-là » (0.5.0)
+            return self._json(app.ce_jour())
         if chemin.startswith('/api/semblables/'):          # « Plus comme celle-ci » (0.4.1)
             pid = self._identifiant(chemin[len('/api/semblables/'):])
             debut = self._entier(params, 'debut', 0, 0, 10 ** 8)

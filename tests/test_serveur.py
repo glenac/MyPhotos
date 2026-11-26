@@ -125,8 +125,11 @@ def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
     Path(donnees).mkdir(parents=True, exist_ok=True)
     DONNEES_PAR_PORT[port] = Path(donnees)
     sortie = open(Path(donnees) / 'essai-serveur.err', 'ab')
+    # neutre : ni les dossiers d'images de cet ordinateur, ni le dossier des mises à jour de l'utilisateur
+    # (%LOCALAPPDATA%\MyPhotos\mises-a-jour, rangé au démarrage) : celui des données d'essai.
     lancement = ['-c', 'import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
-                       's.dossier_images = lambda: None; sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
+                       's.dossier_images = lambda: None; s.config.MISES_A_JOUR = s.config.DONNEES / "mises-a-jour"; '
+                       'sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
     arguments = [sys.executable, '-X', 'faulthandler', *lancement]
     options = dict(cwd=str(RACINE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=sortie,
                    creationflags=SANS_FENETRE)
@@ -409,7 +412,8 @@ class TestJeton(EssaiServeur):
     REFUS = 'Ouvrez MyPhotos depuis son raccourci.'
     GET = ('/', '/index.html', '/api/etat', '/api/photos', '/api/recherche?q=chien', '/api/dossiers',
            '/api/materiel', '/api/copie', '/api/doublons', f'/miniature/{INCONNU}', f'/photo/{INCONNU}',
-           f'/api/photo/{INCONNU}', '/favicon.ico', '/inconnu', '/api/maj', '/api/maj/etat')
+           f'/api/photo/{INCONNU}', '/favicon.ico', '/inconnu', '/api/maj', '/api/maj/etat',
+           '/api/recherche?q=No%C3%ABl+2019&ignorer=x', '/api/ce-jour')
     POST = ('/api/quitter', '/api/analyse/pause', '/api/dossiers/choisir', '/api/supprimer', '/api/assistant',
             '/api/inconnue', '/api/maj/installer')
     NAVIGATION = {'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document'}
@@ -3153,6 +3157,8 @@ class EssaiApplication(unittest.TestCase):
         self.correctifs = [
             mock.patch.object(serveur.config, 'BASE', self.tmp / 'index.db'),
             mock.patch.object(serveur.config, 'MINIATURES', self.tmp / 'miniatures.db'),
+            # demarrer() range le dossier des mises à jour : jamais celui de l'utilisateur.
+            mock.patch.object(serveur.config, 'MISES_A_JOUR', self.tmp / 'mises-a-jour'),
             mock.patch.object(serveur.modele, 'Moteur', FauxMoteur),
             mock.patch.object(serveur.modele, 'manquants', lambda *a, **k: []),
             mock.patch.object(serveur, 'dossiers_proposes', lambda: []),
@@ -3663,6 +3669,617 @@ class TestMiseAJour(unittest.TestCase):
         self.assertIn('vérifié', m['message'])
         self.assertEqual(self.api('/api/mise-a-jour/installer', {})[0], 409)
         self.assertIn('fichier de mise à jour refusé', (self.donnees / 'journal.log').read_text(encoding='utf-8'))
+
+
+# ---------------------------------------------------------------- dates et lieux (0.5.0)
+
+# Positions de vraies villes (GPS EXIF fabriqués) ; lieux calculés par myphotos/lieux.py (données embarquées).
+VILLES_ESSAI = {'brest': (48.3904, -4.4861), 'quimper': (47.9960, -4.1020), 'paris': (48.8566, 2.3522),
+                'seville': (37.3891, -5.9845), 'orange': (44.1381, 4.8075), 'paris_tx': (33.6609, -95.5555),
+                'annecy': (45.8992, 6.1294), 'seynod': (45.8794, 6.0928), 'strasbourg': (48.5734, 7.7521),
+                'colmar': (48.0794, 7.3585)}
+
+
+def cosinus_base(proba):
+    """Cosinus qui donne cette probabilité avec le moteur « base » (inverse de modele.probabilite)."""
+    import numpy as np
+    from myphotos import modele
+    m = modele.info('base')
+    return float((np.log(proba / (1 - proba)) - m['biais']) / m['echelle'])
+
+
+def niveau_base(niveau, k=0):
+    """Cosinus d'une photo « sûre », « moins sûre » ou « sous » les seuils du moteur « base » ; k départage."""
+    from myphotos import recherche
+    r = recherche.reglages('base')
+    return {'sure': cosinus_base(r['seuil_sur']) + 0.02, 'peut': cosinus_base(r['seuil_peut_etre']) + 0.004,
+            'sous': cosinus_base(r['seuil_peut_etre']) - 0.05}[niveau] - k * 0.0004
+
+
+def photos_datees(base, dossier, photos, dim=8):
+    """Photos analysées par le moteur « base » (faux vecteurs de dimension dim) : [(ville de VILLES_ESSAI ou None, date
+    de prise de vue ou None, date du fichier, niveau)] -> identifiants, dans l'ordre. Miniature factice ; le vecteur a
+    pour 1re coordonnée le cosinus du niveau (le faux moteur donne au texte le vecteur (1, 0, …)) ; lieux calculés
+    tout de suite (comme Indexeur._localiser)."""
+    import numpy as np
+    from myphotos import lieux
+    dossier = Path(dossier)
+    did = base.ajouter_dossier(str(dossier))['id'] if not base.dossiers() else base.dossiers()[0]['id']
+    debut = len(base.connus(did))
+    lignes = [(str(dossier / f'p{debut + k:05d}.jpg'), 1000 + debut + k, 1_700_000_000_000_000_000 + debut + k,
+               fichier) for k, (_v, _p, fichier, _n) in enumerate(photos)]
+    base.ajouter_photos(did, lignes)
+    connus = base.connus(did)
+    ids = [connus[l[0]][0] for l in lignes]
+    analyses = []
+    for k, (ville, prise, _f, niveau) in enumerate(photos):
+        c = niveau_base(niveau, k)
+        v = np.zeros(dim, np.float32)
+        v[0], v[1 + k % (dim - 1)] = c, np.sqrt(1 - c * c)
+        lat, lon = VILLES_ESSAI[ville] if ville else (None, None)
+        analyses.append({'id': ids[k], 'taille': lignes[k][1], 'modifie': lignes[k][2], 'largeur': 640,
+                         'hauteur': 480, 'date_prise': prise, 'lat': lat, 'lon': lon,
+                         'vecteur': v.astype(np.float16).tobytes(), 'miniature': b'\xff\xd8'})
+    assert base.enregistrer(analyses, [], 'base') == len(analyses)
+    source = lieux.lieux()
+    base.enregistrer_lieux([dict(source.localiser(*VILLES_ESSAI[v]), photo_id=ids[k], version=source.version)
+                            for k, (v, _p, _f, _n) in enumerate(photos) if v])
+    return ids
+
+
+class EssaiDatesLieux(EssaiApplication):
+    """Application dans ce processus, faux moteur, date du jour fixée (serveur.aujourd_hui) ; photos datées et placées :
+    self.p[nom] -> identifiant."""
+
+    AUJ = (2026, 11, 26)
+    PHOTOS = {   # nom : (ville, date de prise de vue, date du fichier, niveau pour le faux moteur)
+        'brest_noel': ('brest', '2019-12-25T10:00:00', '2020-01-05T10:00:00', 'sure'),
+        'quimper_reveillon': ('quimper', '2019-12-24T20:00:00', '2020-01-05T10:00:00', 'peut'),
+        'paris_noel': ('paris', '2019-12-25T09:00:00', '2020-01-05T10:00:00', 'sure'),
+        'seville_ete': ('seville', '2022-08-10T12:00:00', '2022-09-01T10:00:00', 'sure'),
+        'brest_juillet': ('brest', '2022-07-14T22:00:00', '2022-09-01T10:00:00', 'sous'),
+        'sans_gps_noel': (None, '2019-12-26T08:00:00', '2020-01-05T10:00:00', 'sure'),
+        'brest_ce_jour': ('brest', '2023-11-26T15:00:00', '2023-12-01T10:00:00', 'sure'),
+        'orange_ce_jour': ('orange', '2025-11-26T11:00:00', '2025-12-01T10:00:00', 'peut'),
+        'sans_gps_29': (None, '2024-02-29T10:00:00', '2024-03-01T10:00:00', 'sure'),
+        'quimper_juin': ('quimper', '2021-06-15T10:00:00', '2021-07-01T10:00:00', 'sous'),
+        'paris_texas': ('paris_tx', '2018-05-01T10:00:00', '2018-06-01T10:00:00', 'sure'),
+        'fichier_noel': (None, None, '2019-12-25T07:00:00', 'sous'),          # sans EXIF : la date du fichier
+    }
+
+    def setUp(self):
+        super().setUp()
+        from datetime import date
+        self.date = date
+        self.auj = date(*self.AUJ)
+        c = mock.patch.object(self.serveur, 'aujourd_hui', lambda: self.auj)
+        c.start()
+        self.correctifs.append(c)
+        self.dossier = self.tmp / 'photos-datees'
+        self.dossier.mkdir()
+        ids = photos_datees(self.app.base, self.dossier, list(self.PHOTOS.values()))
+        self.p = dict(zip(self.PHOTOS, ids))
+        self.dossier.rmdir()                     # dossier injoignable : ses photos restent dans l'index
+
+    def ids(self, r, cle='photos'):
+        return [x['id'] for x in r[cle]]
+
+    def noms(self, ids):
+        inverse = {v: k for k, v in self.p.items()}
+        return [inverse.get(i, i) for i in ids]
+
+    def activer_moteur(self):
+        app = self.app
+        for cle, valeur in (('moteur', 'base'), ('moteur_vision', 'fp16'), ('assistant', 'fini')):
+            app.base.meta_set(cle, valeur)
+        app.demarrer()
+        app.serveur_pret()
+        app.page_servie()
+        self.barriere.set()
+        self.assertTrue(attendre(self.prete, 10, 0.05), 'la préparation ne finit pas')
+
+
+class TestDatesEtLieux(EssaiDatesLieux):
+    """Recherche filtrée (0.5.0) : dates et lieux reconnus par requete.py, lieux qui ont des photos, puces, mots qui
+    restent cherchés parmi ces photos seulement, photos sans position GPS comptées."""
+
+    def test_dates_seules_par_date_sans_moteur(self):
+        app = self.app                                         # aucun moteur : les dates et les lieux suffisent
+        r = app.chercher('Noël 2019', 0, 50)
+        self.assertEqual(r['mode'], 'dates')
+        self.assertEqual(self.noms(self.ids(r)), ['sans_gps_noel', 'brest_noel', 'paris_noel', 'fichier_noel',
+                                                  'quimper_reveillon'])
+        self.assertEqual((r['total'], r['debut'], r['suivant']), (5, 0, 5))
+        self.assertEqual(r['puces'], [{'type': 'date', 'libelle': 'Noël 2019', 'texte': 'Noël 2019'}])
+        self.assertEqual((r['mots'], r['sans_position'], r['requete']), ('', None, 'Noël 2019'))
+        self.assertEqual(set(r['photos'][0]), {'id', 'date', 'largeur', 'hauteur'})
+        # Pages contiguës, sans doublon.
+        pages = []
+        for debut in range(0, 6, 2):
+            p = app.chercher('Noël 2019', debut, 2)
+            self.assertEqual((p['debut'], p['total']), (debut, 5))
+            pages += self.ids(p)
+        self.assertEqual(pages, self.ids(r))
+        # Autres façons de le dire ; dates d'une autre année ; une saison.
+        for q in ('photos de Noël 2019', 'noel 2019', 'à Noël 2019'):
+            with self.subTest(q=q):
+                self.assertEqual(self.ids(app.chercher(q, 0, 50)), self.ids(r))
+        self.assertEqual(self.noms(self.ids(app.chercher('réveillon de Noël 2019', 0, 50))),
+                         ['brest_noel', 'paris_noel', 'fichier_noel', 'quimper_reveillon'])
+        self.assertEqual(self.noms(self.ids(app.chercher('été 2022', 0, 50))), ['seville_ete', 'brest_juillet'])
+        self.assertEqual(self.ids(app.chercher('Noël 2021', 0, 50)), [])
+
+    def test_lieux_seuls(self):
+        app = self.app
+        r = app.chercher('Brest', 0, 50)
+        self.assertEqual(r['mode'], 'dates')
+        self.assertEqual(self.noms(self.ids(r)), ['brest_ce_jour', 'brest_juillet', 'brest_noel'])
+        self.assertEqual(r['puces'], [{'type': 'lieu', 'libelle': 'Brest', 'texte': 'Brest'}])
+        self.assertEqual(r['sans_position'], 3)                # sans_gps_noel, sans_gps_29, fichier_noel
+        bretagne = ['brest_ce_jour', 'brest_juillet', 'quimper_juin', 'brest_noel', 'quimper_reveillon']
+        for q in ('en Bretagne', 'photos en Bretagne', 'Bretagne', 'Finistère', 'dans le Finistère'):
+            with self.subTest(q=q):
+                r = app.chercher(q, 0, 50)
+                self.assertEqual(self.noms(self.ids(r)), bretagne)
+                self.assertEqual([p['type'] for p in r['puces']], ['lieu'])
+        self.assertEqual(app.chercher('en Bretagne', 0, 50)['puces'][0]['texte'], 'en Bretagne')
+        # Un lieu qui en contient un autre le précise ; deux lieux à côté : l'un ou l'autre.
+        self.assertEqual(self.noms(self.ids(app.chercher('Brest Finistère', 0, 50))), bretagne[:2] + ['brest_noel'])
+        self.assertEqual(self.noms(self.ids(app.chercher('Bretagne et Andalousie', 0, 50))),
+                         ['brest_ce_jour', 'seville_ete', 'brest_juillet', 'quimper_juin', 'brest_noel',
+                          'quimper_reveillon'])
+        self.assertEqual(self.noms(self.ids(app.chercher('Séville', 0, 50))), ['seville_ete'])
+        self.assertEqual(self.noms(self.ids(app.chercher('Sevilla', 0, 50))), ['seville_ete'])
+        # Homonymes : celui qui a le plus de photos (à égalité, le plus grand) ; « Paris Texas » : celui du Texas.
+        self.assertEqual(self.noms(self.ids(app.chercher('Paris', 0, 50))), ['paris_noel'])
+        self.assertEqual(self.noms(self.ids(app.chercher('Paris Texas', 0, 50))), ['paris_texas'])
+        self.assertEqual(self.noms(self.ids(app.chercher('Texas', 0, 50))), ['paris_texas'])
+        # Date et lieu ensemble.
+        self.assertEqual(self.noms(self.ids(app.chercher('Brest en 2019', 0, 50))), ['brest_noel'])
+        r = app.chercher('Noël 2019 en Bretagne', 0, 50)
+        self.assertEqual(self.noms(self.ids(r)), ['brest_noel', 'quimper_reveillon'])
+        self.assertEqual([p['type'] for p in r['puces']], ['date', 'lieu'])
+        # Pages.
+        pages = []
+        for debut in range(0, 6, 2):
+            pages += self.ids(app.chercher('en Bretagne', debut, 2))
+        self.assertEqual(self.noms(pages), bretagne)
+
+    def test_lieu_sans_photo_et_mots_courants(self):
+        app = self.app
+        # Aucun lieu sans photo : « Lyon », « Normandie » restent des mots (la recherche ne se vide jamais).
+        for q in ('plage à Lyon', 'Normandie', 'chien', 'coucher de soleil', 'mars', 'Avril'):
+            with self.subTest(q=q):
+                self.assertIsNone(app.analyser_recherche(q))
+        # « Orange » est aussi un mot : un lieu seulement avec une majuscule ou « à » (sans article).
+        self.assertIsNone(app.analyser_recherche('orange'))
+        self.assertIsNone(app.analyser_recherche('fleurs orange'))
+        for q in ('à Orange', 'à orange', 'Orange', 'photos à Orange'):
+            with self.subTest(q=q):
+                a = app.analyser_recherche(q)
+                self.assertEqual([p['libelle'] for p in a.puces], ['Orange'], q)
+        self.assertEqual(self.noms(self.ids(app.chercher('à Orange', 0, 50))), ['orange_ce_jour'])
+
+    def test_mots_parmi_les_photos_filtrees(self):
+        self.activer_moteur()
+        app = self.app
+        tout = app.chercher('plage', 0, 50)
+        self.assertEqual((tout['mode'], tout['puces']), ('recherche', []))
+        r = app.chercher('plage en Bretagne', 0, 50)
+        self.assertEqual((r['mode'], r['preparation'], r['mots']), ('recherche', False, 'plage'))
+        self.assertEqual(r['puces'], [{'type': 'lieu', 'libelle': 'Bretagne', 'texte': 'en Bretagne'}])
+        self.assertEqual(r['sans_position'], 3)
+        self.assertEqual(self.noms(self.ids(r, 'sures')), ['brest_noel', 'brest_ce_jour'])
+        self.assertEqual(self.noms(self.ids(r, 'peut_etre')), ['quimper_reveillon'])
+        self.assertEqual((r['total_sures'], r['total_peut_etre'], r['total_proches'], r['analysees']), (2, 1, 2, 5))
+        # Mêmes seuils que sans filtre : les mêmes photos sont sûres, moins sûres ou au-dessous.
+        sures = set(self.ids(tout, 'sures'))
+        for x in r['sures']:
+            self.assertIn(x['id'], sures)
+        p = app.chercher('plage en Bretagne', 0, 50, proches=True)
+        self.assertEqual((p['mode'], p['total_proches']), ('proches', 2))
+        self.assertEqual(self.noms(self.ids(p, 'proches')), ['brest_juillet', 'quimper_juin'])
+        self.assertEqual(p['puces'], r['puces'])
+        # Dates et mots ; pages contiguës.
+        r = app.chercher('chien été 2022', 0, 50)
+        self.assertEqual((r['mots'], self.noms(self.ids(r, 'sures')), r['total_proches']),
+                         ('chien', ['seville_ete'], 1))
+        r = app.chercher('chien Noël 2019', 0, 50)
+        tous = self.ids(r, 'sures') + self.ids(r, 'peut_etre')
+        self.assertEqual(set(self.noms(tous)), {'brest_noel', 'paris_noel', 'sans_gps_noel', 'quimper_reveillon'})
+        pages = []
+        for debut in range(0, 5):
+            x = app.chercher('chien Noël 2019', debut, 1)
+            pages += self.ids(x, 'sures') + self.ids(x, 'peut_etre')
+        self.assertEqual(pages, tous)
+        # Un filtre qui ne garde rien : réponse vide, jamais une erreur.
+        r = app.chercher('chien Noël 2021', 0, 50)
+        self.assertEqual((r['total_sures'], r['total_peut_etre'], r['total_proches'], r['sures']), (0, 0, 0, []))
+
+    def test_puces_retirees(self):
+        app = self.app
+        # Sans moteur : « Noël 2019 » retiré redevient un mot, et les mots demandent le moteur.
+        with self.assertRaises(self.serveur.Refus) as e:
+            app.chercher('Noël 2019', 0, 50, ignorer=['Noël 2019'])
+        self.assertEqual(e.exception.statut, 503)
+        self.activer_moteur()
+        r = app.chercher('Noël 2019', 0, 50, ignorer=['Noël 2019'])
+        self.assertEqual((r['mode'], r['puces']), ('recherche', []))
+        self.assertEqual(r['total_sures'] + r['total_peut_etre'] + r['total_proches'], len(self.PHOTOS))
+        r = app.chercher('plage en Bretagne', 0, 50, ignorer=['en Bretagne'])
+        self.assertEqual((r['puces'], r['requete']), ([], 'plage en Bretagne'))
+        r = app.chercher('Noël 2019 en Bretagne', 0, 50, ignorer=['en Bretagne'])
+        self.assertEqual(([p['type'] for p in r['puces']], r['mots']), (['date'], 'en Bretagne'))
+
+    def test_sans_date_ni_lieu_rien_ne_change(self):
+        """Une recherche sans date ni lieu : les résultats de la recherche par mots, tels quels (essai contre le code
+        de la 0.4.1 lui-même : TestCompatibilite041)."""
+        self.activer_moteur()
+        app = self.app
+        for q in ('plage', 'chien noir', 'coucher de soleil', 'Lyon', 'mars', 'gâteau d’anniversaire'):
+            for proches in (False, True):
+                with self.subTest(q=q, proches=proches):
+                    r = app.chercher(q, 0, 50, proches=proches)
+                    attendu = app.recherche.chercher(q, 0, 50, proches=proches)
+                    self.assertEqual(r['puces'], [])
+                    for g in (('proches',) if proches else ('sures', 'peut_etre')):
+                        self.assertEqual([(x['id'], x['proba']) for x in r[g]],
+                                         [(x['id'], x['proba']) for x in attendu[g]])
+                    self.assertNotIn('sans_position', r)
+                    self.assertNotIn('mots', r)
+
+
+class TestCeJourEtLieuPhoto(EssaiDatesLieux):
+
+    def test_ce_jour(self):
+        app = self.app
+        r = app.ce_jour()
+        self.assertEqual(r['jour'], '2026-11-26')
+        self.assertEqual([(g['annee'], g['il_y_a'], g['libelle'], g['total'], g['jour']) for g in r['annees']],
+                         [(2025, 1, 'Il y a 1 an', 1, '2025-11-26'), (2023, 3, 'Il y a 3 ans', 1, '2023-11-26')])
+        self.assertEqual([self.noms(self.ids(g)) for g in r['annees']], [['orange_ce_jour'], ['brest_ce_jour']])
+        self.assertEqual(set(r['annees'][0]['photos'][0]), {'id', 'date', 'largeur', 'hauteur'})
+        # Rien cette année (ni plus tard), ni un autre jour.
+        self.auj = self.date(2025, 11, 26)
+        self.assertEqual([g['annee'] for g in app.ce_jour()['annees']], [2023])
+        self.auj = self.date(2026, 11, 27)
+        self.assertEqual(app.ce_jour(), {'jour': '2026-11-27', 'annees': []})
+        # 29 février : le 28 février d'une année non bissextile, et le 29 février d'une année bissextile.
+        self.auj = self.date(2027, 2, 28)
+        self.assertEqual([(g['annee'], g['libelle'], self.noms(self.ids(g))) for g in app.ce_jour()['annees']],
+                         [(2024, 'Il y a 3 ans', ['sans_gps_29'])])
+        self.auj = self.date(2028, 2, 29)
+        self.assertEqual([(g['annee'], g['libelle']) for g in app.ce_jour()['annees']], [(2024, 'Il y a 4 ans')])
+        self.auj = self.date(2028, 2, 28)
+        self.assertEqual(app.ce_jour()['annees'], [])
+        # Une journée chargée : 12 miniatures au plus, réparties sur la journée (la première et la dernière comprises).
+        self.auj = self.date(2026, 11, 26)
+        heures = [f'2020-11-26T{h:02d}:{m:02d}:00' for h in range(8, 18) for m in (0, 30)]
+        (self.tmp / 'photos-datees').mkdir()
+        ids = photos_datees(app.base, self.tmp / 'photos-datees', [(None, x, x, 'sure') for x in heures])
+        g = next(g for g in app.ce_jour()['annees'] if g['annee'] == 2020)
+        self.assertEqual((g['total'], len(g['photos']), g['libelle']), (20, 12, 'Il y a 6 ans'))
+        self.assertEqual((g['photos'][0]['id'], g['photos'][-1]['id']), (ids[0], ids[-1]))
+        self.assertEqual([x['date'] for x in g['photos']], sorted(x['date'] for x in g['photos']))
+        self.assertEqual(len({x['id'] for x in g['photos']}), 12)
+
+    def test_lieu_d_une_photo(self):
+        app = self.app
+        self.assertEqual(app.info_photo(self.p['brest_noel'])['lieu'],
+                         {'libelle': 'Brest, Finistère, Bretagne, France', 'recherche': 'Brest'})
+        self.assertEqual(app.info_photo(self.p['seville_ete'])['lieu'],
+                         {'libelle': 'Séville, Andalousie, Espagne', 'recherche': 'Séville'})
+        self.assertIsNone(app.info_photo(self.p['sans_gps_noel'])['lieu'])
+        # Homonymes qui ont tous deux des photos : le lien précise ce qui contient le lieu, et la recherche le suit.
+        paris, texas = app.info_photo(self.p['paris_noel'])['lieu'], app.info_photo(self.p['paris_texas'])['lieu']
+        self.assertEqual(paris, {'libelle': 'Paris, Île-de-France, France', 'recherche': 'Paris Île-de-France'})
+        self.assertEqual(texas['recherche'], 'Paris Texas')
+        for nom in ('brest_noel', 'seville_ete', 'paris_noel', 'paris_texas', 'quimper_juin', 'orange_ce_jour'):
+            with self.subTest(nom=nom):
+                q = app.info_photo(self.p[nom])['lieu']['recherche']
+                r = app.chercher(q, 0, 50)
+                self.assertEqual(r['mode'], 'dates')
+                self.assertIn(self.p[nom], self.ids(r))
+                self.assertTrue(all(p['type'] == 'lieu' for p in r['puces']))
+        self.assertEqual(self.noms(self.ids(app.chercher('Paris Île-de-France', 0, 50))), ['paris_noel'])
+
+
+class TestPolitiqueDesLieux(unittest.TestCase):
+    """recherche.chercheur_lieux et idents_des_lieux, sur les données embarquées (lieux.py) et des nombres de photos
+    inventés."""
+
+    def chercheur(self, presents):
+        from myphotos import recherche
+        return recherche.chercheur_lieux(presents)
+
+    @staticmethod
+    def indices(**kw):
+        return dict({'preposition': False, 'majuscule': False, 'mots': 1, 'debut': False, 'texte': '',
+                     'article': False}, **kw)
+
+    def test_mots_courants(self):
+        orange = 'v:2989460'                                   # Orange (Vaucluse)
+        c = self.chercheur({orange: 3, 'p:FR': 3})
+        self.assertIsNone(c('orange', self.indices()))
+        self.assertIsNone(c('orange', self.indices(preposition=True, article=True)))     # « à l'orange »
+        for kw in ({'majuscule': True}, {'preposition': True}, {'majuscule': True, 'debut': True}):
+            with self.subTest(**kw):
+                self.assertEqual(c('orange', self.indices(**kw))['idents'], [orange])
+        self.assertIsNone(self.chercheur({'v:2986045': 2})('port', self.indices(preposition=True, article=True)))
+        self.assertIsNone(self.chercheur({'d:FR.10': 5})('aube', self.indices(preposition=True, article=True)))
+        self.assertEqual(self.chercheur({'d:FR.10': 5})('aube', self.indices(majuscule=True))['idents'], ['d:FR.10'])
+
+    def test_seulement_les_lieux_qui_ont_des_photos(self):
+        c = self.chercheur({'v:3030300': 4})                   # Brest (Finistère)
+        self.assertEqual(c('brest', self.indices())['idents'], ['v:3030300'])
+        self.assertIsNone(c('quimper', self.indices(majuscule=True, preposition=True)))
+        self.assertIsNone(self.chercheur({})('brest', self.indices()))
+        self.assertIsNone(c('', self.indices()))
+
+    def test_homonymes_et_noms_qui_en_reunissent_plusieurs(self):
+        # Paris : celui qui a le plus de photos ; à égalité, le plus grand (le département avant la commune).
+        c = self.chercheur({'d:FR.75': 2, 'v:2988507': 2, 'v:4717560': 5})
+        r = c('paris', self.indices())
+        self.assertEqual((r['idents'], r['libelle'], r['photos']), (['v:4717560'], 'Paris', 5))
+        c = self.chercheur({'d:FR.75': 2, 'v:2988507': 2, 'v:4717560': 1})
+        self.assertEqual(c('paris', self.indices())['idents'], ['d:FR.75'])
+        # « Alsace » : ses deux départements réunis, nommés comme tapé.
+        r = self.chercheur({'d:FR.67': 2, 'd:FR.68': 1})('alsace', self.indices(texte='alsace'))
+        self.assertEqual((sorted(r['idents']), r['libelle'], r['photos']), (['d:FR.67', 'd:FR.68'], 'Alsace', 3))
+        # Commune nouvelle : Annecy et ses anciennes communes (Seynod…).
+        r = self.chercheur({'v:3037543': 1, 'v:2974655': 2})('annecy', self.indices(texte='Annecy'))
+        self.assertEqual((sorted(r['idents']), r['libelle']), (['v:2974655', 'v:3037543'], 'Annecy'))
+        # Deux communes homonymes ne sont jamais réunies.
+        r = self.chercheur({'v:2993146': 1, 'v:2993144': 3})('montagne', self.indices(majuscule=True))
+        self.assertEqual(r['idents'], ['v:2993144'])
+
+    def test_un_lieu_qui_en_contient_un_autre(self):
+        from myphotos import recherche
+        presents = {'d:FR.75': 2, 'v:2988507': 2, 'v:4717560': 5, 'r:US.TX': 5, 'p:US': 5, 'v:3030300': 4,
+                    'd:FR.29': 4, 'r:FR.53': 4, 'r:FR.28': 1, 'p:FR': 7, 'r:FR.11': 2}
+        c = self.chercheur(presents)
+
+        def idents(*noms):
+            return recherche.idents_des_lieux([c(n, self.indices(majuscule=True)) for n in noms])
+        self.assertEqual(idents('paris', 'texas'), ['v:4717560'])
+        self.assertEqual(idents('texas', 'paris'), ['v:4717560'])
+        self.assertEqual(idents('paris', 'ile de france'), ['d:FR.75'])         # pas le Paris du Texas
+        self.assertEqual(idents('brest', 'finistere'), ['v:3030300'])
+        self.assertEqual(idents('bretagne', 'normandie'), ['r:FR.53', 'r:FR.28'])
+        self.assertEqual(idents('france', 'bretagne'), ['r:FR.53'])
+        self.assertEqual(idents('bretagne'), ['r:FR.53'])
+        self.assertEqual(recherche.idents_des_lieux([]), [])
+        self.assertEqual(recherche.idents_des_lieux([None, {'nom': 'x'}]), [])
+
+
+class TestCompatibilite041(EssaiDatesLieux):
+    """Aucune régression : sur la même base, une recherche sans date ni lieu donne exactement la réponse de la 0.4.1,
+    calculée par son propre code (myphotos/ du commit f999167, tiré de l'historique du dépôt par git archive), plus
+    « puces » vides. Sauté proprement sans l'historique (copie sans .git)."""
+
+    VERSION_0_4_1 = 'f999167'
+
+    def application_041(self):
+        import importlib
+        import io
+        import tarfile
+        try:
+            r = subprocess.run(['git', 'archive', '--format=tar', self.VERSION_0_4_1, 'myphotos'], cwd=RACINE,
+                               capture_output=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            self.skipTest(f'git indisponible ({e})')
+        if r.returncode != 0 or not r.stdout:
+            self.skipTest('code de la 0.4.1 introuvable (dépôt sans son historique)')
+        dossier = self.tmp / 'v041'
+        with tarfile.open(fileobj=io.BytesIO(r.stdout)) as tar:
+            tar.extractall(dossier, filter='data')
+        (dossier / 'myphotos').rename(dossier / 'myphotos_041')       # un autre nom : les deux versions côte à côte
+        sys.path.insert(0, str(dossier))
+
+        def oublier():
+            sys.path.remove(str(dossier))
+            for nom in [m for m in sys.modules if m == 'myphotos_041' or m.startswith('myphotos_041.')]:
+                del sys.modules[nom]
+        self.addCleanup(oublier)
+        s041 = importlib.import_module('myphotos_041.serveur')
+        self.assertEqual(s041.config.VERSION, '0.4.1')
+        self.assertFalse(hasattr(s041, 'aujourd_hui'))
+        moteur = self.serveur.modele.Moteur                              # le faux moteur de ce test
+        for nom, valeur in (('BASE', self.tmp / 'index.db'), ('MINIATURES', self.tmp / 'miniatures.db'),
+                            ('MISES_A_JOUR', self.tmp / 'mises-a-jour-041')):
+            c = mock.patch.object(s041.config, nom, valeur)
+            c.start()
+            self.addCleanup(c.stop)
+        for cible, nom, valeur in ((s041.modele, 'Moteur', moteur), (s041.modele, 'manquants', lambda *a, **k: []),
+                                   (s041, 'dossiers_proposes', lambda: []), (s041, 'dossier_images', lambda: None),
+                                   (s041, 'SANS_PAGE', True)):
+            c = mock.patch.object(cible, nom, valeur)
+            c.start()
+            self.addCleanup(c.stop)
+        app = s041.Application(serveur=mock.Mock())
+        self.addCleanup(app.fermer)
+        app.demarrer()
+        app.serveur_pret()
+        app.page_servie()
+        fin = time.monotonic() + 10
+        while not (app.etat()['recherche_prete'] and not app.changement) and time.monotonic() < fin:
+            time.sleep(0.05)
+        self.assertTrue(app.etat()['recherche_prete'], 'la 0.4.1 ne prépare pas son moteur')
+        return app
+
+    def test_memes_reponses_que_la_0_4_1(self):
+        self.activer_moteur()
+        ancienne = self.application_041()
+        sans_duree = lambda r: {k: v for k, v in r.items() if k != 'duree_ms'}       # noqa: E731
+        for q in ('plage', 'chien noir', 'coucher de soleil', 'Lyon', 'mars', 'Avril à la plage', 'gâteau',
+                  'orange', 'photos', '  vélo   rouge '):
+            for debut, n, proches in ((0, 50, False), (1, 2, False), (0, 50, True), (2, 3, True)):
+                with self.subTest(q=q, debut=debut, n=n, proches=proches):
+                    nouveau = self.app.chercher(q, debut, n, proches=proches)
+                    attendu = ancienne.chercher(q, debut, n, proches=proches)
+                    self.assertEqual(nouveau.pop('puces'), [])
+                    self.assertEqual(sans_duree(nouveau), sans_duree(attendu))
+        # Toutes les photos, et une recherche vide : identiques aussi.
+        self.assertEqual(self.app.chercher('', 0, 50), ancienne.chercher('', 0, 50))
+        self.assertEqual(self.app.chercher('   ', 3, 4), ancienne.chercher('   ', 3, 4))
+
+
+class TestDatesEtLieuxHttp(unittest.TestCase):
+    """Les routes (0.5.0), par un vrai serveur d'essai sans moteur, sur une base préparée : photos datées et placées
+    (miniatures factices), dont une prise ce jour-là il y a deux ans (date de cet ordinateur)."""
+
+    PORT6 = PORT + 7
+
+    @classmethod
+    def setUpClass(cls):
+        from datetime import date
+        from myphotos.base import Base
+        if not port_libre(cls.PORT6):
+            raise unittest.SkipTest(f'le port {cls.PORT6} est déjà pris')
+        cls.donnees = DONNEES / 'essai-dates-lieux'
+        shutil.rmtree(cls.donnees, ignore_errors=True)
+        auj = date.today()
+        annee = auj.year - 2 if (auj.month, auj.day) != (2, 29) else auj.year - 4
+        cls.ce_jour = f'{annee:04d}-{auj.month:02d}-{auj.day:02d}T15:00:00'
+        base = Base(cls.donnees / 'index.db', cls.donnees / 'miniatures.db')
+        try:
+            dossier = cls.donnees / 'photos-absentes'                # injoignable : les photos restent dans l'index
+            dossier.mkdir(parents=True)
+            ids = photos_datees(base, dossier, [
+                ('brest', '2019-12-25T10:00:00', '2020-01-05T10:00:00', 'sure'),
+                ('seville', '2022-08-10T12:00:00', '2022-09-01T10:00:00', 'sure'),
+                (None, '2019-12-26T08:00:00', '2020-01-05T10:00:00', 'sure'),
+                ('quimper', cls.ce_jour, cls.ce_jour, 'sure')])
+            dossier.rmdir()
+        finally:
+            base.fermer()
+        cls.brest, cls.seville, cls.sans_gps, cls.quimper = ids
+        cls.kw = {'hote': f'127.0.0.1:{cls.PORT6}', 'port': cls.PORT6}
+        cls.proc = lancer_serveur(cls.donnees, cls.PORT6, neutre=True)
+        try:
+            attendre_serveur(cls.proc, cls.PORT6)
+        except Exception:
+            arreter_essai(cls.proc)
+            cls.proc.sortie.close()
+            raise
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            if cls.proc.poll() is None:
+                api('/api/quitter', {}, **cls.kw)
+                cls.proc.wait(timeout=90)
+        except Exception:
+            pass
+        finally:
+            arreter_essai(cls.proc)
+            cls.proc.sortie.close()
+
+    def recherche(self, q, *ignorer, **params):
+        p = [('q', q)] + [('ignorer', x) for x in ignorer] + list(params.items())
+        return api('/api/recherche?' + urllib.parse.urlencode(p), **self.kw)
+
+    def test_recherche_par_dates_et_lieux(self):
+        statut, r = self.recherche('Noël 2019')
+        self.assertEqual(statut, 200, r)
+        self.assertEqual((r['mode'], [x['id'] for x in r['photos']]), ('dates', [self.sans_gps, self.brest]))
+        self.assertEqual(r['puces'], [{'type': 'date', 'libelle': 'Noël 2019', 'texte': 'Noël 2019'}])
+        statut, r = self.recherche('en Bretagne', n=1)
+        self.assertEqual(statut, 200, r)
+        self.assertEqual((r['total'], [x['id'] for x in r['photos']], r['suivant']), (2, [self.quimper], 1))
+        self.assertEqual((r['puces'][0]['libelle'], r['sans_position']), ('Bretagne', 1))
+        statut, r = self.recherche('en Bretagne', debut=1, n=1)
+        self.assertEqual([x['id'] for x in r['photos']], [self.brest])
+        # Puce retirée : « Noël 2019 » redevient des mots, et les mots demandent le moteur (absent ici).
+        statut, r = self.recherche('Noël 2019', 'Noël 2019')
+        self.assertEqual(statut, 503, r)
+        self.assertIn('moteur de reconnaissance', r['erreur'])
+        statut, r = self.recherche('Noël 2019 à Séville', 'à Séville')
+        self.assertEqual(statut, 503, r)
+        # Sans date ni lieu : comme avant (sans moteur, le même refus qu'en 0.4.1).
+        self.assertEqual(self.recherche('chien')[0], 503)
+        # Paramètre ignorer borné.
+        self.assertEqual(self.recherche('Noël 2019', *(['x'] * 11))[0], 400)
+        self.assertEqual(self.recherche('Noël 2019', 'x' * 1001)[0], 400)
+        self.assertEqual(self.recherche('Noël 2019', *(['x'] * 10))[0], 200)
+        self.assertEqual(api('/api/photos?ignorer=Noel', **self.kw)[1]['mode'], 'dates')     # sans q : ignoré
+        self.assertIsNone(self.proc.poll())
+
+    def test_ce_jour_et_lieu_d_une_photo(self):
+        statut, r = api('/api/ce-jour', **self.kw)
+        self.assertEqual(statut, 200, r)
+        ecart = int(r['jour'][:4]) - int(self.ce_jour[:4])                       # 2 ans (4 un 29 février)
+        self.assertEqual([(g['il_y_a'], g['libelle'], [x['id'] for x in g['photos']]) for g in r['annees']],
+                         [(ecart, f'Il y a {ecart} ans', [self.quimper])])
+        statut, p = api(f'/api/photo/{self.brest}', **self.kw)
+        self.assertEqual(statut, 200, p)
+        self.assertEqual(p['lieu'], {'libelle': 'Brest, Finistère, Bretagne, France', 'recherche': 'Brest'})
+        self.assertIsNone(api(f'/api/photo/{self.sans_gps}', **self.kw)[1]['lieu'])
+        # Protégées comme les autres routes : jeton, autre site.
+        self.assertEqual(api('/api/ce-jour', jeton=False, **self.kw)[0], 403)
+        statut, _, _ = requete('GET', '/api/ce-jour', entetes={'Sec-Fetch-Site': 'cross-site'}, **self.kw)
+        self.assertEqual(statut, 403)
+        self.assertEqual(api('/api/ce-jour', {}, **self.kw)[0], 404)                # pas de POST sur cette route
+        self.assertIsNone(self.proc.poll())
+
+
+class TestDatesEtLieuxVitesse(unittest.TestCase):
+    """Vitesse de la liste filtrée et de « Ce jour-là » sur 50 000 photos factices (vecteurs de 8 dimensions, lieux
+    écrits directement) ; bornes larges pour une machine lente. Mesures sur 100 000 photos : docs/ARCHITECTURE.md."""
+
+    def test_50000_photos(self):
+        import random
+        from datetime import date, timedelta
+        import numpy as np
+        from myphotos import requete
+        from myphotos.base import Base
+        tmp = Path(tempfile.mkdtemp(prefix='myphotos-vitesse-'))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        base = Base(tmp / 'index.db', tmp / 'miniatures.db')
+        self.addCleanup(base.fermer)
+        (tmp / 'photos').mkdir()
+        did = base.ajouter_dossier(str(tmp / 'photos'))['id']
+        rng = random.Random(5)
+        n = 50_000
+        dates = [f'{date(2005, 1, 1) + timedelta(days=rng.randrange(7999))}T{rng.randrange(8, 22):02d}:00:00'
+                 for _ in range(n)]
+        lignes = [(str(tmp / 'photos' / f'p{i:06d}.jpg'), 1000 + i, 1_700_000_000_000_000_000 + i, dates[i])
+                  for i in range(n)]
+        base.ajouter_photos(did, lignes)
+        connus = base.connus(did)
+        ids = [connus[l[0]][0] for l in lignes]
+        v = np.zeros(8, np.float16)
+        v[0] = 1
+        for k in range(0, n, 5000):
+            base.enregistrer([{'id': ids[i], 'taille': 1000 + i, 'modifie': 1_700_000_000_000_000_000 + i,
+                               'largeur': 640, 'hauteur': 480, 'date_prise': dates[i], 'lat': 48.39, 'lon': -4.49,
+                               'vecteur': v.tobytes(), 'miniature': b'\xff\xd8'} for i in range(k, min(n, k + 5000))],
+                             [], 'base')
+        zones = [('v:3030300', 'd:FR.29', 'r:FR.53', 'p:FR'), ('v:2988507', 'd:FR.75', 'r:FR.11', 'p:FR'),
+                 ('v:2510911', None, 'r:ES.51', 'p:ES')]
+        base.enregistrer_lieux([(ids[i], *zones[i % 3], 1.0, 'essai') for i in range(n) if i % 10 < 7])
+
+        def duree(f):
+            debut = time.perf_counter()
+            r = f()
+            return r, time.perf_counter() - debut
+        noel = requete.intervalles(requete.analyser('Noël', date(2026, 11, 26)).periodes)
+        self.assertGreater(len(noel), 100)
+        liste, t = duree(lambda: base.liste_filtree(noel, None))
+        self.assertLess(t, 0.2)
+        self.assertEqual(len(liste), sum(1 for x in dates if x[5:10] in ('12-24', '12-25', '12-26')))
+        self.assertEqual(liste, sorted(liste, key=lambda x: (x[1], x[0]), reverse=True))
+        liste, t = duree(lambda: base.liste_filtree(None, ['p:FR']))
+        self.assertLess(t, 1.5)
+        self.assertEqual(len(liste), sum(1 for i in range(n) if i % 10 < 7 and i % 3 < 2))
+        page, t = duree(lambda: base.page_filtree(liste, 3000, 150))
+        self.assertLess(t, 0.1)
+        self.assertEqual([x['id'] for x in page['photos']], [i for i, _d in liste[3000:3150]])
+        _, t = duree(lambda: base.liste_filtree(noel, ['r:FR.53']))
+        self.assertLess(t, 0.3)
+        jour, t = duree(lambda: base.photos_du_jour(['11-26'], '2026-01-01'))
+        self.assertLess(t, 0.5)
+        self.assertEqual(len(jour), sum(1 for x in dates if x[5:10] == '11-26' and x < '2026'))
 
 
 if __name__ == '__main__':

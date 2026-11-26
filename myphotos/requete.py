@@ -20,7 +20,8 @@ Interface
   aujourd_hui : date (ou datetime) des dates relatives et de l'année en cours.
   chercher_lieu(nom_normalise, indices) -> objet ou None ; l'appelant décide (il sait quels lieux ont des photos) ;
     indices = {'preposition': bool, 'majuscule': bool, 'mots': int}, plus 'debut' (le groupe ouvre la recherche : sa
-    majuscule ne prouve rien) et 'texte' (le groupe tel que tapé). Une exception, ou une liste vide, vaut « non ».
+    majuscule ne prouve rien), 'texte' (le groupe tel que tapé) et 'article' (un article entre la préposition et le
+    nom, « à la plage », ou une préposition contractée, « au port »). Une exception, ou une liste vide, vaut « non ».
   ignorer : textes des puces retirées : ces mots ne sont plus lus ni comme date ni comme lieu.
 - normaliser(texte) : la règle de lieux.normaliser (celle de lieux.py sert pour chercher_lieu quand il existe).
 - FiltreDates(periodes) (`in`, masque numpy, clause SQL), contient(), intervalles() : appliquer les périodes.
@@ -1403,8 +1404,11 @@ class _Lecture:
                 nom = _nom_lieu(texte)
                 if not nom:
                     continue
+                # article : entre la préposition et le nom (« à la plage »), ou dans la préposition (« au port ») ;
+                # un nom qui est aussi un mot courant est alors plutôt ce mot-là (choix de l'appelant).
                 indices = {'preposition': prep is not None, 'majuscule': self.majuscule(s, e), 'mots': lg,
-                           'debut': s == 0, 'texte': texte}
+                           'debut': s == 0, 'texte': texte,
+                           'article': art is not None or (prep is not None and prep[-1] in ('au', 'aux', 'du', 'des'))}
                 lieu = _appeler(chercher, nom, indices)
                 if lieu is None and prep and art is None and prep[-1] in ('au', 'aux', 'du', 'des'):
                     article = 'les ' if prep[-1] in ('aux', 'des') else 'le '      # « au Mans » : « le mans »

@@ -42,7 +42,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -381,6 +381,9 @@ class Base:
         self._ecriture = threading.RLock()            # une écriture à la fois dans ce programme
         self._fermee = False
         self.ecartes = []
+        # Numéro des lieux (0.5.0) : change à chaque écriture de lieux_photos par ce programme (enregistrer_lieux), que
+        # la génération ne suit pas ; avec generation(), il dit quand relire lieux_presents().
+        self.numero_lieux = 0
         try:
             with self._ecriture:
                 self._migrer(self._cnx())
@@ -1097,6 +1100,7 @@ class Base:
             c.executemany('INSERT OR REPLACE INTO lieux_photos(photo_id, ville, departement, region, pays, distance, '
                           'version) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)',
                           valeurs)
+            self.numero_lieux += 1
             return c.total_changes - avant
 
     @staticmethod
@@ -1129,6 +1133,106 @@ class Base:
             return [i for (i,) in c.execute('SELECT id FROM photos WHERE miniature = 1 '
                                             'ORDER BY COALESCE(date_prise, date_fichier) DESC, id DESC')
                     if i in voulus]
+
+    def _sous_requete_lieux(self, idents):
+        """(« SELECT photo_id FROM lieux_photos WHERE … », paramètres) des photos prises dans l'un de ces lieux."""
+        branches, params = [], []
+        for ident in idents:
+            colonne, ident = self._colonne_lieu(ident)
+            branches.append(f'SELECT photo_id FROM lieux_photos WHERE {colonne} = ?')
+            params.append(ident)
+        return ' UNION '.join(branches), params
+
+    def ids_des_lieux(self, idents):
+        """Identifiants des photos prises dans l'un de ces lieux (idents de lieux.py : « v:… », « d:… », « r:… »,
+        « p:… »), sans ordre ; [] sans ident. ValueError pour un ident illisible."""
+        idents = list(idents)
+        if not idents:
+            return []
+        sql, params = self._sous_requete_lieux(idents)
+        return [i for (i,) in self._cnx().execute(sql, params)]
+
+    def liste_filtree(self, intervalles=None, idents=None):
+        """Photos affichées (qui ont une miniature) de ces dates et de ces lieux (0.5.0) : [(id, date)], les plus
+        récentes d'abord, dans l'ordre de photos_par_date (date de prise de vue, sinon du fichier, en heure locale
+        comme dans l'index).
+
+        intervalles : [(debut, fin)] de datetime.date, fins comprises (requete.intervalles) ; None : pas de filtre de
+        date ; [] : aucune photo. idents : lieux de lieux.py (une photo prise dans l'un d'eux) ; None : pas de filtre de
+        lieu. Une requête par intervalle, dans l'index photos_date : une seule requête avec tous les intervalles (128
+        pour « Noël », un par année) prenait 0,5 s sur 100 000 photos, contre 1 ms ainsi (mesuré)."""
+        dates = 'COALESCE(date_prise, date_fichier)'
+        with self._lecture() as c:
+            voulus = None
+            if idents is not None:
+                idents = list(idents)
+                if not idents:
+                    return []
+                sql, params = self._sous_requete_lieux(idents)
+                voulus = {i for (i,) in c.execute(sql, params)}
+                if not voulus:
+                    return []
+            if intervalles is not None:
+                trouvees = {}
+                for d, f in intervalles:
+                    for i, quand in c.execute(f'SELECT id, {dates} FROM photos WHERE miniature = 1 AND {dates} >= ? '
+                                              f'AND {dates} < ?', (d.isoformat(), (f + timedelta(days=1)).isoformat())):
+                        if voulus is None or i in voulus:
+                            trouvees[i] = quand
+                lignes = list(trouvees.items())
+            elif len(voulus) <= PAQUET * 4:
+                # Peu de photos : leurs fiches, une à une (moins cher que tout l'index des dates).
+                lignes = []
+                for paquet in _paquets(sorted(voulus)):
+                    lignes += c.execute(f'SELECT id, {dates} FROM photos WHERE miniature = 1 AND id IN '
+                                        f'({",".join("?" * len(paquet))})', paquet).fetchall()
+            else:
+                # Beaucoup de photos (un pays) : tout l'index des dates, déjà dans l'ordre.
+                return [(i, quand) for i, quand in c.execute(
+                    f'SELECT id, {dates} FROM photos WHERE miniature = 1 ORDER BY {dates} DESC, id DESC') if i in voulus]
+        lignes.sort(key=lambda x: (x[1] or '', x[0]), reverse=True)
+        return lignes
+
+    def page_filtree(self, liste, debut=0, n=200):
+        """Une page d'une liste_filtree : {'total', 'debut', 'photos': [{id, date, largeur, hauteur}]} ; une photo
+        oubliée entre-temps est omise de la page."""
+        debut, n = max(0, int(debut)), max(0, int(n))
+        page = liste[debut:debut + n]
+        tailles = {}
+        c = self._cnx()
+        for paquet in _paquets([i for i, _d in page]):
+            tailles.update((i, (w, h)) for i, w, h in c.execute(
+                f'SELECT id, largeur, hauteur FROM photos WHERE id IN ({",".join("?" * len(paquet))})', paquet))
+        return {'total': len(liste), 'debut': debut,
+                'photos': [{'id': i, 'date': d, 'largeur': tailles[i][0], 'hauteur': tailles[i][1]}
+                           for i, d in page if i in tailles]}
+
+    def photos_filtrees(self, intervalles=None, idents=None, debut=0, n=200):
+        """Comme photos_par_date, limitées à des dates et à des lieux (voir liste_filtree) : {'total', 'debut',
+        'photos': [{id, date, largeur, hauteur}]}."""
+        return self.page_filtree(self.liste_filtree(intervalles, idents), debut, n)
+
+    def photos_du_jour(self, jours, avant):
+        """« Ce jour-là » (0.5.0) : photos affichées prises un de ces jours de l'année (jours : textes « MM-JJ »),
+        avant la date `avant` (texte ISO « AAAA-MM-JJ », exclue), date de prise de vue sinon du fichier : [{id, date,
+        largeur, hauteur}], dans l'ordre chronologique. Les dates sont lues dans l'index photos_date (sans relire les
+        fiches) ; seules les photos retenues sont relues."""
+        jours = [str(j) for j in jours]
+        if not jours:
+            return []
+        marques = ','.join('?' * len(jours))
+        with self._lecture() as c:
+            trouvees = c.execute(
+                'SELECT id, COALESCE(date_prise, date_fichier) FROM photos WHERE miniature = 1 '
+                f'AND substr(COALESCE(date_prise, date_fichier), 6, 5) IN ({marques}) '
+                'AND COALESCE(date_prise, date_fichier) < ? ORDER BY COALESCE(date_prise, date_fichier) DESC, id DESC',
+                jours + [str(avant)]).fetchall()
+            tailles = {}
+            for paquet in _paquets([i for i, _d in trouvees]):
+                tailles.update((i, (w, h)) for i, w, h in c.execute(
+                    f'SELECT id, largeur, hauteur FROM photos WHERE id IN ({",".join("?" * len(paquet))})', paquet))
+        return [{'id': i, 'date': d, 'largeur': tailles.get(i, (None, None))[0],
+                 'hauteur': tailles.get(i, (None, None))[1]} for i, d in reversed(trouvees)]
 
     def lieux_presents(self):
         """{ident: nombre de photos} des villes, départements, régions et pays où des photos (affichées) ont été
