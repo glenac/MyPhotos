@@ -48,7 +48,7 @@ jobs:
           MYPHOTOS_MODELES: ${{ runner.temp }}\modeles-absents
         run: |
           New-Item -ItemType Directory -Force $env:MYPHOTOS_ESSAI_UI, $env:MYPHOTOS_MODELES | Out-Null
-          python -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux
+          python -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux tests.test_requete
 
       - name: Garde-fou de publication
         env:
