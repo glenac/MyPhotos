@@ -294,7 +294,7 @@ python -m venv .venv
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (471 essais) :
+**Tests** (472 essais) :
 
 ```powershell
 .venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux

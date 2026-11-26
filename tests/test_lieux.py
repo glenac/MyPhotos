@@ -437,6 +437,18 @@ class TestPreparation(unittest.TestCase):
         self.assertIsNone(P.nom_francais([('en', 'London', True, True), ('es', 'Londres', True, False)]))
         self.assertIsNone(P.nom_francais([]))
 
+    def test_sans_prefixe(self):
+        for nom, court in (("Région Provence-Alpes-Côte d'Azur", "Provence-Alpes-Côte d'Azur"),
+                           ('Préfecture de Tokyo', 'Tokyo'), ('État de Berlin', 'Berlin'),
+                           ('Ville-État de Hambourg', 'Hambourg'), ('Province de Groningue', 'Groningue'),
+                           ("Province d'Anvers", 'Anvers'), ('district de Viana do Castelo', 'Viana do Castelo'),
+                           ('Canton de Glaris', 'Glaris'),
+                           # Sans nom propre derrière, ou sans mot administratif : inchangé.
+                           ('Région de la capitale', 'Région de la capitale'), ('Région du Lac', 'Région du Lac'),
+                           ('Communauté de Madrid', 'Communauté de Madrid'), ('Bretagne', 'Bretagne'),
+                           ('Région', 'Région')):
+            self.assertEqual(self.P.sans_prefixe(nom), court, nom)
+
     def test_arrondir(self):
         for brut, arrondi in ((144899, 140000), (2190327, 2200000), (847, 850), (12, 12), (0, 0), (99, 99),
                               (1049, 1000)):

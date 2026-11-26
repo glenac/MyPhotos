@@ -114,6 +114,10 @@ NOMS_CORRIGES = {
     'p:GB': 'Royaume-Uni', 'p:US': 'États-Unis', 'p:FR': 'France',
 }
 ARTICLES = ('le ', 'la ', 'les ', 'l ')
+# Noms de régions affichés sans leur mot administratif (« Région Provence-Alpes-Côte d'Azur », « Préfecture de
+# Tokyo », « État de Berlin », « Province de Groningue ») ; le nom complet reste un nom de recherche.
+PREFIXES_REGIONS = re.compile(r"^(?:Région|(?:Province|Préfecture|Canton|District|État|Ville-État|Comté|Gouvernorat)"
+                              r" (?:de|du|d')|district de)\s*(?=[A-ZÀ-ÖØ-Þ])")
 ECHELLE = 10000                              # positions au dix-millième de degré (11 m au plus)
 TAILLE_MAX = 1_950_000                       # le garde-fou de publication refuse les fichiers de plus de 2 Mo
 
@@ -231,6 +235,12 @@ class Ent:
         self.variantes = set()
         self.pays, self.region, self.departement = pays, region, departement
         self.population, self.lat, self.lon, self.gid = int(population or 0), lat, lon, gid
+
+
+def sans_prefixe(nom):
+    """Nom de région sans son mot administratif, s'il est suivi d'un nom propre (voir PREFIXES_REGIONS)."""
+    court = PREFIXES_REGIONS.sub('', nom, count=1).strip()
+    return court if court and court != nom else nom
 
 
 def arrondir(population):
@@ -395,6 +405,10 @@ def rassembler(cache, actualiser=False):
     for code, e in regions.items():
         if code in gid_regions:
             nommer(e, gid_regions[code], e.pays)
+        court = sans_prefixe(e.nom)
+        if court != e.nom:
+            e.variantes.add(e.nom)
+            e.nom = court
     for code, e in departements.items():
         nommer(e, gid_departements.get(code), 'FR')
     for v in villes[n_france:]:
