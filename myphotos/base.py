@@ -1112,8 +1112,8 @@ class Base:
     def ids_par_lieu(self, endroit):
         """Identifiants des photos prises dans ce lieu (Endroit de lieux.py ou son ident) : selon son type, celles de
         la ville, du département, de la région ou du pays. Seulement les photos affichées (qui ont une miniature), les
-        plus récentes d'abord, comme photos_par_date. Mesuré sur 100 000 photos : 1 ms pour une ville, 60 ms pour la
-        France entière (70 000 photos)."""
+        plus récentes d'abord, comme photos_par_date. Mesuré sur 100 000 photos : 1 ms pour une ville, 50 ms pour la
+        France entière (70 000 photos). ValueError si ce n'est ni un Endroit ni un ident."""
         colonne, ident = self._colonne_lieu(endroit)
         with self._lecture() as c:
             ids = [i for (i,) in c.execute(f'SELECT photo_id FROM lieux_photos WHERE {colonne} = ?', (ident,))]

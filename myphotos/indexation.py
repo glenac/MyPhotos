@@ -1081,6 +1081,7 @@ class Indexeur:
         à l'arrêt, à une pause ou à une demande d'inventaire (la suite au passage suivant). Une erreur est notée au
         journal sans arrêter l'analyse. Renvoie le nombre de photos localisées."""
         n = 0
+        annonce, avant = False, None
         try:
             source = self.source_lieux if self.source_lieux is not None else lieux.lieux()
             version = source.version                 # charge les données, une fois (0,2 s environ)
@@ -1088,6 +1089,11 @@ class Indexeur:
                 return 0
             while not self._interrompu() and self._en_marche.is_set():
                 lot = self.base.a_localiser(LIEUX_LOT, version)
+                if lot and not annonce:              # plusieurs secondes pour des dizaines de milliers de photos
+                    annonce = True
+                    with self._verrou:
+                        avant = self._etat['message']
+                    self._changer(message='Recherche des lieux des photos…')
                 lignes = []
                 for pid, lat, lon in lot:
                     r = source.localiser(lat, lon) or {}
@@ -1100,6 +1106,9 @@ class Indexeur:
                     break
         except Exception:
             journal.exception('lieux des photos')
+        finally:
+            if annonce:
+                self._changer(message=avant)
         if n:
             journal.info('lieux : %d photo(s) localisée(s)', n)
         return n

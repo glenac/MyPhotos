@@ -858,6 +858,7 @@ class TestCalculEnArrierePlan(unittest.TestCase):
                                 'date_prise': None, 'lat': rnd.uniform(43, 50), 'lon': rnd.uniform(-1, 6),
                                 'vecteur': v, 'miniature': b'jpeg'} for ch, t, _, _ in lignes], [], 'base')
         appels = []
+        messages = set()
         vraie = donnees()
 
         class Espion:
@@ -865,12 +866,15 @@ class TestCalculEnArrierePlan(unittest.TestCase):
 
             def localiser(self, lat, lon):
                 appels.append(1)
+                messages.add(ix._etat['message'])
                 if len(appels) == 100:
                     ix._arret.set()                          # arrêt demandé pendant le premier lot
                 return vraie.localiser(lat, lon)
         ix.source_lieux = Espion()
         with mock.patch.object(indexation, 'LIEUX_LOT', 100):
             self.assertEqual(ix._localiser(), 100)           # le lot commencé est écrit, puis on s'arrête
+            self.assertEqual(messages, {'Recherche des lieux des photos…'})    # ce que la page affiche
+            self.assertIsNone(ix._etat['message'])                             # puis le message d'avant
             self.assertEqual(len(self.base.a_localiser(1000, vraie.version)), 150)
             ix._arret.clear()
             ix.pause()

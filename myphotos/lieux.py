@@ -363,8 +363,8 @@ class Lieux:
                 try:
                     entete, sections = lire_fichier(self.chemin)
                     self._d = _Donnees(entete, sections)
-                except (OSError, DonneesInvalides, KeyError, TypeError, ValueError) as e:
-                    journal.warning('lieux : données inutilisables (%s), les photos ne seront pas localisées', e)
+                except Exception as e:                # fichier absent, abîmé, d'un autre format : jamais d'erreur
+                    journal.warning('lieux : données inutilisables (%r), les photos ne seront pas localisées', e)
                 finally:
                     self._essaye = True
             return self._d
