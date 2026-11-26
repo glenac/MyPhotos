@@ -39,7 +39,10 @@ Généralités
 - Années : 4 chiffres, de 1900 à l'année en cours (« 1500 », « 2045 » restent des mots) ; jointes à une fête, un mois,
   une saison ou un jour, jusqu'à l'an prochain (Nouvel An, appareil mal réglé). Deux chiffres seulement jointes
   (« mars 21 », « été 98 », « mai 68 ») : jusqu'à l'an prochain 2000 + n, sinon 1900 + n. Une année suivie d'une
-  unité (« 2000 euros », « 1500 m ») ou précédée de « n° » reste un mot.
+  unité (« 2000 euros », « 1500 m »), ou précédée de « n° » ou d'un nom de modèle (« Peugeot 2008 », « Windows
+  2000 », « chambre 2019 »), reste un mot ; « en 2008 » reste une année. « bonne année 2020 » : l'année 2020, et les
+  mots « bonne année » (des vœux). Une année hors limites jointe à une date (« Noël 2045 », « 14 juillet 1789 »)
+  laisse toute l'expression parmi les mots.
 - Nombres : « 2 chiens », « 3 ans » (« enfant de 3 ans »), « 12 », « 100 ans » restent des mots ; « il y a 3 ans » est
   une date. « 14/07 » sans année non plus (score, fraction).
 
@@ -64,7 +67,8 @@ Saisons
 - Sans année, une saison n'est une date qu'avec « en », « au », « l' », « le », « les », « pendant », « cet »,
   « photos de » ou « dernier » : « l'été » = tous les étés (avec l'article, c'est le nom, jamais le verbe). Seule,
   elle reste un mot : « été » (« a été », « avait été » : après un auxiliaire, jamais une saison), « l'été indien »,
-  « Printemps » (le magasin), « robe d'été », « soirée d'été ».
+  « Printemps » (le magasin), « robe d'été », « soirée d'été ». Suivie de « de » et d'autre chose qu'une date, elle
+  nomme autre chose (« le printemps de Bourges », « l'été de mes 10 ans ») : des mots ; « l'été de 2019 » = été 2019.
 - « cet été » : le dernier commencé. « l'été dernier » : le dernier fini, et, s'il a commencé cette année, celui
   d'avant aussi (en novembre, « l'été dernier » peut vouloir dire les deux). Même règle pour « Noël dernier »,
   « août dernier »…
@@ -98,7 +102,8 @@ Dates relatives (par rapport à aujourd_hui)
 - aujourd'hui (ce matin, ce soir…), hier, avant-hier, cette nuit (hier et aujourd'hui) ; cette semaine, la semaine
   dernière : lundi au dimanche ; ce week-end : le dernier commencé ; le week-end dernier : le dernier fini ; ce
   mois-ci, le mois dernier : mois entiers ; cette année, l'an dernier : années entières (qui se combinent avec une
-  fête : « Noël l'an dernier »). « lundi dernier » : le dernier lundi avant aujourd'hui.
+  fête : « Noël l'an dernier »). « lundi dernier » : le dernier lundi avant aujourd'hui. « ce soir-là », « cette
+  année-là », « cet été-là » (« là » avec l'accent, ou collé par un tiret) parlent d'un autre jour : des mots.
 - « il y a N jours » : ce jour-là, à N/7 jours près (une approximation grandit avec la distance) ; « il y a N
   semaines » : la semaine (lundi-dimanche) de ce jour-là, et 3 jours autour ; « il y a N mois » : le mois de ce
   jour-là, et 15 jours autour ; « il y a N ans » : l'année de ce jour-là ET 3 mois autour (le 26/11/2026, « il y a
@@ -264,6 +269,12 @@ _UNITES = {'euro', 'euros', 'eur', 'e', 'dollar', 'dollars', 'usd', 'km', 'm', '
            'an', 'ans', 'jour', 'jours', 'h', 'heure', 'heures', 'min', 'minute', 'minutes', 'cv', 'chevaux', 'point',
            'points', 'pts', 'page', 'pages', 'mot', 'mots', 'pixel', 'pixels', 'px', 'ko', 'mo', 'go', 'w', 'watts',
            'v', 'volts', 'pas', 'tour', 'tours', 'fois', 'mille', 'exemplaires', 'places', 'marches', 'metres'}
+# Devant ces mots, un nombre de 4 chiffres est un numéro ou un modèle, pas une année (« Peugeot 2008 »).
+_AVANT_NUMERO = {'n', 'no', 'numero', 'num', 'peugeot', 'renault', 'citroen', 'windows', 'office', 'iphone', 'ipad',
+                 'galaxy', 'samsung', 'nokia', 'boeing', 'airbus', 'model', 'modele', 'version', 'serie', 'reference',
+                 'ref', 'chambre', 'bus', 'ligne', 'vol', 'tgv', 'train', 'route', 'porte', 'code', 'fifa', 'xbox',
+                 'playstation', 'canon', 'nikon', 'sony'}
+_VOEUX = {'bonne', 'heureuse', 'nouvelle', 'belle', 'excellente', 'meilleure'}     # « bonne année 2020 » : des vœux
 # Petits mots qui introduisent une date ; ils partent avec elle (« photos de l'été 2022 », « lors de la Toussaint »).
 _INTRO = {'en', 'au', 'aux', 'a', 'pour', 'pendant', 'durant', 'lors', 'le', 'la', 'les', 'l', 'du', 'de', 'des',
           'd', 'dans'}
@@ -739,6 +750,8 @@ class _Lecture:
             a1, a2 = self.annee(k + 1, maxi), self.annee(k + 3, maxi)
             if a1 and a2 and self.mot(k + 2) in (('a', 'au') if w == 'de' else ('et',)):
                 return [(min(a1, a2), max(a1, a2))], k + 4
+            if w == 'de' and a1 and self.mot(k + 2) not in ('a', 'au', '-'):     # « l'été de 2019 »
+                return [(a1, a1)], k + 2
             return None, k
         pc = self.plage_composee(k, maxi)
         if pc:
@@ -795,6 +808,13 @@ class _Lecture:
             return q, False
         return None
 
+    def la_demonstratif(self, k):
+        """Le mot k est le « là » de « ce soir-là » : écrit « là », ou « la » collé par un tiret."""
+        if not 0 < k < self.N or self.n[k] != 'la':
+            return False
+        x = self.j[k]
+        return x.brut.casefold() == 'là' or any(c in _TIRETS for c in self.t[self.j[k - 1].fin:x.debut])
+
     def voie(self, p):
         """« rue du 14 juillet », « avenue du 8 mai 1945 » : un nom de rue, pas une date."""
         return p >= 2 and self.n[p - 1] in _DE and self.n[p - 2] in _VOIES
@@ -837,6 +857,8 @@ class _Lecture:
             if e is None:
                 i += 1
                 continue
+            if self.la_demonstratif(e.j) and any(self.n[k] in ('ce', 'cet', 'cette') for k in range(e.i, e.j)):
+                e = _Expr(e.i, e.j + 1, '', verrou=True)     # « ce soir-là », « cette année-là » : pas aujourd'hui
             for k in range(e.i, e.j):
                 self.etat[k] = 1 if e.verrou else 2
             if not e.verrou:
@@ -1204,7 +1226,11 @@ class _Lecture:
             return self.expr_regle(debut, k + 1, regle, None, 'derniere')
         if suivant in _PROCHAIN or self.annee_hors(k):
             return _Expr(debut, k + 1, '', verrou=True)
-        return _Expr(debut, k, regle.nom, regle=regle) if fort else None
+        if not fort:
+            return None
+        if suivant in _DE and self.date_en(k + 1, modifier=False) is None:
+            return None                  # « le printemps de Bourges », « l'été de mes 10 ans » : un nom, pas la saison
+        return _Expr(debut, k, regle.nom, regle=regle)
 
     def decennie(self, p, intro):
         """« années 90 », « années 1990 », « années 2000 », « années soixante », « début des années 2000 »."""
@@ -1267,7 +1293,9 @@ class _Lecture:
             m1, m2 = {'debut': (1, 4), 'mi': (5, 8), 'milieu': (5, 8), 'fin': (9, 12)}[w]
             lib = {'debut': f'début {y}', 'mi': f'mi-{y}', 'milieu': f'mi-{y}', 'fin': f'fin {y}'}[w]
             return self.periode(p, k + 1, date(y, m1, 1), _dernier_jour(y, m2), lib)
-        k, indice = (p + 1, True) if w in ('annee', 'annees', 'an') else (p, False)
+        k, indice = (p, False)
+        if w in ('annee', 'annees', 'an') and not (p > 0 and self.n[p - 1] in _VOEUX):   # « bonne année 2020 »
+            k, indice = p + 1, True
         y = self.annee(k, a.year)
         if y is None:
             x = self.mot(k)
@@ -1281,8 +1309,8 @@ class _Lecture:
             if y2:
                 return self.expr_annees(p, k + 3, [(min(y, y2), max(y, y2))])
         if not indice and ((k + 1 < self.N and self.n[k + 1] in _UNITES)
-                           or (p > 0 and self.n[p - 1] in ('n', 'no', 'numero', 'num'))):
-            return None                                  # « 2000 euros », « n° 2019 »
+                           or (not intro and p > 0 and self.n[p - 1] in _AVANT_NUMERO)):
+            return None                                  # « 2000 euros », « n° 2019 », « Peugeot 2008 »
         return self.expr_annees(p, k + 1, [(y, y)])
 
     def modifie(self, p, intro):
