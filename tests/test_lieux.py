@@ -102,6 +102,7 @@ class TestNormaliser(unittest.TestCase):
         self.assertEqual(normaliser('Paris\t15\n'), 'paris 15')
         self.assertEqual(normaliser(''), '')
         self.assertEqual(normaliser('—'), '')
+        self.assertEqual(normaliser(None), '')
 
     def test_idempotente(self):
         for nom in ("L'Haÿ-les-Roses", 'St-Malo', 'Œuilly', 'Saint-Étienne', 'Ste  Anne'):
@@ -415,6 +416,91 @@ class TestProche(unittest.TestCase):
         duree = time.perf_counter() - debut
         self.assertGreater(trouvees, 7000)                   # le reste : la mer, l'étranger proche
         self.assertLess(duree, 2.0, f'{duree:.2f} s pour 10 000 photos')
+
+
+class TestPreparation(unittest.TestCase):
+    """outils/preparer_lieux.py, sans réseau : nom français, arrondis, cache, téléchargement contrôlé."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(RACINE / 'outils'))
+        import preparer_lieux
+        cls.P = preparer_lieux
+
+    def test_nom_francais(self):
+        P = self.P
+        self.assertEqual(P.nom_francais([('fr', 'Région Bretagne', True, False), ('fr', 'Bretagne', True, True)]),
+                         'Bretagne')
+        self.assertEqual(P.nom_francais([('fr', 'R.-u.', False, False), ('fr', 'Royaume-Uni', True, False)]),
+                         'Royaume-Uni')
+        self.assertEqual(P.nom_francais([('en', 'Seville', True, False), ('fr', 'Séville', False, False)]), 'Séville')
+        self.assertIsNone(P.nom_francais([('en', 'London', True, True), ('es', 'Londres', True, False)]))
+        self.assertIsNone(P.nom_francais([]))
+
+    def test_arrondir(self):
+        for brut, arrondi in ((144899, 140000), (2190327, 2200000), (847, 850), (12, 12), (0, 0), (99, 99),
+                              (1049, 1000)):
+            self.assertEqual(self.P.arrondir(brut), arrondi, brut)
+
+    def test_cache(self):
+        with mock.patch.dict(os.environ, {'MYPHOTOS_CACHE_CONSTRUCTION': 'C:\\cache-essai'}):
+            self.assertEqual(self.P.dossier_cache(), Path('C:\\cache-essai') / 'geonames')
+            self.assertEqual(self.P.dossier_cache('ailleurs'), Path('ailleurs'))
+        with mock.patch.dict(os.environ, {'MYPHOTOS_CACHE_CONSTRUCTION': '', 'LOCALAPPDATA': 'C:\\local'}):
+            self.assertEqual(self.P.dossier_cache(),
+                             Path('C:\\local') / 'MyPhotos-construction' / 'cache' / 'geonames')
+        self.assertFalse(str(self.P.dossier_cache()).startswith(str(RACINE)))   # jamais dans le dépôt
+
+    def test_telechargement(self):
+        P = self.P
+        tmp = Path(tempfile.mkdtemp(prefix='myphotos-lieux-'))
+        appels = []
+
+        class Reponse(io.BytesIO):
+            def __init__(self, contenu, adresse, longueur=None):
+                super().__init__(contenu)
+                self.adresse = adresse
+                self.headers = {'Content-Length': str(len(contenu) if longueur is None else longueur),
+                                'Last-Modified': 'Wed, 25 Nov 2026 03:00:00 GMT'}
+
+            def geturl(self):
+                return self.adresse
+
+        def ouvrir(reponse):
+            def f(requete, timeout=None):
+                appels.append(requete.full_url)
+                self.assertTrue(requete.full_url.startswith('https://download.geonames.org/export/dump/'))
+                self.assertNotIn('@', requete.get_header('User-agent'))     # rien qui identifie l'utilisateur
+                return reponse
+            return f
+        silence = mock.patch('builtins.print')
+        silence.start()
+        try:
+            with mock.patch.object(P.urllib.request, 'urlopen', ouvrir(Reponse(b'pays\n', P.ADRESSE + 'x.txt'))):
+                f = P.telecharger('x.txt', tmp)
+            self.assertEqual(f.read_bytes(), b'pays\n')
+            self.assertEqual(time.strftime('%Y-%m-%d', time.gmtime(f.stat().st_mtime)), '2026-11-25')
+            with mock.patch.object(P.urllib.request, 'urlopen', ouvrir(None)):
+                self.assertEqual(P.telecharger('x.txt', tmp), f)                # déjà là : rien à télécharger
+            self.assertEqual(len(appels), 1)
+            with mock.patch.object(P.urllib.request, 'urlopen', ouvrir(Reponse(b'neuf\n', P.ADRESSE + 'x.txt'))):
+                P.telecharger('x.txt', tmp, actualiser=True)
+            self.assertEqual(f.read_bytes(), b'neuf\n')
+            for reponse in (Reponse(b'abc', P.ADRESSE + 'y.txt', longueur=10),     # incomplet
+                            Reponse(b'abc', 'http://download.geonames.org/export/dump/y.txt')):   # hors HTTPS
+                with mock.patch.object(P.urllib.request, 'urlopen', ouvrir(reponse)):
+                    with self.assertRaises(SystemExit):
+                        P.telecharger('y.txt', tmp)
+                self.assertFalse((tmp / 'y.txt').exists())
+        finally:
+            silence.stop()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_sources(self):
+        noms = self.P.fichiers_sources()
+        for f in ('cities500.zip', 'FR.zip', 'RE.zip', 'NC.zip', 'alternateNamesV2.zip', 'countryInfo.txt'):
+            self.assertIn(f, noms)
+        self.assertEqual(self.P.SORTIE, FICHIER)
 
 
 # ---------------------------------------------------------------- base

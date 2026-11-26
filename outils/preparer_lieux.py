@@ -11,7 +11,8 @@ dépôt : --cache, sinon %MYPHOTOS_CACHE_CONSTRUCTION%\geonames, sinon %LOCALAPP
 --actualiser les télécharge de nouveau. Le script est relançable : les mêmes sources donnent exactement le même
 fichier (même empreinte, même version).
 
-Ce qui est gardé (seuils choisis en mesurant la taille du fichier, qui doit rester sous 2 Mo : voir COUVERTURE) :
+Ce qui est gardé (seuils choisis en mesurant la taille du fichier, qui doit rester sous 2 Mo : PROCHES, SEUIL_PROCHES
+et SEUIL_MONDE ci-dessous ; mesures dans docs/ARCHITECTURE.md, section « Lieux ») :
 - France, métropole et outre-mer : toutes les communes (chef-lieu de chaque commune, et anciennes communes d'une
   commune nouvelle quand GeoNames leur donne une population : Cherbourg et Tourlaville dans Cherbourg-en-Cotentin) ;
 - pays voisins et lieux de vacances habituels (PROCHES) : les villes et villages d'au moins SEUIL_PROCHES habitants ;
@@ -25,9 +26,13 @@ noms de leurs départements.
 
 Format du fichier (lu par myphotos/lieux.py) : MAGIQUE (15 octets), numéro du format (1 octet), longueur de l'en-tête
 (4 octets), en-tête JSON (version, sources avec leur date et leur taille, couverture, comptes, empreinte, sections),
-puis le contenu compressé par LZMA : des sections (blocs de noms séparés par des sauts de ligne, tableaux numériques
-little-endian). Endroits numérotés dans cet ordre : pays, régions, départements, villes ; à l'intérieur de chaque type,
-par population décroissante.
+puis le contenu compressé par LZMA : des sections (blocs de textes terminés par un saut de ligne, tableaux numériques
+little-endian). Endroits numérotés dans cet ordre : pays, régions et départements (chacun par population
+décroissante), puis villes (par numéro GeoNames). Sections : noms (nom affiché de chaque endroit), cles (son nom
+normalisé), variantes et variantes_endroits (autres noms normalisés et leur endroit, en différences), codes (codes des
+pays, régions et départements), population, region_pays, departement_region, ville_pays, ville_region,
+ville_departement, ville_geonames, ville_lat et ville_lon (au dix-millième de degré ; numéros et positions en
+différences successives).
 """
 import argparse
 import hashlib
@@ -417,8 +422,8 @@ def rassembler(cache, actualiser=False):
                            key=lambda e: (-e.population, e.code))
     liste_deps = sorted(departements.values(), key=lambda e: (-e.population, e.code))
     # Villes rangées par numéro GeoNames : GeoNames les a numérotées pays par pays, souvent dans l'ordre alphabétique ;
-    # noms et numéros se compressent alors le mieux (mesuré : 0,94 Mo pour les noms, numéros, positions et régions,
-    # contre 1,00 Mo dans l'ordre de la grille et 1,36 Mo par population).
+    # noms et numéros se compressent alors le mieux (mesuré sur une première sélection de 95 004 villes : 0,94 Mo pour
+    # leurs noms, numéros, positions et régions, contre 1,00 Mo dans l'ordre de la grille et 1,36 Mo par population).
     villes.sort(key=lambda v: v.gid)
 
     # Variantes françaises sans article (« Les Sables-d'Olonne » -> « sables d olonne »), s'il reste deux mots au moins.

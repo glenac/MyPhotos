@@ -81,7 +81,9 @@ _ABREGES = {'st': 'saint', 'ste': 'sainte'}
 def normaliser(texte):
     """Forme de comparaison d'un nom : minuscules, sans accents, apostrophes, tirets et autres signes changés en
     espaces, espaces simples, « st » et « ste » écrits « saint » et « sainte ». « Saint-Malo », « St Malo » et
-    « saint malo » donnent tous « saint malo » ; « L'Haÿ-les-Roses » donne « l hay les roses »."""
+    « saint malo » donnent tous « saint malo » ; « L'Haÿ-les-Roses » donne « l hay les roses ». None donne ''."""
+    if texte is None:
+        return ''
     t = unicodedata.normalize('NFKD', str(texte).casefold())
     t = _COMBINANTS.sub('', t).translate(_LETTRES)
     return ' '.join(_ABREGES.get(m, m) for m in _SEPARATEURS.sub(' ', t).split())
@@ -408,7 +410,7 @@ class Lieux:
                         'r:' + d.codes[d.n_pays + r] if r >= 0 else None,
                         'd:' + d.codes[d.n_pays + d.n_regions + dep] if dep >= 0 else None,
                         int(d.pop[e]), round(float(d.v_lat[v]), 5), round(float(d.v_lon[v]), 5))
-        if len(self._cache) > 20000:
+        if len(self._cache) > 4096:                  # quelques centaines de Ko au plus
             self._cache.clear()
         self._cache[e] = x
         return x
@@ -471,8 +473,7 @@ class Lieux:
         if d is None or not isinstance(nom_normalise, str) or not nom_normalise:
             return []
         indices = d.trouver(nom_normalise)
-        # Les endroits sont rangés dans le fichier par type (pays, régions, départements, villes) ; à l'intérieur de
-        # chaque type, par population décroissante.
+        # Par type (pays, régions, départements, villes), puis population décroissante ; à égalité, l'ordre du fichier.
         return [self._endroit(d, e) for e in sorted(indices, key=lambda e: (_rang(d, e), -int(d.pop[e]), e))]
 
     def parents(self, endroit):
