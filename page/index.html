@@ -2761,10 +2761,13 @@ const motsCherches = () => R.mots || R.q;
 /** Puces des dates et des lieux reconnus dans la recherche, et phrase des photos sans position GPS ; d = réponse du
  *  serveur, ou null pour tout effacer. Textes par textContent seulement (un nom de lieu n'est jamais du HTML). */
 function majFiltres(d) {
+  const avant = JSON.stringify([R.puces, R.sansPosition]);
   if (d) {
     R.puces = (d.puces || []).filter((p) => p && typeof p.libelle === 'string' && typeof p.texte === 'string');
     R.mots = typeof d.mots === 'string' && d.mots ? d.mots : null;
     R.sansPosition = Number.isInteger(d.sans_position) ? d.sans_position : null;
+    // Pages suivantes de la même recherche : rien ne change, les puces restent (le focus d'un × aussi).
+    if (JSON.stringify([R.puces, R.sansPosition]) === avant && $('#filtres').childElementCount === R.puces.length) return;
   }
   const zone = $('#filtres');
   remplacer(zone, R.puces.map(puceFiltre));

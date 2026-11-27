@@ -15,7 +15,8 @@ Vous avez des milliers de photos et vous ne retrouvez jamais celle du gâteau d'
 - « gâteau d'anniversaire », « sapin de Noël », « pizza » ;
 - « voiture », « vélo », « bateau » ;
 - « chien sur la plage », « match de basket-ball » ;
-- « capture d'écran », « chantier ».
+- « capture d'écran », « chantier » ;
+- et, depuis la 0.5.0, quand et où : « Noël 2019 », « plage en Bretagne », « chien été 2022 », « photos de Séville ».
 
 Inutile d'avoir rangé, renommé ou étiqueté vos photos : MyPhotos comprend leur contenu, à la manière de Google Photos, mais sans rien envoyer sur Internet. Sans recherche, il affiche toutes vos photos, des plus récentes aux plus anciennes, mois par mois. Il permet aussi de cocher des photos pour les copier ou les mettre à la Corbeille, et de repérer vos photos en double ([Les doublons](#les-doublons)).
 
@@ -77,11 +78,15 @@ L'analyse continue en arrière-plan. Le bandeau en haut de la page permet de la 
 - Peu de résultats ? Le bouton **Voir les photos les plus proches** montre, 60 par 60, celles qui s'approchent le plus de votre recherche, dans la rubrique **Moins probables**.
 - Cliquez sur une photo pour l'ouvrir dans la **visionneuse**.
 
+**Dates et lieux** (0.5.0). Dites aussi quand et où : « Noël 2019 », « plage en Bretagne », « chien été 2022 », « anniversaire en mars 2021 », « photos de Séville », « il y a 2 ans », « l'été dernier ». MyPhotos reconnaît les dates (une année, un mois, une saison, une fête comme Noël, Pâques ou le 14 juillet, « l'été dernier », « il y a 3 ans », « le 3 mai 2020 »…) et les lieux (villes, départements, régions et pays où vous avez des photos), puis ne montre que les photos de ces dates et de ces lieux ; les autres mots (« plage », « chien ») sont cherchés parmi elles, comme d'habitude. Sans autre mot (« Noël 2019 », « Bretagne »), elles s'affichent toutes, mois par mois. La date est celle de la prise de vue, sinon celle du fichier ; le lieu vient de la position GPS enregistrée par l'appareil photo ou le téléphone, et MyPhotos le trouve sur votre ordinateur, sans Internet. Au-dessus des résultats, une étiquette rappelle chaque date et chaque lieu reconnus (« 📅 Noël 2019 », « 📍 Bretagne ») ; sa croix la retire, et ses mots sont alors cherchés dans les photos, comme avant. C'est utile quand MyPhotos se trompe : « Orange » avec une majuscule, ou « à Orange », désigne la ville (si vous y avez des photos) ; « orange » en minuscules reste la couleur. Quand un lieu est demandé, MyPhotos dit aussi combien de vos photos n'ont pas de position GPS (voir [Questions fréquentes](#pourquoi-certaines-photos-ne-sont-pas-trouvées-par-lieu-)).
+
+**Ce jour-là** (0.5.0). Sans recherche, en tête de toutes vos photos, MyPhotos montre celles prises le même jour les années passées : « Il y a 1 an », « Il y a 3 ans »…, jusqu'à 12 photos par année, réparties sur la journée. Un clic en ouvre une dans la visionneuse, où les flèches passent aux autres photos de ce jour ; **Voir les 25 photos de ce jour** les montre toutes. Les trois années les plus récentes s'affichent d'abord, les autres avec **Voir les autres années**, et la flèche du titre replie le bloc. Les photos d'un 29 février reviennent le 28 février des autres années. Sans photo ce jour-là, rien ne s'affiche.
+
 ![Recherche « chien » : les photos de chiens s'affichent](docs/captures/recherche.png)
 
 ![La visionneuse de MyPhotos](docs/captures/visionneuse.jpg)
 
-Dans la visionneuse, les flèches (à l'écran, ou ← et → au clavier) passent d'une photo à l'autre. En bas s'affichent la date de la photo et son dossier. **Ouvrir avec la visionneuse Windows** ouvre la photo dans le logiciel habituel de Windows, **Afficher dans le dossier** ouvre l'Explorateur sur la photo, et **Fermer** (ou la touche Échap) ramène aux résultats. **Copier**, **Copier dans un dossier…** et **Supprimer** agissent sur la photo affichée (voir ci-dessous).
+Dans la visionneuse, les flèches (à l'écran, ou ← et → au clavier) passent d'une photo à l'autre. En bas s'affichent la date de la photo, son lieu quand elle a une position GPS (« 📍 Brest, Finistère, Bretagne, France » : un clic montre toutes les photos prises à cet endroit) et son dossier. **Ouvrir avec la visionneuse Windows** ouvre la photo dans le logiciel habituel de Windows, **Afficher dans le dossier** ouvre l'Explorateur sur la photo, et **Fermer** (ou la touche Échap) ramène aux résultats. **Copier**, **Copier dans un dossier…** et **Supprimer** agissent sur la photo affichée (voir ci-dessous).
 
 **Plus comme celle-ci** affiche, à la place des résultats, les photos qui ressemblent le plus à la photo ouverte, de la plus ressemblante à la moins ressemblante, sous le titre « Photos qui ressemblent à celle du 12 août 2023 ». Le bouton **Revenir**, au-dessus du titre (ou la touche Échap), ramène à la liste d'avant : votre recherche, toutes vos photos ou les doublons. MyPhotos compare ce qu'il a déjà vu dans chaque photo : la réponse est immédiate, même avec des dizaines de milliers de photos, et seules les photos déjà analysées sont proposées.
 
@@ -264,6 +269,10 @@ En français de préférence : c'est la langue de référence de MyPhotos, et s
 
 Pour chaque photo, le moteur estime la probabilité qu'elle corresponde à votre recherche. Au-dessus d'un premier seuil, la photo est « sûre » ; un peu en dessous, elle est rangée dans « Moins sûres ». Les deux seuils ont été réglés pour chaque moteur sur le jeu d'essai.
 
+### Pourquoi certaines photos ne sont pas trouvées par lieu ?
+
+MyPhotos ne connaît le lieu d'une photo que par sa position GPS, enregistrée par l'appareil au moment de la prise de vue. Beaucoup de photos n'en ont pas : appareils photo sans GPS, localisation désactivée dans l'appareil photo du téléphone, photos scannées, captures d'écran, photos reçues par WhatsApp, Messenger ou par e-mail (ces applications retirent souvent la position), photos retouchées par certains logiciels. Ces photos ne peuvent pas être retrouvées par lieu : quand une recherche porte sur un lieu, MyPhotos dit combien de vos photos sont dans ce cas. Elles restent faciles à retrouver par ce qu'elles montrent et par leur date. Les lieux connus : toutes les communes de France, métropole et outre-mer ; les villes et villages des pays voisins et des destinations de vacances habituelles ; ailleurs, les villes d'au moins 5 000 habitants. Une photo prise à plus de 30 km de toute ville connue (en mer, en pleine montagne) n'a que son pays. Juste après l'analyse, MyPhotos cherche le lieu de chaque photo : quelques secondes pour des milliers de photos.
+
 ### Mes photos sont sur un disque externe ou sur le réseau.
 
 Ajoutez le dossier comme les autres. Si le disque est débranché ou le dossier injoignable, MyPhotos garde ce qu'il en sait et reprend quand le dossier revient. Depuis la 0.4.0, il reconnaît aussi le disque lui-même (son numéro de série) : si un autre disque prend la même lettre, par exemple deux disques USB qui échangent leurs lettres, le dossier est simplement traité comme débranché, et rien n'est oublié. Un disque recopié ou cloné, qui porte les mêmes photos aux mêmes endroits, est reconnu et repris tel quel. Si c'est bien votre disque, mais que ses photos ont beaucoup changé (disque remplacé, photos rangées autrement), les Réglages le signalent sous le dossier (« un autre disque occupe sa lettre ») et proposent **C'est bien le même disque** : après confirmation, MyPhotos adopte ce disque et refait le tour du dossier. Un même dossier ne peut pas être ajouté deux fois, même écrit autrement (nom court comme « PHOTOS~1 », raccourci de dossier) : MyPhotos le reconnaît et le dit.
@@ -294,13 +303,13 @@ python -m venv .venv
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (472 essais) :
+**Tests** (924 essais) :
 
 ```powershell
-.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux
+.venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux tests.test_requete
 ```
 
-`test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_lieux` essaie les lieux (noms, proximité, base, calcul en arrière-plan) sur les données embarquées et des images générées avec des positions GPS fabriquées ; il relit une base de la 0.5 avec le `base.py` de la 0.4.1, tiré de l'historique du dépôt (`git show`). `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`, `--dossier`, `--installateur`) et les règles de l'installateur (`construction/MyPhotos.iss`) ; son essai réel (compilation, installation dans un dossier d'essai, mise à jour, désinstallations) ne tourne qu'à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`). `test_fenetre` essaie la fenêtre et ses replis (Edge, navigateur), la relance et la fermeture ; ses essais réels, sur un bureau Windows invisible et pilotés par le protocole DevTools, ne tournent qu'à la demande (`MYPHOTOS_ESSAI_FENETRE=1`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
+`test_coeur` travaille avec un moteur factice et des images générées. `test_serveur` lance un vrai serveur sur un port d'essai et réutilise les moteurs déjà téléchargés (`donnees\modele`, ou `MYPHOTOS_MODELES`) ; son essai de bout en bout demande un dossier d'images publiques (`MYPHOTOS_ESSAI_PHOTOS`). `test_doublons` essaie la recherche des doublons sur des images générées. `test_lieux` essaie les lieux (noms, proximité, base, calcul en arrière-plan) sur les données embarquées et des images générées avec des positions GPS fabriquées ; il relit une base de la 0.5 avec le `base.py` de la 0.4.1, tiré de l'historique du dépôt (`git show`). `test_requete` essaie la lecture des dates et des lieux d'une recherche (chaque forme de date, pièges qui doivent rester des mots, lieux factices). `test_serveur` compare aussi, sur la même base, les réponses d'une recherche sans date ni lieu à celles du code de la 0.4.1 lui-même (`git archive`). `test_construction` essaie, sans réseau, la préparation de la publication (`construire.py --paquet`, `--dossier`, `--installateur`) et les règles de l'installateur (`construction/MyPhotos.iss`) ; son essai réel (compilation, installation dans un dossier d'essai, mise à jour, désinstallations) ne tourne qu'à la demande (`MYPHOTOS_ESSAI_INSTALLATEUR=1`). `test_fenetre` essaie la fenêtre et ses replis (Edge, navigateur), la relance et la fermeture ; ses essais réels, sur un bureau Windows invisible et pilotés par le protocole DevTools, ne tournent qu'à la demande (`MYPHOTOS_ESSAI_FENETRE=1`). Le presse-papiers, la fenêtre « Choisir un dossier » et la Corbeille sont simulés ; leurs vrais appels à Windows ne sont essayés qu'à la demande (`MYPHOTOS_ESSAI_WINDOWS=1`). Aucun essai n'utilise de photo personnelle.
 
 **Construction de MyPhotos.exe** (un seul fichier, sans console, avec PyInstaller, dans un environnement séparé) :
 
@@ -326,7 +335,8 @@ Le flux : **matériel → moteur → analyse → recherche**. Au premier lancem
 | `myphotos/modele.py` | catalogue des moteurs, téléchargement contrôlé, calcul avec ONNX Runtime (DirectML ou processeur) |
 | `myphotos/indexation.py` | inventaire des dossiers et analyse des photos en arrière-plan |
 | `myphotos/base.py` | index SQLite et miniatures |
-| `myphotos/recherche.py` | recherche par mots, seuils « sûres » et « moins sûres » |
+| `myphotos/recherche.py` | recherche par mots, seuils « sûres » et « moins sûres » ; limitée aux dates et aux lieux demandés (0.5.0) |
+| `myphotos/requete.py` | ce que dit une recherche tapée (0.5.0) : dates, lieux, mots qui restent |
 | `myphotos/doublons.py` | doublons : copies identiques, copies retouchées, rafales |
 | `myphotos/lieux.py` | lieux des photos (0.5.0) : ville, département, région et pays d'une position GPS, sans Internet, et lieu retrouvé par son nom (données GeoNames de `myphotos/lieux.bin`) |
 | `myphotos/fenetre.py` | la fenêtre de MyPhotos (pywebview, WebView2), ses replis (Edge en mode application, navigateur), la relance et la fermeture |
@@ -351,7 +361,6 @@ Les choix techniques et leurs mesures sont expliqués dans [docs/ARCHITECTURE.md
 
 Des idées pour les versions suivantes, sans date promise :
 
-- **Dates et lieux** : chercher « Noël 2019 » ou « vacances en Bretagne ». MyPhotos relève déjà la date de prise de vue et la position GPS des photos pendant l'analyse.
 - **Visages** : regrouper les photos d'une même personne, toujours sans rien envoyer.
 - **Vidéos** : les retrouver comme les photos.
 - **HEIC** : lire les photos des iPhone.
@@ -375,6 +384,8 @@ Des idées pour les versions suivantes, sans date promise :
 **Refresh and exclude.** « Actualiser » (above the photos and in « Réglages ») rescans all folders right away: new photos are added, deleted ones are forgotten, unreachable drives keep their photos, and MyPhotos reports what changed. In « Réglages », « Exclure un sous-dossier… » hides a subfolder from MyPhotos without deleting anything; « Ne plus exclure » brings it back. A photo whose file has disappeared is forgotten as soon as you open it, unless its drive is simply unplugged.
 
 **Search.** Type what you are looking for and press Enter; "sure" results come first, then « Moins sûres » (less sure). When a search finds few results, « Voir les photos les plus proches » shows the closest photos, 60 at a time. Since 0.4.1, the viewer's « Plus comme celle-ci » button shows the photos that look most like the open one (« Revenir » goes back), and « Diaporama » (or the D key) plays the current list full screen, one photo every 3, 5 or 10 seconds (Space or a click pauses, arrows move, Esc stops). « Réglages » > « Taille du texte » makes the whole interface larger (« Grande », « Très grande »); MyPhotos remembers the choice.
+
+**Dates and places (0.5.0).** Searches can say when and where, in French: « Noël 2019 », « plage en Bretagne », « chien été 2022 », « il y a 2 ans ». MyPhotos recognises dates (years, months, seasons, holidays such as Christmas, Easter or Bastille Day, relative dates) and places (towns, French départements, regions and countries where you have photos), then searches the remaining words among those photos only. A chip above the results recalls each recognised date and place; its × turns it back into plain words. Places come from the photos' GPS position, resolved offline with GeoNames data (CC BY 4.0) embedded in MyPhotos; photos without a GPS position cannot be found by place, and MyPhotos says how many there are. The viewer shows each photo's place (« Brest, Finistère, Bretagne, France »; click it to see every photo taken there), and « Ce jour-là », at the top of all photos, shows the photos taken on the same day in previous years.
 
 **Select, copy, delete.** Tick photos as in Google Photos: hover a thumbnail and click the circle (long-press on a touch screen), Shift+click for a range, Ctrl+A for everything shown, Esc to clear. « Copier » (Ctrl+C) puts the files on the Windows clipboard; « Copier dans un dossier… » copies them to a folder you pick, never overwriting anything; « Supprimer » (Del) sends them to the Recycle Bin after confirmation. The viewer offers the same actions.
 

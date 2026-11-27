@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-VERSION = '0.4.1'
+VERSION = '0.5.0'
 NOM = 'MyPhotos'
 
 # Mutex nommé tenu par MyPhotos tant qu'il tourne : l'installateur (Inno Setup, AppMutex) s'en sert. Ne change jamais

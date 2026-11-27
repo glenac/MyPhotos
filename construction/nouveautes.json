@@ -1,4 +1,11 @@
 {
+ "0.5.0": [
+  "Chercher par date et par lieu : « Noël 2019 », « plage en Bretagne », « chien été 2022 », « il y a 2 ans ».",
+  "Au-dessus des résultats, une étiquette rappelle chaque date et chaque lieu reconnus ; sa croix la retire.",
+  "Dans la visionneuse, le lieu de la photo (ville, région, pays) ; un clic montre toutes les photos prises à cet endroit.",
+  "« Ce jour-là » : en tête de vos photos, celles prises le même jour les années passées.",
+  "Le lieu vient de la position GPS de la photo et se trouve sur votre ordinateur, sans Internet."
+ ],
  "0.4.1": [
   "« Plus comme celle-ci » : dans la visionneuse, les photos qui ressemblent le plus à celle affichée.",
   "Diaporama en plein écran, depuis la visionneuse (3, 5 ou 10 secondes par photo).",
