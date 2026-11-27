@@ -4121,6 +4121,24 @@ class TestCeJourEtLieuPhoto(EssaiDatesLieux):
         self.assertEqual([x['date'] for x in g['photos']], sorted(x['date'] for x in g['photos']))
         self.assertEqual(len({x['id'] for x in g['photos']}), 12)
 
+    def test_ce_jour_voir_les_photos_de_ce_jour(self):
+        """Relecture de la 0.5.0 : « Voir les N photos de ce jour » cherchait « 14 juillet 2023 » (la fête : du 13 au
+        15, plus de photos qu'annoncé) ou « 28 février 2024 » (sans le 29, réuni dans le même groupe). Le serveur
+        donne le texte exact : la recherche montre exactement les `total` photos du groupe."""
+        app = self.app
+        (self.tmp / 'photos-jours').mkdir()
+        jours = ['2023-07-13T21:00:00', '2023-07-14T10:00:00', '2023-07-14T23:00:00', '2023-07-15T09:00:00',
+                 '2024-02-28T10:00:00', '2024-02-29T10:00:00', '2024-02-29T11:00:00', '2024-03-01T10:00:00']
+        photos_datees(app.base, self.tmp / 'photos-jours', [(None, x, x, 'sure') for x in jours])
+        for auj, annee, recherche, total in (((2026, 7, 14), 2023, '14/07/2023', 2),
+                                             ((2027, 2, 28), 2024, 'du 28 au 29 février 2024', 4)):
+            with self.subTest(auj=auj):
+                self.auj = self.date(*auj)
+                g = next(g for g in app.ce_jour()['annees'] if g['annee'] == annee)
+                self.assertEqual((g['recherche'], g['total']), (recherche, total))
+                r = app.chercher(g['recherche'], 0, 50)
+                self.assertEqual((r['mode'], r['total']), ('dates', total))
+
     def test_lieu_d_une_photo(self):
         app = self.app
         self.assertEqual(app.info_photo(self.p['brest_noel'])['lieu'],

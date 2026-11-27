@@ -2862,7 +2862,7 @@ function rendreCeJour() {
       el('div', {classe: 'cj-tete'}, el('h3', {classe: 'cj-titre', texte: titre}),
         el('span', {classe: 'cj-jour', texte: `${jour} · ${pluriel(total, 'photo')}`}),
         total > photos.length ? el('button', {classe: 'bouton-lien', type: 'button',
-          onclick: () => { chercher(dateCourte(g.jour)); window.scrollTo(0, 0); }},
+          onclick: () => { chercher(typeof g.recherche === 'string' && g.recherche ? g.recherche : dateCourte(g.jour)); window.scrollTo(0, 0); }},
         `Voir les ${nombre.format(total)} photos de ce jour`) : null),
       el('div', {classe: 'cj-bande'}, photos.map((p) => tuile(p, groupe)))));
   }

@@ -2901,9 +2901,10 @@ class Application:
     def ce_jour(self, n=CE_JOUR_N):
         """« Ce jour-là » (0.5.0) : les photos prises le même jour et le même mois que la date du jour, les années
         passées : {jour, annees: [{annee, il_y_a, libelle (« Il y a 3 ans »), total, photos (au plus n, réparties sur
-        la journée, dans l'ordre), jour (AAAA-MM-JJ)}]}, la plus récente d'abord ; aucune année sans photo. Le
-        29 février d'une année bissextile revient le 28 février des autres années ; le 29 février, seulement les
-        29 février d'avant."""
+        la journée, dans l'ordre), jour (AAAA-MM-JJ), recherche}]}, la plus récente d'abord ; aucune année sans photo.
+        Le 29 février d'une année bissextile revient le 28 février des autres années ; le 29 février, seulement les
+        29 février d'avant. recherche : le texte qui montre exactement ces `total` photos (« 14/07/2023 », et non
+        « 14 juillet 2023 », la fête du 13 au 15 ; « du 28 au 29 février 2024 » quand l'année réunit les deux jours)."""
         jour = aujourd_hui()
         jours = [f'{jour.month:02d}-{jour.day:02d}']
         if (jour.month, jour.day) == (2, 28) and not calendar.isleap(jour.year):
@@ -2925,9 +2926,15 @@ class Application:
             if not liste:
                 continue
             ecart = jour.year - annee
+            jours_vus = sorted({p['date'][5:10] for p in toutes})
+            if len(jours_vus) > 1:                   # le 28 et le 29 février d'une année bissextile
+                recherche = f'du 28 au 29 février {annee:04d}'
+            else:
+                recherche = f'{toutes[0]["date"][8:10]}/{toutes[0]["date"][5:7]}/{annee:04d}'
             annees.append({'annee': annee, 'il_y_a': ecart,
                            'libelle': 'Il y a 1 an' if ecart == 1 else f'Il y a {ecart} ans',
-                           'total': len(toutes), 'photos': liste, 'jour': toutes[0]['date'][:10]})
+                           'total': len(toutes), 'photos': liste, 'jour': toutes[0]['date'][:10],
+                           'recherche': recherche})
         return {'jour': jour.isoformat(), 'annees': annees}
 
     def fichier_photo(self, pid, chercher=False):
