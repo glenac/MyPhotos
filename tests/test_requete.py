@@ -501,6 +501,19 @@ CAS_PIEGES = [
     ('août 15 jours', 'août 15 jours', 0, []),
     ('juillet 10 jours en Corse', 'juillet 10 jours en Corse', 0, []),
     ('en août 15 jours', '15 jours', TOUS_LES_ANS, ['août (chaque année)']),
+    # Relecture 0.5.0 : décennie d'un style, grandes dates de l'histoire (une commémoration, pas la photo).
+    ('soirée années 80', 'soirée années 80', 0, []),
+    ('déguisement années 80', 'déguisement années 80', 0, []),
+    ('voiture des années 50', 'voiture des années 50', 0, []),
+    ('robe des années 60', 'robe des années 60', 0, []),
+    ('commémoration du 6 juin 1944', 'commémoration du 6 juin 1944', 0, []),
+    ('cérémonie du 11 novembre 1918', 'cérémonie du 11 novembre 1918', 0, []),
+    ('commémoration du 8 mai 1945', 'commémoration du 8 mai 1945', 0, []),
+    ('monument aux morts 1914-1918', 'monument aux morts 1914-1918', 0, []),
+    ('guerre 1939 à 1945', 'guerre 1939 à 1945', 0, []),
+    ('photos des années 90', '', 1, ['années 1990']),
+    ('vacances années 90', 'vacances', 1, ['années 1990']),
+    ('6 juin 2019', '', 1, ['6 juin 2019']),
 ]
 
 

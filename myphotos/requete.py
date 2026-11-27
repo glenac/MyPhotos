@@ -53,6 +53,9 @@ Généralités
   laisse toute l'expression parmi les mots.
 - Nombres : « 2 chiens », « 3 ans » (« enfant de 3 ans »), « 12 », « 100 ans » restent des mots ; « il y a 3 ans » est
   une date. « 14/07 » sans année non plus (score, fraction).
+- Une décennie après un nom de style (« soirée années 80 », « voiture des années 50 », « robe des années 60 ») est un
+  complément : des mots, comme « robe d'été ». Les grandes dates de l'histoire (« 6 juin 1944 », « 8 mai 1945 »,
+  « 11 novembre 1918 », « 1914-1918 », « 1939-1945 ») parlent d'une commémoration, pas du jour de la photo : des mots.
 
 Mois
 - « mars 2021 », « en mars 2021 », « mars 21 », « 07/2019 », « 2019-07 » : le mois entier ; « mars et avril 2021 »,
@@ -293,7 +296,13 @@ _AVANT_NUMERO = {'n', 'no', 'numero', 'num', 'peugeot', 'renault', 'citroen', 'w
                  'galaxy', 'samsung', 'nokia', 'boeing', 'airbus', 'model', 'modele', 'version', 'serie', 'reference',
                  'ref', 'chambre', 'bus', 'ligne', 'vol', 'tgv', 'train', 'route', 'porte', 'code', 'fifa', 'xbox',
                  'playstation', 'canon', 'nikon', 'sony'}
-_VOEUX = {'bonne', 'heureuse', 'nouvelle', 'belle', 'excellente', 'meilleure'}     # « bonne année 2020 » : des vœux
+_VOEUX = {'bonne', 'heureuse', 'nouvelle', 'belle', 'excellente', 'meilleure'}
+# Devant une décennie, ces noms en font un style, pas une date (« soirée années 80 », « voiture des années 50 »).
+_STYLES = {'soiree', 'soirees', 'fete', 'fetes', 'deguisement', 'deguisements', 'deguise', 'deguisee', 'deguises',
+           'voiture', 'voitures', 'robe', 'robes', 'style', 'mode', 'musique', 'musiques', 'look', 'theme',
+           'thematique', 'deco', 'decoration', 'tenue', 'tenues', 'costume', 'costumes', 'chanson', 'chansons', 'tube',
+           'tubes', 'disco', 'bal', 'boum', 'coiffure', 'coiffures', 'meuble', 'meubles', 'affiche', 'affiches',
+           'vintage', 'retro', 'facon', 'ambiance', 'annonce'}     # « bonne année 2020 » : des vœux
 # Petits mots qui introduisent une date ; ils partent avec elle (« photos de l'été 2022 », « lors de la Toussaint »).
 _INTRO = {'en', 'au', 'aux', 'a', 'pour', 'pendant', 'durant', 'lors', 'le', 'la', 'les', 'l', 'du', 'de', 'des',
           'd', 'dans'}
@@ -889,6 +898,8 @@ class _Lecture:
                 continue
             if self.la_demonstratif(e.j) and any(self.n[k] in ('ce', 'cet', 'cette') for k in range(e.i, e.j)):
                 e = _Expr(e.i, e.j + 1, '', verrou=True)     # « ce soir-là », « cette année-là » : pas aujourd'hui
+            elif not e.verrou and _historique(e):
+                e = _Expr(e.i, e.j, '', verrou=True)         # « 6 juin 1944 », « 1914-1918 » : l'histoire, pas la photo
             for k in range(e.i, e.j):
                 self.etat[k] = 1 if e.verrou else 2
             if not e.verrou:
@@ -1263,10 +1274,23 @@ class _Lecture:
         return _Expr(debut, k, regle.nom, regle=regle)
 
     def decennie(self, p, intro):
-        """« années 90 », « années 1990 », « années 2000 », « années soixante », « début des années 2000 »."""
+        """« années 90 », « années 1990 », « années 2000 », « années soixante », « début des années 2000 ». Après un nom
+        de style (« soirée années 80 », « voiture des années 50 ») : un complément, des mots, comme « robe d'été »."""
         w = self.mot(p)
         if w is None:
             return None
+        e = self._decennie(p)
+        if e is None:
+            return None
+        k = p - 1
+        while k >= 0 and self.n[k] in _INTRO:
+            k -= 1
+        if k >= 0 and self.n[k] in _STYLES:
+            return _Expr(e.i, e.j, '', verrou=True)
+        return e
+
+    def _decennie(self, p):
+        w = self.mot(p)
         q, partie = p, None
         if w in ('debut', 'fin', 'milieu'):
             partie, q = w, p + 1 + (self.mot(p + 1) in ('des', 'de'))
@@ -1588,6 +1612,20 @@ _REMPLISSAGE = _LIANTS | {'photo', 'photos', 'image', 'images', 'cliche', 'clich
                           'chercher', 'trouver', 'retrouver', 'y', 'il', 'diaporama'}
 _BORDS = re.compile('^[\\s,;:.!?…/&+' + _CLASSE_TIRETS + ']+|[\\s,;:!?…/&+' + _CLASSE_TIRETS + ']+$')
 _STRICT = False             # essais : une erreur de lecture d'une date remonte au lieu d'être ignorée
+
+
+# Grandes dates de l'histoire : une commémoration, pas une photo prise ce jour-là (« commémoration du 6 juin
+# 1944 », « monument aux morts 1914-1918 ») ; elles restent des mots. (« 14 juillet 1789 » : avant 1900.)
+_JOURS_HISTORIQUES = {date(1914, 8, 3), date(1918, 11, 11), date(1940, 6, 18), date(1944, 6, 6), date(1944, 8, 25),
+                      date(1945, 5, 8)}
+_ANNEES_HISTORIQUES = {(1914, 1918), (1939, 1945)}
+
+
+def _historique(e):
+    """L'expression est-elle seulement une grande date de l'histoire (un jour ou une guerre) ?"""
+    if e.per and len(e.per) == 1 and e.per[0][0] == e.per[0][1] and e.per[0][0] in _JOURS_HISTORIQUES:
+        return True
+    return bool(e.annees) and len(e.annees) == 1 and tuple(e.annees[0]) in _ANNEES_HISTORIQUES
 
 
 def _appeler(chercher, nom, indices):
