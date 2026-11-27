@@ -382,8 +382,11 @@ class Base:
         self._fermee = False
         self.ecartes = []
         # Numéro des lieux (0.5.0) : change à chaque écriture de lieux_photos par ce programme (enregistrer_lieux), que
-        # la génération ne suit pas ; avec generation(), il dit quand relire lieux_presents().
+        # la génération ne suit pas ; numéro des oublis : à chaque photo retirée ou cachée par ce programme. Tous deux
+        # changent APRÈS le COMMIT (une lecture faite avant ne peut pas être gardée sous le nouveau numéro) ; ils
+        # disent quand relire lieux_presents() et les listes filtrées (serveur.Application).
         self.numero_lieux = 0
+        self.numero_oublis = 0
         try:
             with self._ecriture:
                 self._migrer(self._cnx())
@@ -446,16 +449,26 @@ class Base:
 
     @contextmanager
     def _transaction(self):
-        """Transaction d'écriture : tout ou rien, une seule à la fois."""
+        """Transaction d'écriture : tout ou rien, une seule à la fois. Une photo retirée ou cachée dedans (_oubli) fait
+        changer numero_oublis, après le COMMIT."""
         with self._ecriture:
             c = self._cnx()
             c.execute('BEGIN IMMEDIATE')
+            self._local.oubli = False
             try:
                 yield c
             except BaseException:
+                self._local.oubli = False
                 c.execute('ROLLBACK')
                 raise
             c.execute('COMMIT')
+            if self._local.oubli:
+                self._local.oubli = False
+                self.numero_oublis += 1
+
+    def _oubli(self):
+        """Dans une transaction : des photos sont retirées ou cachées (numero_oublis changera après le COMMIT)."""
+        self._local.oubli = True
 
     @contextmanager
     def _lecture(self):
@@ -800,6 +813,7 @@ class Base:
             if lieux:
                 c.execute(f'DELETE FROM lieux_photos WHERE photo_id IN ({marques})', paquet)
         self._nouvelle_generation(c)
+        self._oubli()
 
     # ------------------------------------------------ photos
 
@@ -976,6 +990,7 @@ class Base:
                 c.execute('UPDATE photos SET chemin = ?, dossier_id = ?, date_fichier = ? WHERE id = ?',
                           (chemin, l[1], l[2], ancien))
             self._nouvelle_generation(c)
+            self._oubli()
 
     def marquer_dossier(self, dossier_id, disponible, vu=None, volume=None):
         """Dossier joignable ou non (disque débranché, partage réseau éteint) ; ses photos restent connues. vu et volume
@@ -1100,8 +1115,12 @@ class Base:
             c.executemany('INSERT OR REPLACE INTO lieux_photos(photo_id, ville, departement, region, pays, distance, '
                           'version) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)',
                           valeurs)
-            self.numero_lieux += 1
-            return c.total_changes - avant
+            n = c.total_changes - avant
+        # Après le COMMIT (relecture de la 0.5.0) : une recherche qui relit lieux_presents() pendant l'écriture
+        # gardait l'instantané d'avant sous le nouveau numéro, et la Bretagne n'était plus reconnue jusqu'au
+        # changement suivant de l'index.
+        self.numero_lieux += 1
+        return n
 
     @staticmethod
     def _colonne_lieu(endroit):

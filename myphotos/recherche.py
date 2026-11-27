@@ -407,7 +407,9 @@ def _parents(e):
 def chercheur_lieux(presents, source=None):
     """chercher_lieu pour requete.analyser : comment MyPhotos reconnaît un lieu dans une recherche.
 
-    presents : {ident: nombre de photos} (base.lieux_presents) ; source : lieux.Lieux (défaut : l'instance partagée).
+    presents : {ident: nombre de photos} (base.lieux_presents), ou une fonction qui le rend, appelée seulement quand
+    un nom tapé est celui d'un lieu connu (relecture de la 0.5.0 : 0,2 s pour 70 000 photos, à ne pas refaire pour
+    « chien ») ; source : lieux.Lieux (défaut : l'instance partagée).
     Un nom n'est un lieu que s'il y a des photos (une recherche ne se vide jamais à cause d'un lieu sans photo), et
     seulement avec une majuscule ou une préposition sans article si c'est aussi un mot courant (MOTS_COURANTS).
     Entre homonymes (Paris en France et au Texas, Brest en Bretagne et en Biélorussie), celui qui a le plus de photos ;
@@ -419,11 +421,21 @@ def chercheur_lieux(presents, source=None):
     idents_des_lieux), photos des lieux réunis."""
     if source is None:
         source = _lieux.lieux()
+    lus = []
+
+    def photos():
+        if not lus:
+            lus.append((presents() if callable(presents) else presents) or {})
+        return lus[0]
 
     def chercher(nom, indices):
-        if not presents or not nom:
+        if not nom:
             return None
-        candidats = [e for e in source.chercher(nom) if presents.get(e.ident)]
+        connus = source.chercher(nom)
+        if not connus:
+            return None
+        presents = photos()
+        candidats = [e for e in connus if presents.get(e.ident)]
         if not candidats or not _accepte(nom, indices, candidats):
             return None
         exacts = [e for e in candidats if _lieux.normaliser(e.nom) == nom]

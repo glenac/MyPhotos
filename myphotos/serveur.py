@@ -204,6 +204,9 @@ TAILLES_TEXTE = ('normale', 'grande', 'tres-grande')
 # « Ce jour-là » : au plus 12 miniatures par année.
 IGNORER_MAX = 10
 CE_JOUR_N = 12
+# Pendant l'analyse, les lieux qui ont des photos et les listes filtrées (pages suivantes) sont relus au plus toutes
+# les 30 s (base.lieux_presents : 0,2 s pour 70 000 photos ; l'index change toutes les 2 s).
+RELIRE_S = 30.0
 _IDENT_LIEU = re.compile(r'[vdrp]:[A-Za-z0-9.]{1,24}')       # ident de lieux.py (paramètre lieu de /api/recherche)
 
 # Images que le navigateur affiche telles quelles ; les autres extensions de config.EXTENSIONS (TIFF) sont
@@ -1687,10 +1690,11 @@ class Application:
         self._doublons_annulee = False           # arrêtée par l'utilisateur : la page ne la relance plus seule
         # Bouton « Actualiser » : {numero (demande d'inventaire), indexeur, debut}, une à la fois.
         self._actualisation = None
-        # Lieux qui ont des photos (0.5.0) : ((génération, numéro des lieux), {ident: nombre}), pour la recherche ;
-        # dernière liste filtrée par dates et lieux (clé, [(id, date)]), pour ses pages suivantes.
+        # Lieux qui ont des photos (0.5.0) : (clé, génération, instant, {ident: nombre}), pour la recherche ;
+        # dernière liste filtrée par dates et lieux (clé, génération, instant, [(id, date)]), pour ses pages suivantes.
         self._cache_lieux = None
         self._cache_filtre = None
+        self._verrou_lieux = threading.Lock()
         # Mise à jour proposée (mise_a_jour.py) : une vérification par jour, seulement si l'utilisateur l'a acceptée.
         self.mises_a_jour = mise_a_jour.Gestion(self.base.meta_get, self.base.meta_set, self.arreter,
                                                 self.travaux_en_cours, journal, **_essai_mise_a_jour())
@@ -2659,7 +2663,8 @@ class Application:
         info = {'requete': _recherche.normaliser_requete(q), 'puces': a.puces, 'mots': a.mots,
                 'sans_position': self.base.sans_position() if idents is not None else None, **ecartees}
         if not a.mots:
-            r = self.base.page_filtree(self._liste_filtree(dates.intervalles if dates else None, idents), debut, n)
+            r = self.base.page_filtree(self._liste_filtree(dates.intervalles if dates else None, idents, debut),
+                                       debut, n)
             return dict(mode='dates', debut=r['debut'], suivant=r['debut'] + len(r['photos']), total=r['total'],
                         photos=r['photos'], **info)
         filtre = _recherche.Filtre(dates if dates else None,
@@ -2672,30 +2677,41 @@ class Application:
         e = _lieux.lieux().endroit(ident) if isinstance(ident, str) and _IDENT_LIEU.fullmatch(ident) else None
         if e is None:
             raise Refus('Ce lieu est inconnu.', 400)
-        r = self.base.page_filtree(self._liste_filtree(None, (e.ident,)), debut, n)
+        r = self.base.page_filtree(self._liste_filtree(None, (e.ident,), debut), debut, n)
         texte = _recherche.normaliser_requete(q)
         return {'mode': 'dates', 'debut': r['debut'], 'suivant': r['debut'] + len(r['photos']), 'total': r['total'],
                 'photos': r['photos'], 'requete': texte, 'mots': '', 'lieu': e.ident,
                 'puces': [{'type': 'lieu', 'libelle': texte or e.nom, 'texte': texte}],
                 'sans_position': self.base.sans_position()}
 
-    def _liste_filtree(self, intervalles, idents):
-        """base.liste_filtree, gardée pour les pages suivantes de la même recherche tant que l'index et les lieux ne
-        changent pas (France entière, 60 000 photos sur 100 000 : 80 ms ; ensuite, chaque page est immédiate)."""
-        cle = (self.base.generation(), self.base.numero_lieux, None if intervalles is None else tuple(intervalles),
+    def _liste_filtree(self, intervalles, idents, debut=0):
+        """base.liste_filtree, gardée pour les pages suivantes de la même recherche (France entière, 60 000 photos sur
+        100 000 : 80 ms ; ensuite, chaque page est immédiate). La première page est toujours à jour ; les suivantes
+        gardent la même liste pendant l'analyse (l'index change toutes les 2 s) jusqu'à RELIRE_S secondes : les pages
+        se suivent sans trou ni doublon, et le défilement ne refait pas la liste à chaque page (relecture de la 0.5.0).
+        Une photo retirée ou un lieu calculé la refont aussitôt."""
+        cle = (self.base.numero_lieux, self.base.numero_oublis, None if intervalles is None else tuple(intervalles),
                None if idents is None else tuple(idents))
+        generation = self.base.generation()
         c = self._cache_filtre
-        if c is None or c[0] != cle:
-            c = self._cache_filtre = (cle, self.base.liste_filtree(intervalles, idents))
-        return c[1]
+        if (c is None or c[0] != cle
+                or (c[1] != generation and (debut == 0 or time.monotonic() - c[2] > RELIRE_S))):
+            c = self._cache_filtre = (cle, generation, time.monotonic(), self.base.liste_filtree(intervalles, idents))
+        return c[3]
 
     def _lieux_presents(self):
-        """base.lieux_presents() (0,2 s pour 70 000 photos), gardé tant que l'index et les lieux ne changent pas."""
-        cle = (self.base.generation(), self.base.numero_lieux)
-        c = self._cache_lieux
-        if c is None or c[0] != cle:
-            c = self._cache_lieux = (cle, self.base.lieux_presents())
-        return c[1]
+        """base.lieux_presents() (0,2 s pour 70 000 photos), gardé tant que les lieux et les photos retirées ne
+        changent pas ; pendant l'analyse (l'index change toutes les 2 s), relu au plus toutes les RELIRE_S secondes.
+        Un seul fil le calcule à la fois (relecture de la 0.5.0 : chaque recherche et chaque photo de la visionneuse
+        le refaisaient, 6 à 35 fois plus lentes sur 100 000 photos)."""
+        with self._verrou_lieux:
+            cle = (self.base.numero_lieux, self.base.numero_oublis)
+            generation = self.base.generation()
+            c = self._cache_lieux
+            if (c is None or c[0] != cle
+                    or (c[1] != generation and time.monotonic() - c[2] > RELIRE_S)):
+                c = self._cache_lieux = (cle, generation, time.monotonic(), self.base.lieux_presents())
+            return c[3]
 
     def analyser_recherche(self, q, ignorer=()):
         """requete.analyser, avec la façon de MyPhotos de reconnaître un lieu (recherche.chercheur_lieux : seulement
@@ -2709,11 +2725,7 @@ class Application:
         page dit pourquoi. Une lecture fausse (« maison 1930 », un nombre pris pour une année) ne vide jamais les
         résultats ; une vraie date sans photo (« Noël 2003 ») montre ce qui ressemble le plus à ces mots."""
         try:
-            try:
-                presents = self._lieux_presents()
-            except sqlite3.Error:
-                presents = {}
-            chercher_lieu = _recherche.chercheur_lieux(presents) if presents else None
+            chercher_lieu = _recherche.chercheur_lieux(self._presents_ou_rien)
             auj = aujourd_hui()
             a = _requete.analyser(q, auj, chercher_lieu, ignorer)
             ecartees = []
@@ -2724,6 +2736,12 @@ class Application:
             journal.exception('dates et lieux de la recherche (%d caractères)', len(q or ''))   # jamais le texte
             return None, []
         return (a if a.puces else None), ecartees
+
+    def _presents_ou_rien(self):
+        try:
+            return self._lieux_presents()
+        except sqlite3.Error:
+            return {}
 
     def _dates_presentes(self, periodes):
         """Une photo au moins dans ces périodes ? Dans le doute (base illisible), oui : la date reste."""
@@ -2864,15 +2882,13 @@ class Application:
         if e is None:
             return None
         recherche, nom = e.nom, _lieux.normaliser(e.nom)
-        try:
-            presents = self._lieux_presents()
-        except sqlite3.Error:
-            presents = {}
         parents = source.parents(e)
         idents_parents = {x.ident for x in parents}
-        homonyme = any(x.ident != e.ident and presents.get(x.ident) and _lieux.normaliser(x.nom) == nom
-                       and x.ident not in idents_parents and e.ident not in _recherche._parents(x)
-                       for x in source.chercher(nom))
+        autres = [x for x in source.chercher(nom) if x.ident != e.ident and _lieux.normaliser(x.nom) == nom
+                  and x.ident not in idents_parents and e.ident not in _recherche._parents(x)]
+        # lieux_presents seulement s'il y a un homonyme (relecture de la 0.5.0 : chaque photo ouverte le relisait).
+        presents = self._presents_ou_rien() if autres else {}
+        homonyme = any(presents.get(x.ident) for x in autres)
         if homonyme:
             autre = next((x.nom for x in parents if _lieux.normaliser(x.nom) != nom), None)
             if autre:

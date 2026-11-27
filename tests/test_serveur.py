@@ -4009,6 +4009,60 @@ class TestDatesEtLieux(EssaiDatesLieux):
         r = app.chercher('Noël 2019 en Bretagne', 0, 50, ignorer=['en Bretagne'])
         self.assertEqual(([p['type'] for p in r['puces']], r['mots']), (['date'], 'en Bretagne'))
 
+    def test_lieux_presents_seulement_si_besoin_et_pas_a_chaque_lot(self):
+        """Relecture de la 0.5.0 : pendant l'analyse (l'index change toutes les 2 s), chaque recherche, même
+        « chien », et chaque photo de la visionneuse refaisaient lieux_presents() (0,2 s pour 70 000 photos)."""
+        from contextlib import contextmanager
+        app, base = self.app, self.app.base
+        vrai = base.lieux_presents
+        appels = []
+
+        def compte():
+            appels.append(1)
+            return vrai()
+        with mock.patch.object(base, 'lieux_presents', compte):
+            for q in ('chien', 'coucher de soleil', 'Noël 2019', 'été 2022'):
+                app.analyser_recherche(q)
+            app.info_photo(self.p['quimper_juin'])                  # aucun homonyme : rien à relire
+            self.assertEqual(appels, [])
+            self.assertEqual(app.analyser_recherche('Brest').puces[0]['libelle'], 'Brest')
+            self.assertEqual(len(appels), 1)
+            # L'index change (un lot d'analyse) : pas relu avant RELIRE_S secondes…
+            with base._transaction() as c:
+                base._nouvelle_generation(c)
+            app.analyser_recherche('Quimper')
+            self.assertEqual(len(appels), 1)
+            with mock.patch.object(self.serveur, 'RELIRE_S', 0.0):
+                app.analyser_recherche('Quimper')
+            self.assertEqual(len(appels), 2)
+            # … mais une photo retirée le fait relire aussitôt.
+            base.oublier_photos([self.p['orange_ce_jour']])
+            self.assertIsNone(app.analyser_recherche('à Orange'))
+            self.assertEqual(len(appels), 3)
+        # Pages suivantes : la même liste pendant l'analyse ; la première page, toujours à jour.
+        premiere = self.ids(app.chercher('Noël 2019', 0, 2))
+        with base._transaction() as c:
+            base._nouvelle_generation(c)
+        with mock.patch.object(base, 'liste_filtree', side_effect=AssertionError('refaite')):
+            self.assertEqual(len(self.ids(app.chercher('Noël 2019', 2, 2))), 2)
+        with mock.patch.object(base, 'liste_filtree', wraps=base.liste_filtree) as refaite:
+            self.assertEqual(self.ids(app.chercher('Noël 2019', 0, 2)), premiere)
+            self.assertEqual(refaite.call_count, 1)
+        # Numéro des lieux : changé après le COMMIT, jamais avant (une lecture pendant l'écriture n'est pas gardée
+        # sous le nouveau numéro).
+        vus, transaction = [], base._transaction
+
+        @contextmanager
+        def espion():
+            with transaction() as c:
+                yield c
+                vus.append(base.numero_lieux)                       # encore dans la transaction
+        avant = base.numero_lieux
+        with mock.patch.object(base, '_transaction', espion):
+            base.enregistrer_lieux([{'photo_id': self.p['brest_noel'], 'ville': 'v:3030300', 'departement': 'd:FR.29',
+                                     'region': 'r:FR.53', 'pays': 'p:FR', 'distance': 0.1, 'version': 'x'}])
+        self.assertEqual((vus, base.numero_lieux), ([avant], avant + 1))
+
     def test_sans_date_ni_lieu_rien_ne_change(self):
         """Une recherche sans date ni lieu : les résultats de la recherche par mots, tels quels (essai contre le code
         de la 0.4.1 lui-même : TestCompatibilite041)."""
