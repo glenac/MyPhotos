@@ -2131,7 +2131,7 @@ const R = {
   // lieu : ident d'un lieu (lien de la visionneuse), appliqué tel quel par le serveur.
   ignorer: [], puces: [], mots: null, sansPosition: null, sansPhoto: [], lieu: null,
 };
-const IGNORER_MAX = 8;             // puces retirées gardées dans l'adresse (le serveur en accepte 10)
+const IGNORER_MAX = 40;            // puces retirées (le serveur en accepte autant), envoyées en une liste JSON
 const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
 const infosPhotos = new Map();
 
@@ -2264,7 +2264,7 @@ function urlPage(debut, n, proches = false) {
   if (!R.q) return `/api/photos?debut=${debut}&n=${n}`;
   const p = new URLSearchParams({q: R.q});
   if (R.lieu) p.set('lieu', R.lieu);
-  for (const x of R.ignorer) p.append('ignorer', x);
+  if (R.ignorer.length) p.set('ignorer', JSON.stringify(R.ignorer));    // un seul paramètre, quel que soit leur nombre
   if (proches) p.set('proches', '1');
   p.set('debut', String(debut));
   p.set('n', String(n));
@@ -2821,6 +2821,10 @@ function puceFiltre(p) {
 /** × d'une puce : la même recherche, sans ce filtre ; son texte redevient un mot (la puce d'un lien de lieu de la
  *  visionneuse : le lieu n'est plus appliqué, son nom est cherché comme une recherche tapée). */
 function retirerFiltre(p) {
+  if (R.ignorer.length >= IGNORER_MAX) {          // jamais un texte retiré jeté en silence
+    annoncer('Trop d’étiquettes retirées : modifiez plutôt votre recherche.', 'erreur');
+    return;
+  }
   if (R.lieu && p.type === 'lieu') chercher(R.q, 'pousser', null, [...R.ignorer, p.texte], null);
   else chercher(R.q, 'pousser', null, [...R.ignorer, p.texte], R.lieu);
   $('#q').focus({preventScroll: true});

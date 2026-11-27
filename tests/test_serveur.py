@@ -4489,10 +4489,18 @@ class TestDatesEtLieuxHttp(unittest.TestCase):
         self.assertEqual(statut, 503, r)
         # Sans date ni lieu : comme avant (sans moteur, le même refus qu'en 0.4.1).
         self.assertEqual(self.recherche('chien')[0], 503)
-        # Paramètre ignorer borné.
-        self.assertEqual(self.recherche('Noël 2019', *(['x'] * 11))[0], 400)
+        # Paramètre ignorer borné : une liste JSON (la page), ou un paramètre par texte (forme d'avant). Relecture de
+        # la 0.5.0 : la page en gardait 8, le serveur 10 ; la 9e croix ne faisait rien. Maintenant 40, en un seul
+        # paramètre (jamais au-delà des 20 paramètres d'une adresse).
+        self.assertEqual(self.recherche('Noël 2019', json.dumps(['x'] * 41))[0], 400)
         self.assertEqual(self.recherche('Noël 2019', 'x' * 1001)[0], 400)
-        self.assertEqual(self.recherche('Noël 2019', *(['x'] * 10))[0], 200)
+        self.assertEqual(self.recherche('Noël 2019', json.dumps(['x'] * 40))[0], 200)
+        self.assertEqual(self.recherche('Noël 2019', *(['x'] * 15))[0], 200)
+        for mauvais in ('[', '[1, 2]', '["x", null]', '[{}]'):
+            self.assertEqual(self.recherche('Noël 2019', mauvais)[0], 400, mauvais)
+        self.assertEqual(self.recherche('Noël 2019', json.dumps(['Noël 2019']))[0], 503)    # des mots : le moteur
+        statut, r = self.recherche('Noël 2019', json.dumps(['Pâques', 'en Bretagne']))
+        self.assertEqual((statut, [p['texte'] for p in r['puces']]), (200, ['Noël 2019']))
         self.assertEqual(api('/api/photos?ignorer=Noel', **self.kw)[1]['mode'], 'dates')     # sans q : ignoré
         self.assertIsNone(self.proc.poll())
 
@@ -4525,7 +4533,7 @@ class TestDatesEtLieuxHttp(unittest.TestCase):
     def test_page(self):
         page = requete('GET', '/', **self.kw)[2].decode('utf-8')
         for attendu in ('id="filtres"', 'id="sans-position"', 'id="ce-jour"', 'Ce jour-là', 'id="v-lieu"',
-                        "'/api/ce-jour'", "p.append('ignorer', x)", 'Noël 2019, plage en Bretagne',
+                        "'/api/ce-jour'", "p.set('ignorer', JSON.stringify(R.ignorer))", 'Noël 2019, plage en Bretagne',
                         "if (R.lieu) p.set('lieu', R.lieu);", 'identLieu(V.lieu.ident)', 'id="sans-photo"'):
             self.assertIn(attendu, page)
         # Textes des puces et du lieu par textContent seulement : jamais innerHTML hors des icônes constantes.

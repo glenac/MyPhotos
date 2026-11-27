@@ -200,9 +200,10 @@ SEMBLABLES_PAS_ANALYSEE = ("Cette photo n'est pas encore analysée : MyPhotos ne
                            "lui ressemblent. Réessayez un peu plus tard.")
 # Taille du texte de la page (0.4.1), gardée dans la table meta (le profil de la fenêtre est effacé à chaque fermeture).
 TAILLES_TEXTE = ('normale', 'grande', 'tres-grande')
-# Dates et lieux (0.5.0) : textes des puces retirées par la page (paramètre « ignorer » de /api/recherche), au plus 10 ;
-# « Ce jour-là » : au plus 12 miniatures par année.
-IGNORER_MAX = 10
+# Dates et lieux (0.5.0) : textes des puces retirées par la page (paramètre « ignorer » de /api/recherche : une liste
+# JSON, pour ne jamais buter sur les 20 paramètres d'une adresse), au plus 40 (une recherche de 200 caractères peut
+# donner 18 puces) ; « Ce jour-là » : au plus 12 miniatures par année.
+IGNORER_MAX = 40
 CE_JOUR_N = 12
 # Pendant l'analyse, les lieux qui ont des photos et les listes filtrées (pages suivantes) sont relus au plus toutes
 # les 30 s (base.lieux_presents : 0,2 s pour 70 000 photos ; l'index change toutes les 2 s).
@@ -3839,6 +3840,22 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
             raise Refus('Ce dossier ne fait pas partie de MyPhotos.', 404)
 
     @staticmethod
+    def _textes_ignores(valeurs):
+        """Textes des puces retirées : un seul paramètre « ignorer », liste JSON de textes (la page, depuis la
+        relecture de la 0.5.0 : sa 9e croix ne faisait plus rien), ou un paramètre par texte (forme d'avant)."""
+        if len(valeurs) == 1 and valeurs[0].startswith('['):
+            if len(valeurs[0]) > 50_000:
+                raise Refus('Recherche trop longue.', 400)
+            try:
+                liste = json.loads(valeurs[0])
+            except ValueError:
+                raise Refus('Paramètre invalide.', 400) from None
+            if not isinstance(liste, list) or not all(isinstance(x, str) for x in liste):
+                raise Refus('Paramètre invalide.', 400)
+            return liste
+        return valeurs
+
+    @staticmethod
     def _entier(params, nom, defaut, mini, maxi):
         v = (params.get(nom) or [''])[-1]
         if v == '':
@@ -3865,7 +3882,7 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         if chemin in ('/api/recherche', '/api/photos'):
             q = (params.get('q') or [''])[-1] if chemin == '/api/recherche' else ''
             # Textes des puces retirées (0.5.0) : ils redeviennent des mots.
-            ignorer = (params.get('ignorer') or []) if chemin == '/api/recherche' else []
+            ignorer = self._textes_ignores(params.get('ignorer') or []) if chemin == '/api/recherche' else []
             if len(q) > 1000 or len(ignorer) > IGNORER_MAX or any(len(x) > 1000 for x in ignorer):
                 raise Refus('Recherche trop longue.', 400)
             debut = self._entier(params, 'debut', 0, 0, 10 ** 8)
