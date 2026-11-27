@@ -173,12 +173,19 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .ecran-plein p { color: var(--texte-doux); font-size: 1.1rem; max-width: 34em; margin-inline: auto; }
 
 /* ------------------------------------------------ en-tête */
-.haut { position: sticky; top: 0; z-index: 20; }
+/* L'en-tête et la barre de la sélection occupent la même case : la barre prend exactement la hauteur de l'en-tête,
+   qui garde sa place sous elle (relecture de la 0.4.2 : cocher une photo faisait sauter la page de 14 à 69 px quand
+   l'en-tête est sur deux lignes). Les bandeaux suivent, chacun sur sa ligne. */
+.haut { position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: minmax(0, 1fr); }
+.haut > .entete, .haut > .barre-selection { grid-area: 1 / 1; }
 .entete {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 28px;
   padding: 12px var(--gouttiere); background: color-mix(in srgb, var(--fond) 90%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-bottom: 1px solid var(--bordure);
 }
+/* Le lien « MyPhotos » n'est pas plus large que son nom (en-tête sur deux lignes : il couvrait tout le vide jusqu'à
+   « Doublons », et un clic dans ce vide ramenait à toutes les photos). */
+.entete > .marque { justify-self: start; }
 .recherche { display: flex; gap: 10px; width: 100%; max-width: calc(820px * var(--e)); justify-self: center; }
 .champ { position: relative; flex: 1; min-width: 0; }
 .champ .icone { position: absolute; left: calc(20px * var(--e)); top: 50%; transform: translateY(-50%); color: var(--texte-doux); pointer-events: none; }
@@ -193,7 +200,9 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; padding: 8px var(--gouttiere);
   background: var(--accent-doux); border-bottom: 1px solid var(--bordure); font-size: .95rem;
 }
-.bandeau-texte { flex: 1 1 320px; min-width: 0; }
+/* Un long chemin de dossier sans espace (« Recherche des photos dans « D:\Photos\… » ») passe à la ligne plutôt que
+   de faire défiler la page de côté sur un écran étroit. */
+.bandeau-texte { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }
 .bandeau progress { flex: 0 1 260px; height: 10px; background: var(--surface); }
 .bandeau progress::-webkit-progress-bar { background: var(--surface); }
 .bandeau .bouton { min-height: calc(38px * var(--e)); }
@@ -213,12 +222,12 @@ progress:not([value])::-webkit-progress-bar, .bandeau progress:not([value])::-we
 .question-version p { margin: 0 0 12px; }
 .boutons-version { display: flex; flex-wrap: wrap; gap: 10px; }
 .reponse-version { margin: 14px 0 0; }
-/* Barre de la sélection : elle prend la place de l'en-tête, à la même hauteur. */
+/* Barre de la sélection : elle se pose sur l'en-tête (même case de .haut), à la même hauteur. */
 .barre-selection {
   display: none; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 16px;
-  min-height: calc(83px * var(--e)); padding: 12px var(--gouttiere); background: var(--accent-doux); border-bottom: 1px solid var(--bordure);
+  padding: 12px var(--gouttiere); background: var(--accent-doux); border-bottom: 1px solid var(--bordure);
 }
-.en-selection .entete { display: none; }
+.en-selection .entete { visibility: hidden; }
 .en-selection .barre-selection { display: grid; }
 .sel-compte { margin: 0; font-size: 1.25rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
@@ -684,6 +693,8 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 }
 .cj-bande .case { scroll-snap-align: start; }
 .cj-autres { flex: 1 1 100%; margin: 0; }
+/* (à 320 px en « Très grande », « Voir les 18 autres années » faisait 321 px : la page défilait de côté) */
+.cj-autres .bouton { max-width: 100%; white-space: normal; text-align: center; }
 /* Visionneuse : le lieu de la photo, sous sa date ; un clic montre toutes les photos de ce lieu. */
 .v-lieu { margin: 0 0 2px; }
 .v-lieu-bouton {
@@ -698,6 +709,10 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   :root { --tuile-min: calc(132px * var(--e)); --gouttiere: 16px; }
   .entete { grid-template-columns: 1fr auto; }
   .recherche { grid-column: 1 / -1; grid-row: 2; max-width: none; }
+  /* En-tête sur deux lignes : la barre de la sélection aussi, ses boutons sous le nombre de photos cochées, qui reste
+     lisible en entier (relecture de la 0.4.2 : entre 761 et 851 px, « 2 sé… »). */
+  .barre-selection { grid-template-columns: auto minmax(0, 1fr); }
+  .sel-actions { grid-column: 1 / -1; justify-content: flex-start; }
   .carte { padding: 26px 22px; }
   .v-cadre { inset: 0 8px 6px; }
   .v-fleche { width: calc(52px * var(--e)); height: calc(52px * var(--e)); background: rgba(0, 0, 0, .5); }
@@ -738,20 +753,6 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   .v-actions .bouton { flex: 1 1 calc(50% - 5px); white-space: normal; }
   .v-infos { padding: 10px 14px 14px; }
 }
-/* Grand texte sur un écran étroit : les boutons de la sélection passent sous le nombre de photos cochées, qui reste
-   lisible en entier (0.4.1 ; avant, à 420 px en « Très grande » : « 2 sélec… »). */
-@media (max-width: 640px) {
-  :root[data-taille="grande"] .barre-selection, :root[data-taille="tres-grande"] .barre-selection {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-  :root[data-taille="grande"] .sel-actions, :root[data-taille="tres-grande"] .sel-actions {
-    grid-column: 1 / -1; justify-content: flex-start;
-  }
-}
-@media (max-width: 460px) {                 /* (taille normale : « 1 234 sélectionnées » ne tiendrait pas non plus) */
-  .barre-selection { grid-template-columns: auto minmax(0, 1fr); }
-  .sel-actions { grid-column: 1 / -1; justify-content: flex-start; }
-}
 /* Grand texte : l'en-tête passe sur deux lignes, et les boutons de la sélection gardent leurs icônes seules, plus tôt
    (les largeurs des requêtes de média ne suivent pas la taille du texte). */
 @media (max-width: 1100px) {
@@ -790,6 +791,15 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
   }
   :root[data-taille="grande"] .dossier, :root[data-taille="tres-grande"] .dossier { flex-wrap: wrap; }
   :root[data-taille="grande"] .dossier-texte, :root[data-taille="tres-grande"] .dossier-texte { min-width: 60%; }
+}
+/* Très petit écran en grand texte : l'icône de MyPhotos s'efface et les écarts se resserrent, pour que l'en-tête
+   tienne dans la largeur (relecture de la 0.4.2 : à 320 px en « Grande », à 320 et 360 px en « Très grande »,
+   « Réglages » et le bouton Chercher sortaient de l'écran). */
+@media (max-width: 400px) {
+  :root[data-taille="grande"] .entete, :root[data-taille="tres-grande"] .entete { column-gap: 10px; }
+  :root[data-taille="grande"] .entete .marque > .logo, :root[data-taille="tres-grande"] .entete .marque > .logo { display: none; }
+  :root[data-taille="grande"] .entete-actions .bouton, :root[data-taille="tres-grande"] .entete-actions .bouton { padding: 0 10px; }
+  :root[data-taille="grande"] .sel-compte, :root[data-taille="tres-grande"] .sel-compte { white-space: normal; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation-duration: .01ms !important; }
@@ -887,7 +897,9 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 <div id="appli" hidden>
   <div class="haut">
     <header class="entete">
-      <a id="accueil" class="marque" href="#" aria-label="MyPhotos : afficher toutes les photos"><span class="logo" aria-hidden="true"></span><span class="marque-textes"><span>MyPhotos</span><span id="marque-version" class="marque-version"></span></span></a>
+      <!-- Nom du lien pour les lecteurs d'écran : son texte visible, version comprise, puis ce qu'il fait (relecture de la
+           0.4.2 : un aria-label cachait la version) ; « MyPhotos version 0.5.0 : afficher toutes les photos ». -->
+      <a id="accueil" class="marque" href="#"><span class="logo" aria-hidden="true"></span><span class="marque-textes"><span>MyPhotos</span><span id="marque-version" class="marque-version"></span></span><span class="visuellement-cache"> : afficher toutes les photos</span></a>
       <form id="formulaire" class="recherche" role="search">
         <div class="champ">
           <svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>

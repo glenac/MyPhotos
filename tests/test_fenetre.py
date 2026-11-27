@@ -1148,17 +1148,55 @@ class TestPage(unittest.TestCase):
         self.assertIn("ev.preventDefault();\n      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';", page)
 
     def test_nombre_coche_lisible_en_grand_texte(self):
-        """0.4.1 : à 420 px de large en « Très grande », le nombre de photos cochées était tronqué (« 2 sélec… ») : sur
-        un écran étroit, en grand texte, les boutons de la sélection passent sous lui (mesuré dans Edge : le nombre tient
-        en entier pour les trois tailles, voir docs/ARCHITECTURE.md)."""
+        """0.4.1 : à 420 px de large en « Très grande », le nombre de photos cochées était tronqué (« 2 sélec… ») ;
+        relecture de la 0.4.2 : en taille Normale aussi, entre 761 et 851 px (« 2 sé… »). Quand l'en-tête est sur deux
+        lignes (900 px et moins), la barre de la sélection aussi : ses boutons passent sous le nombre de photos
+        cochées, pour les trois tailles (mesuré dans Edge : le nombre tient en entier, voir docs/ARCHITECTURE.md)."""
         import re
         page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
-        m = re.search(r'@media \(max-width: (\d+)px\) \{\s*:root\[data-taille="grande"\] \.barre-selection, '
-                      r':root\[data-taille="tres-grande"\] \.barre-selection \{\s*grid-template-columns: auto '
-                      r'minmax\(0, 1fr\);\s*\}\s*:root\[data-taille="grande"\] \.sel-actions, '
-                      r':root\[data-taille="tres-grande"\] \.sel-actions \{\s*grid-column: 1 / -1;', page)
+        m = re.search(r'@media \(max-width: (\d+)px\) \{\s*:root \{[^}]*\}\s*\.entete \{ grid-template-columns: 1fr '
+                      r'auto; \}\s*\.recherche \{ grid-column: 1 / -1; grid-row: 2; max-width: none; \}\s*(?:/\*.*?\*/\s*)?'
+                      r'\.barre-selection \{ grid-template-columns: auto minmax\(0, 1fr\); \}\s*'
+                      r'\.sel-actions \{ grid-column: 1 / -1; justify-content: flex-start; \}', page, re.S)
         self.assertIsNotNone(m)
-        self.assertGreaterEqual(int(m.group(1)), 420)
+        self.assertGreaterEqual(int(m.group(1)), 900)
+
+    def test_entete_relecture_0_4_2(self):
+        """Relecture de la 0.4.2 (mesuré dans Edge sans fenêtre, de 320 à 1 281 px, tailles Normale, Grande et Très
+        grande, voir docs/ARCHITECTURE.md) :
+        - le lien « MyPhotos » n'a plus d'aria-label, qui cachait la version aux lecteurs d'écran : son nom est son
+          texte visible, version comprise, puis ce qu'il fait (« MyPhotos version 0.5.0 : afficher toutes les
+          photos ») ;
+        - il n'est pas plus large que son nom (en-tête sur deux lignes : il couvrait tout le vide jusqu'à « Doublons ») ;
+        - la barre de la sélection se pose sur l'en-tête, dans la même case, sans hauteur à elle : cocher une photo ne
+          fait plus sauter la page (de 14 à 69 px avant) ;
+        - à 400 px et moins, en grand texte, l'icône s'efface et les écarts se resserrent : « Réglages » et le bouton
+          Chercher ne sortent plus de l'écran (320 px en Grande, 320 et 360 px en Très grande)."""
+        import re
+        page = (RACINE / 'page' / 'index.html').read_text(encoding='utf-8')
+        lien = re.search(r'<a id="accueil"[^>]*>(.*?)</a>', page, re.S)
+        self.assertIsNotNone(lien)
+        self.assertNotIn('aria-label', lien.group(0))
+        self.assertIn('<span id="marque-version" class="marque-version"></span>', lien.group(1))  # écrite par le serveur
+        self.assertIn('<span class="visuellement-cache"> : afficher toutes les photos</span>', lien.group(1))
+        self.assertIn('.entete > .marque { justify-self: start; }', page)
+        self.assertIn('.haut > .entete, .haut > .barre-selection { grid-area: 1 / 1; }', page)
+        self.assertIn('.en-selection .entete { visibility: hidden; }', page)
+        self.assertNotIn('.en-selection .entete { display: none; }', page)
+        barre = re.search(r'\n\.barre-selection \{([^}]*)\}', page)
+        self.assertNotIn('min-height', barre.group(1))
+        etroit = re.search(r'@media \(max-width: 400px\) \{(.*?)\n\}', page, re.S)
+        self.assertIsNotNone(etroit)
+        for attendu in ('.entete .marque > .logo { display: none; }', '.entete { column-gap: 10px; }',
+                        '.entete-actions .bouton { padding: 0 10px; }', '.sel-compte { white-space: normal; }'):
+            self.assertIn(attendu, etroit.group(1))
+        # Après toutes les règles de 760 px, qui donnent aux mêmes boutons un autre écart (même spécificité).
+        self.assertGreater(page.index('@media (max-width: 400px)'),
+                           page.rindex(':root[data-taille="tres-grande"] .entete-actions .bouton,\n'))
+        # Rien d'autre ne fait défiler la page de côté à 320 px : « Voir les 18 autres années » (321 px en Très
+        # grande) passe à la ligne, comme un long chemin de dossier dans le bandeau de l'analyse.
+        self.assertIn('.cj-autres .bouton { max-width: 100%; white-space: normal; text-align: center; }', page)
+        self.assertIn('.bandeau-texte { flex: 1 1 320px; min-width: 0; overflow-wrap: anywhere; }', page)
 
     def test_plus_de_branches_mortes_de_la_copie(self):
         """0.4.1 : depuis la 0.4.0, le serveur ne répond plus 410 et ne renvoie plus « retirees » (Copier, Copier dans
