@@ -559,6 +559,47 @@ class TestPreparation(unittest.TestCase):
             silence.stop()
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_version_du_contenu(self):
+        """Relecture de la 0.5.0 : la version de lieux.bin venait de la date des fichiers du cache ; refaire le fichier
+        avec une copie du cache qui n'a pas gardé ces dates changeait la version (et le fichier), et tous les
+        utilisateurs auraient refait le calcul des lieux de toutes leurs photos. Elle vient du contenu seul : la
+        dernière modification des lignes de GeoNames retenues, et l'empreinte. Mêmes sources, fichiers datés
+        autrement : octet pour octet le même fichier, que lieux.py relit."""
+        P = self.P
+        tmp = Path(tempfile.mkdtemp(prefix='myphotos-lieux-'))
+        try:
+            chemins = {nom: tmp / nom for nom in ('countryInfo.txt', 'cities500.zip')}
+            for p in chemins.values():
+                p.write_bytes(b'source')
+
+            def rassembler(cache, actualiser=False):
+                pays = P.Ent('pays', 'FR', 'France', pays='FR', population=68_000_000)
+                region = P.Ent('region', 'FR.53', 'Bretagne', pays='FR', population=3_300_000)
+                dep = P.Ent('departement', 'FR.29', 'Finistère', pays='FR', region='FR.53', population=900_000)
+                villes = [P.Ent('ville', None, 'Quimper', pays='FR', region='FR.53', departement='FR.29',
+                                population=63_000, lat=47.996, lon=-4.1024, gid=2984701, date='2026-10-02'),
+                          P.Ent('ville', None, 'Brest', pays='FR', region='FR.53', departement='FR.29',
+                                population=139_000, lat=48.3904, lon=-4.4861, gid=3030300, date='2026-11-20')]
+                return {'pays': [pays], 'regions': [region], 'departements': [dep], 'villes': villes, 'n_france': 2,
+                        'chemins': chemins, 'points': [], 'date': max(v.date for v in villes)}
+
+            fichiers, versions = [], []
+            with mock.patch.object(P, 'rassembler', rassembler), mock.patch('builtins.print'):
+                for k, jour in enumerate((1_700_000_000, 1_800_000_000)):       # novembre 2023, puis janvier 2027
+                    for p in chemins.values():
+                        os.utime(p, (jour, jour))
+                    sortie = tmp / f'lieux-{k}.bin'
+                    versions.append(P.preparer(tmp, sortie)['version'])
+                    fichiers.append(sortie.read_bytes())
+            self.assertEqual(fichiers[0], fichiers[1])
+            self.assertEqual(versions[0], versions[1])
+            self.assertTrue(versions[0].startswith('2026-11-20-'), versions[0])
+            relu = Lieux(tmp / 'lieux-0.bin')
+            self.assertEqual(relu.version, versions[0])
+            self.assertEqual(relu.endroit(relu.localiser(48.39, -4.49)['ville']).nom, 'Brest')
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_sources(self):
         noms = self.P.fichiers_sources()
         for f in ('cities500.zip', 'FR.zip', 'RE.zip', 'NC.zip', 'alternateNamesV2.zip', 'countryInfo.txt'):
