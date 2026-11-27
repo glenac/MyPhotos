@@ -182,7 +182,7 @@ Une copie de photos en cours doit d'abord se terminer. **MyPhotos.exe seul** (sa
 
 **Sécurité.** Ce fichier est signé avec une clé qui reste sur l'ordinateur du projet, jamais sur GitHub, et MyPhotos contient de quoi vérifier cette signature : un fichier non signé, abîmé ou modifié est ignoré. Même un compte GitHub volé ne suffirait donc pas à envoyer un faux MyPhotos. Le fichier donne la taille et l'empreinte SHA-256 exactes de l'installateur, contrôlées après le téléchargement, puis encore une fois juste avant l'installation. MyPhotos ne propose jamais de revenir à une version plus ancienne.
 
-**Depuis la 0.3.0 ou plus ancienne**, installez la 0.4.0 à la main, une dernière fois, avec `MyPhotos-0.4.0-installation.exe` : vos données sont gardées. Les versions suivantes se proposeront d'elles-mêmes.
+**Depuis la 0.3.0 ou plus ancienne**, installez la nouvelle version à la main, une dernière fois, avec son installateur (`MyPhotos-<version>-installation.exe`, sur la page [Releases](https://github.com/glenac/MyPhotos/releases)) : vos données sont gardées. Les versions suivantes se proposeront d'elles-mêmes.
 
 ## Questions fréquentes
 
@@ -303,7 +303,7 @@ python -m venv .venv
 
 L'API locale n'accepte les requêtes POST qu'avec l'en-tête `X-MyPhotos: 1` (protection contre les autres sites ouverts dans le navigateur). `POST /api/quitter` arrête proprement le serveur.
 
-**Tests** (924 essais) :
+**Tests** (929 essais) :
 
 ```powershell
 .venv\Scripts\python.exe -m unittest tests.test_coeur tests.test_materiel tests.test_serveur tests.test_verifier_publication tests.test_doublons tests.test_construction tests.test_fenetre tests.test_mise_a_jour tests.test_signature tests.test_lieux tests.test_requete
