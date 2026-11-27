@@ -149,13 +149,16 @@ class TestDonnees(unittest.TestCase):
             self.assertIn(f, noms)
         for s in entete['sources']:
             self.assertTrue(s['adresse'].startswith('https://download.geonames.org/export/dump/'), s)
-            self.assertRegex(s['date'], r'^\d{4}-\d{2}-\d{2}$')
+            self.assertNotIn('date', s)                       # jamais la date des fichiers du cache
             self.assertGreater(s['taille'], 0)
         c = entete['comptes']
         self.assertGreater(c['villes_france'], 34000)        # toutes les communes de France
         self.assertGreater(c['villes'], 100000)
         self.assertEqual(c['departements'], 96)
-        self.assertTrue(donnees().version.startswith(max(s['date'] for s in entete['sources'])))
+        # Version : du contenu seul (relecture de la 0.5.0) : dernière modification des lignes de GeoNames retenues,
+        # puis le début de l'empreinte.
+        self.assertRegex(entete['date'], r'^\d{4}-\d{2}-\d{2}$')
+        self.assertEqual(donnees().version, f"{entete['date']}-{entete['empreinte'][:8]}")
         # Le contenu est binaire dès le début : le garde-fou ne cherche pas de données personnelles dedans.
         self.assertIn(b'\x00', FICHIER.read_bytes()[:64])
 
@@ -325,6 +328,15 @@ class TestNoms(unittest.TestCase):
         self.assertEqual(donnees().libelle(reunion), 'Saint-Denis, La Réunion, France')
         self.assertEqual(donnees().libelle(None), '')
         self.assertEqual(donnees().parents(None), [])
+        # Relecture de la 0.5.0 : régions sans mot administratif, en français, avec une majuscule ; pays bien nommés.
+        for (lat, lon), libelle in (((35.4437, 139.6380), 'Yokohama, Kanagawa, Japon'),
+                                    ((31.2304, 121.4737), 'Shanghai, Chine'), ((35.6971, -0.6308), 'Oran, Algérie'),
+                                    ((46.2389, 14.3556), 'Kranj, Slovénie'),
+                                    ((38.8951, -77.0364), 'Washington, Washington D.C., États-Unis'),
+                                    ((-4.3217, 15.3125), 'Kinshasa, République démocratique du Congo')):
+            self.assertEqual(donnees().libelle(donnees().proche(lat, lon)[0]), libelle)
+        self.assertEqual(donnees().endroit('p:SX').nom, 'Sint Maarten')
+        self.assertEqual(donnees().proche(43.9356, 12.4473)[0].nom, 'Saint-Marin')
 
     def test_idents(self):
         for nom in ('brest', 'finistere', 'bretagne', 'france', 'seville', 'andalousie', 'tokyo', 'la reunion'):
@@ -364,6 +376,37 @@ class TestProche(unittest.TestCase):
         self.ville(SHIBUYA, 'Tokyo', 'JP', max_km=10.0)
         self.ville(SAINT_DENIS_REUNION, 'Saint-Denis')
 
+    def test_frontieres_et_quartiers(self):
+        """Relecture de la 0.5.0 (vérité de terrain : GeoNames lui-même). Près des frontières, des lieux habités
+        écartés par les seuils tombaient dans un autre pays : Monaco (plage du Larvotto, Grimaldi Forum, jardin
+        japonais) à Beausoleil en France, Berdorf (Luxembourg) en Allemagne, Monsanto (Portugal) en Espagne, Maho
+        Beach (Sint Maarten) côté français, Neum (Bosnie) en Croatie ; et les lacs de Plitvice (Croatie) à Bihać, en
+        Bosnie, choisie pour sa population. Les quartiers de Paris : Roland-Garros n'est plus à Boulogne-Billancourt."""
+        d = donnees()
+        for (lat, lon), pays in (((43.7445, 7.4330), 'MC'), ((43.7437, 7.4310), 'MC'), ((43.7419, 7.4289), 'MC'),
+                                 ((49.8209, 6.3509), 'LU'), ((40.0389, -7.1147), 'PT'), ((18.0410, -63.1190), 'SX'),
+                                 ((42.9236, 17.6156), 'BA'), ((44.8654, 15.5820), 'HR')):
+            with self.subTest(position=(lat, lon)):
+                self.assertEqual(d.localiser(lat, lon)['pays'], 'p:' + pays)
+        self.assertEqual(d.proche(43.7445, 7.4330)[0].nom, 'Monaco')
+        for (lat, lon) in ((48.8470, 2.2490), (48.8938, 2.3907), (48.8380, 2.4420)):   # Roland-Garros, Villette…
+            with self.subTest(position=(lat, lon)):
+                self.assertEqual(d.proche(lat, lon)[0].ident, 'v:2988507')
+        self.assertEqual(d.proche(48.8352, 2.2410)[0].nom, 'Boulogne-Billancourt')      # le centre de Boulogne
+        self.assertEqual(d.proche(45.7719, 4.8902)[0].nom, 'Villeurbanne')
+        self.assertEqual(d.proche(43.2951, 5.3740)[0].nom, 'Marseille')
+
+    def test_noms_de_recherche_en_plus(self):
+        """Relecture de la 0.5.0 : îles, noms d'usage des pays, Monte-Carlo, l'Algarve."""
+        d = donnees()
+        for nom, attendu in (('hollande', 'p:NL'), ('grande bretagne', 'p:GB'), ('algarve', 'r:PT.09')):
+            self.assertIn(attendu, [e.ident for e in d.chercher(nom)], nom)
+        for nom, ville in (('ile de re', 'Saint-Martin-de-Ré'), ('oleron', "Saint-Pierre-d'Oléron"),
+                           ('belle ile', 'Le Palais'), ('noirmoutier', "Noirmoutier-en-l'Île"),
+                           ('porquerolles', 'Hyères'), ('majorque', 'Palma'), ('tenerife', 'Arona'),
+                           ('monte carlo', 'Monaco'), ('djerba', 'Houmt Souk')):
+            self.assertIn(ville, [e.nom for e in d.chercher(nom)], nom)
+
     def test_en_mer(self):
         self.assertEqual(donnees().proche(*OCEAN), (None, None))
         self.assertEqual(donnees().localiser(*OCEAN),
@@ -371,12 +414,15 @@ class TestProche(unittest.TestCase):
         v, d = donnees().proche(*AU_LARGE)
         self.assertIsNone(v)
         self.assertTrue(d is None or d > lieux.RAYON_KM)
-        # À 50-60 km des côtes : ni ville ni région, mais le pays de la ville la plus proche.
+        # À 50-60 km des côtes : pas de ville, mais la région et le pays de la ville la plus proche (relecture de la
+        # 0.5.0 : le pays seul ; Yosemite n'avait que « États-Unis », sans la Californie).
         v, d = donnees().proche(*PRES_DES_COTES)
         self.assertIsNone(v)
         self.assertTrue(lieux.RAYON_KM < d < lieux.RAYON_PAYS_KM, d)
         self.assertEqual(donnees().localiser(*PRES_DES_COTES),
-                         {'ville': None, 'departement': None, 'region': None, 'pays': 'p:FR', 'distance': d})
+                         {'ville': None, 'departement': None, 'region': 'r:FR.53', 'pays': 'p:FR', 'distance': d})
+        yosemite = donnees().localiser(37.7459, -119.5332)
+        self.assertEqual((yosemite['ville'], yosemite['region'], yosemite['pays']), (None, 'r:US.CA', 'p:US'))
 
     def test_localiser(self):
         r = donnees().localiser(*BREST)
@@ -442,7 +488,12 @@ class TestPreparation(unittest.TestCase):
                            ('Préfecture de Tokyo', 'Tokyo'), ('État de Berlin', 'Berlin'),
                            ('Ville-État de Hambourg', 'Hambourg'), ('Province de Groningue', 'Groningue'),
                            ("Province d'Anvers", 'Anvers'), ('district de Viana do Castelo', 'Viana do Castelo'),
-                           ('Canton de Glaris', 'Glaris'),
+                           ('Canton de Glaris', 'Glaris'), ('préfecture de Kanagawa', 'Kanagawa'),
+                           ('Municipalité de Shanghai', 'Shanghai'), ("wilaya d'Oran", 'Oran'),
+                           ('Urban Municipality of Kranj', 'Kranj'), ('Province d’Anvers', 'Anvers'),
+                           ('Voïvodie de Mazovie', 'Mazovie'), ('Région autonome de Madère', 'Madère'),
+                           ('Comitat de Zagreb', 'Comitat de Zagreb'), ('Regionalverband Saarbrücken',
+                                                                        'Regionalverband Saarbrücken'),
                            # Sans nom propre derrière, ou sans mot administratif : inchangé.
                            ('Région de la capitale', 'Région de la capitale'), ('Région du Lac', 'Région du Lac'),
                            ('Communauté de Madrid', 'Communauté de Madrid'), ('Bretagne', 'Bretagne'),

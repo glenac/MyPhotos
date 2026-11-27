@@ -51,14 +51,18 @@ FORMAT = 1
 # voisines est donc presque toujours à moins de 30 km de l'une d'elles ; au-delà, le nom d'une ville ne dit plus où la
 # photo a été prise (en mer, en pleine montagne, dans le désert).
 RAYON_KM = 30.0
-# Sans ville à moins de 30 km, le pays de la ville la plus proche est retenu jusqu'à 100 km (au large des côtes, safari,
-# désert), sans ville ni région : assez près pour que ce soit presque toujours le bon pays.
+# Sans ville à moins de 30 km, la région et le pays de la ville la plus proche sont retenus jusqu'à 100 km (au large des
+# côtes, safari, désert, parc national), sans ville : assez près pour que ce soit presque toujours la bonne région.
 RAYON_PAYS_KM = 100.0
 # Une grande ville l'emporte sur un village voisin plus proche de la photo, comme sur une carte : le choix se fait sur
 # distance / poids, avec poids = 1 + POIDS_POPULATION × racine(population / 1000) (Paris : 5,7 ; Brest : 2,2 ; un
 # village de 800 habitants : 1,1). Une photo prise dans le 15e arrondissement est à Paris, pas à Issy-les-Moulineaux,
 # dont la mairie est pourtant plus proche.
 POIDS_POPULATION = 0.1
+# Mais jamais une ville d'un autre pays quand la ville la plus proche est nettement plus près (relecture de la 0.5.0 :
+# les lacs de Plitvice, en Croatie, donnaient Bihać, en Bosnie, à 23 km, plutôt que Korenica, à 17 km) : si la ville
+# choisie est d'un autre pays que la plus proche et plus de ECART_PAYS fois plus loin, la meilleure de ce pays-là.
+ECART_PAYS = 1.25
 NULL_ISLAND = 0.01                       # (0, 0) à moins de 0,01° : appareil sans vraie position
 CELLULE = 0.25                           # grille de recherche : cases de 0,25° de côté
 _COLONNES = int(round(360 / CELLULE))
@@ -203,6 +207,19 @@ class _Donnees:
         self.v_lat = np.cumsum(np.frombuffer(s['ville_lat'], '<i4').astype(np.int64)) / echelle
         self.v_lon = np.cumsum(np.frombuffer(s['ville_lon'], '<i4').astype(np.int64)) / echelle
         self._variantes_endroits = np.cumsum(np.frombuffer(s['variantes_endroits'], '<i4').astype(np.int64))
+        # Points en plus d'une ville (facultatifs) : quartiers de Paris, Lyon, Marseille, de Monaco… ; une photo prise
+        # près de l'un d'eux est dans sa ville (et non dans la commune voisine, dont la mairie est plus proche).
+        if 'points_ville' in s:
+            self.p_ville = np.cumsum(np.frombuffer(s['points_ville'], '<i4').astype(np.int64))
+            self.p_lat = np.cumsum(np.frombuffer(s['points_lat'], '<i4').astype(np.int64)) / echelle
+            self.p_lon = np.cumsum(np.frombuffer(s['points_lon'], '<i4').astype(np.int64)) / echelle
+            self.p_poids = np.frombuffer(s['points_poids'], '<u2').astype(np.float64) / 1000.0
+        else:
+            self.p_ville = np.empty(0, np.int64)
+            self.p_lat = self.p_lon = self.p_poids = np.empty(0, np.float64)
+        if not (len(self.p_ville) == len(self.p_lat) == len(self.p_lon) == len(self.p_poids)) or (
+                len(self.p_ville) and not (0 <= self.p_ville.min() and self.p_ville.max() < self.n_villes)):
+            raise DonneesInvalides('points incohérents')
         for tableau, attendu in ((self.pop, self.n), (self.region_pays, self.n_regions),
                                  (self.departement_region, self.n_departements), (self.v_pays, self.n_villes),
                                  (self.v_region, self.n_villes), (self.v_departement, self.n_villes),
@@ -232,16 +249,21 @@ class _Donnees:
     # ------------------------------------------------ grille de proximité
 
     def _preparer_grille(self):
-        lat, lon = self.v_lat, self.v_lon
+        """Villes et points en plus d'une ville, rangés par case : _g_ordre donne la ville de chacun."""
+        lat = np.concatenate([self.v_lat, self.p_lat])
+        lon = np.concatenate([self.v_lon, self.p_lon])
+        ville = np.concatenate([np.arange(len(self.v_lat), dtype=np.int64), self.p_ville])
+        poids = np.concatenate([1.0 + POIDS_POPULATION * np.sqrt(self.pop[self.n_admin:] / 1000.0), self.p_poids])
         lignes = np.clip(np.floor((lat + 90) / CELLULE), 0, _COLONNES // 2 - 1).astype(np.int64)
         colonnes = np.floor((lon + 180) / CELLULE).astype(np.int64) % _COLONNES
         cles = lignes * _COLONNES + colonnes
         ordre = np.argsort(cles, kind='stable')
-        self._g_ordre = ordre
+        self._g_ordre = ville[ordre]
         self._g_cles = cles[ordre].tolist()          # bisect, plus rapide qu'un searchsorted pour une seule valeur
         self._g_lat = lat[ordre]
         self._g_lon = lon[ordre]
-        self._g_poids = 1.0 + POIDS_POPULATION * np.sqrt(self.pop[self.n_admin:][ordre] / 1000.0)
+        self._g_poids = poids[ordre]
+        self._g_pays = self.v_pays[self._g_ordre]
 
     def candidats(self, lat, lon, rayon):
         """Indices (dans l'ordre de la grille) des villes des cases à moins de `rayon` km de (lat, lon)."""
@@ -287,6 +309,11 @@ class _Donnees:
             return None, None
         score = np.where(dedans, d / self._g_poids[idx] if pondere else d, np.inf)
         k = int(np.argmin(score))
+        if pondere:
+            pays = self._g_pays[idx]
+            proche = int(np.argmin(np.where(dedans, d, np.inf)))
+            if pays[k] != pays[proche] and d[k] > ECART_PAYS * d[proche]:
+                k = int(np.argmin(np.where(pays == pays[proche], score, np.inf)))
         i = int(self._g_ordre[idx[k]])
         return i, distance_km(lat, lon, float(self.v_lat[i]), float(self.v_lon[i]))
 
@@ -450,8 +477,9 @@ class Lieux:
 
     def localiser(self, lat, lon):
         """Ce qu'il faut retenir d'une photo prise en (lat, lon) : {ville, departement, region, pays (idents ou None),
-        distance (km ou None)}, ou None pour une position invalide. Sans ville à moins de 30 km, le pays seul de la
-        ville la plus proche jusqu'à 100 km (en mer près des côtes, en pleine nature) ; au-delà, tout est None."""
+        distance (km ou None)}, ou None pour une position invalide. Sans ville à moins de 30 km, la région et le pays
+        de la ville la plus proche jusqu'à 100 km (en mer près des côtes, en pleine nature : Yosemite, la Californie) ;
+        au-delà, tout est None."""
         d = self._donnees()
         pos = coordonnees_valides(lat, lon)
         if d is None or pos is None:
@@ -464,7 +492,8 @@ class Lieux:
         j, dist = d.plus_proche(pos[0], pos[1], RAYON_PAYS_KM, pondere=False)
         if j is None:
             return {'ville': None, 'departement': None, 'region': None, 'pays': None, 'distance': None}
-        return {'ville': None, 'departement': None, 'region': None, 'pays': 'p:' + d.codes[int(d.v_pays[j])],
+        v = self._endroit(d, d.n_admin + j)
+        return {'ville': None, 'departement': None, 'region': v.region, 'pays': 'p:' + v.pays,
                 'distance': round(dist, 3)}
 
     def chercher(self, nom_normalise):

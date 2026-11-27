@@ -9,14 +9,19 @@ admin2Codes.txt (départements), countryInfo.txt (pays) et alternateNamesV2.zip 
 pays). Ils sont téléchargés une seule fois (près de 240 Mo, dont 205 pour alternateNamesV2.zip) dans un cache HORS du
 dépôt : --cache, sinon %MYPHOTOS_CACHE_CONSTRUCTION%\geonames, sinon %LOCALAPPDATA%\MyPhotos-construction\cache\geonames.
 --actualiser les télécharge de nouveau. Le script est relançable : les mêmes sources donnent exactement le même
-fichier (même empreinte, même version).
+fichier (même empreinte, même version : la version vient du contenu seul, jamais de la date des fichiers du cache).
 
 Ce qui est gardé (seuils choisis en mesurant la taille du fichier, qui doit rester sous 2 Mo : PROCHES, SEUIL_PROCHES
 et SEUIL_MONDE ci-dessous ; mesures dans docs/ARCHITECTURE.md, section « Lieux ») :
 - France, métropole et outre-mer : toutes les communes (chef-lieu de chaque commune, et anciennes communes d'une
   commune nouvelle quand GeoNames leur donne une population : Cherbourg et Tourlaville dans Cherbourg-en-Cotentin) ;
 - pays voisins et lieux de vacances habituels (PROCHES) : les villes et villages d'au moins SEUIL_PROCHES habitants ;
-- reste du monde : les villes d'au moins SEUIL_MONDE habitants, plus les capitales et les chefs-lieux de région.
+- reste du monde : les villes d'au moins SEUIL_MONDE habitants, plus les capitales et les chefs-lieux de région ;
+- près des frontières : tout lieu habité écarté par les seuils qui, sinon, tomberait dans un autre pays que le sien
+  (villages du Luxembourg près de l'Allemagne, de Belgique près de Givet…) ; les quartiers (PPLX) concernés deviennent
+  des points en plus de leur ville (Larvotto, Monte-Carlo : Monaco) ;
+- points en plus d'une ville : les quartiers de Paris, Lyon et Marseille (sinon Roland-Garros est à
+  Boulogne-Billancourt, la Villette à Pantin).
 
 Noms : le français d'abord (noms alternatifs « fr » de GeoNames : Londres, Espagne, Bretagne, Séville, Venise), sinon
 le nom de GeoNames ; pour la recherche, aussi le nom de GeoNames, le nom dans la langue du pays (Sevilla, Venezia,
@@ -32,7 +37,8 @@ décroissante), puis villes (par numéro GeoNames). Sections : noms (nom affich�
 normalisé), variantes et variantes_endroits (autres noms normalisés et leur endroit, en différences), codes (codes des
 pays, régions et départements), population, region_pays, departement_region, ville_pays, ville_region,
 ville_departement, ville_geonames, ville_lat et ville_lon (au dix-millième de degré ; numéros et positions en
-différences successives).
+différences successives) ; points_ville, points_lat, points_lon (en différences) et points_poids (poids × 1000) : les
+points en plus d'une ville.
 """
 import argparse
 import hashlib
@@ -54,7 +60,7 @@ import numpy as np
 
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
-from myphotos.lieux import FORMAT, MAGIQUE, normaliser  # noqa: E402  (après sys.path)
+from myphotos.lieux import FORMAT, MAGIQUE, POIDS_POPULATION, normaliser  # noqa: E402  (après sys.path)
 
 ADRESSE = 'https://download.geonames.org/export/dump/'
 AGENT = 'MyPhotos/1 (preparation des donnees de lieux)'
@@ -82,12 +88,15 @@ _CHAMP_NIVEAU = {'ADM1': 10, 'ADM2': 11, 'ADM3': 12, 'ADM4': 13}
 # Pays voisins de la France et lieux de vacances habituels d'une famille française : villes et villages d'au moins
 # SEUIL_PROCHES habitants. Ailleurs : SEUIL_MONDE, plus les capitales et chefs-lieux de région.
 PROCHES = {'BE', 'LU', 'CH', 'MC', 'AD', 'LI', 'SM', 'VA', 'DE', 'IT', 'ES', 'PT', 'GB', 'IE', 'NL', 'AT', 'GR',
-           'HR', 'MT', 'CY', 'SI', 'ME', 'JE', 'GG', 'IM', 'GI', 'MA', 'TN', 'MU'}
+           'HR', 'MT', 'CY', 'SI', 'ME', 'JE', 'GG', 'IM', 'GI', 'MA', 'TN', 'MU', 'IS', 'NO'}
 SEUIL_PROCHES = 1000
 SEUIL_MONDE = 5000
 TOUJOURS = {'PPLC', 'PPLA', 'PPLG'}         # capitales, chefs-lieux de région, sièges de gouvernement
 # Écartés : quartiers (PPLX), lieux historiques, abandonnés ou détruits.
 ECARTES = {'PPLX', 'PPLH', 'PPLQ', 'PPLW', 'PPLCH', 'PPLCD'}
+HISTORIQUES = ECARTES - {'PPLX'}
+# Quartiers gardés comme points en plus de leur ville (code INSEE de la commune, champ admin4 de FR.zip).
+GRANDES_VILLES = {'75056': 'Paris', '69123': 'Lyon', '13055': 'Marseille'}
 
 # Langues dont les noms sont lus (le français, et les langues de pays les plus visités) ; pour chaque pays, ses deux
 # premières langues (countryInfo.txt) parmi elles donnent le « nom local ».
@@ -111,13 +120,41 @@ NOMS_REGIONAUX = {
 # Noms français corrigés là où GeoNames n'en a pas de bon (accent manquant, forme officielle seule).
 NOMS_CORRIGES = {
     'r:GB.SCT': 'Écosse', 'r:GB.WLS': 'Pays de Galles', 'r:GB.NIR': 'Irlande du Nord', 'r:GB.ENG': 'Angleterre',
-    'p:GB': 'Royaume-Uni', 'p:US': 'États-Unis', 'p:FR': 'France',
+    'p:GB': 'Royaume-Uni', 'p:US': 'États-Unis', 'p:FR': 'France', 'p:SX': 'Sint Maarten',
+    'p:CD': 'République démocratique du Congo', 'r:US.DC': 'Washington D.C.', 'p:AE': 'Émirats arabes unis',
+    'p:VI': 'Îles Vierges des États-Unis',
 }
+# Noms de recherche en plus, que GeoNames n'a pas : noms d'usage des pays, régions touristiques.
+NOMS_EN_PLUS = {'p:NL': ('Hollande',), 'p:GB': ('Grande-Bretagne',), 'r:PT.09': ('Algarve',)}
+# Îles : nom de recherche des villes qui s'y trouvent (cadre lat_min, lat_max, lon_min, lon_max ; pays).
+ILES = {
+    'Île de Ré': (46.12, 46.27, -1.58, -1.24, 'FR'), "Île d'Oléron": (45.78, 46.06, -1.43, -1.17, 'FR'),
+    'Oléron': (45.78, 46.06, -1.43, -1.17, 'FR'), 'Belle-Île': (47.27, 47.40, -3.27, -3.04, 'FR'),
+    'Belle-Île-en-Mer': (47.27, 47.40, -3.27, -3.04, 'FR'), 'Noirmoutier': (46.88, 47.07, -2.32, -2.12, 'FR'),
+    "Île de Noirmoutier": (46.88, 47.07, -2.32, -2.12, 'FR'), "Île d'Yeu": (46.68, 46.75, -2.40, -2.27, 'FR'),
+    'Majorque': (39.20, 40.00, 2.30, 3.50, 'ES'), 'Minorque': (39.78, 40.10, 3.78, 4.35, 'ES'),
+    'Ibiza': (38.85, 39.15, 1.15, 1.65, 'ES'), 'Tenerife': (27.99, 28.60, -16.95, -16.10, 'ES'),
+    'Lanzarote': (28.83, 29.25, -13.90, -13.40, 'ES'), 'Fuerteventura': (28.03, 28.77, -14.55, -13.80, 'ES'),
+    'Grande Canarie': (27.73, 28.19, -15.85, -15.35, 'ES'), 'Djerba': (33.62, 33.95, 10.70, 11.10, 'TN'),
+    'Santorin': (36.33, 36.49, 25.33, 25.50, 'GR'), 'Crète': (34.80, 35.70, 23.50, 26.35, 'GR'),
+    'Corfou': (39.35, 39.83, 19.60, 20.15, 'GR'), 'Rhodes': (35.85, 36.47, 27.68, 28.25, 'GR'),
+    'Capri': (40.53, 40.57, 14.19, 14.27, 'IT'), 'Sicile': (36.60, 38.35, 12.35, 15.70, 'IT'),
+    'Sardaigne': (38.85, 41.32, 8.10, 9.85, 'IT'), 'Madère': (32.60, 32.90, -17.30, -16.60, 'PT'),
+}
+# Une ville : quelques noms de recherche en plus (Porquerolles est dans Hyères ; Monte-Carlo, un quartier de Monaco).
+VILLES_EN_PLUS = {('FR', 'Hyères'): ('Porquerolles', 'Port-Cros', 'Îles d\'Hyères'),
+                  ('MC', 'Monaco'): ('Monte-Carlo', 'La Condamine', 'Fontvieille', 'Larvotto', 'Monaco-Ville')}
 ARTICLES = ('le ', 'la ', 'les ', 'l ')
 # Noms de régions affichés sans leur mot administratif (« Région Provence-Alpes-Côte d'Azur », « Préfecture de
-# Tokyo », « État de Berlin », « Province de Groningue ») ; le nom complet reste un nom de recherche.
-PREFIXES_REGIONS = re.compile(r"^(?:Région|(?:Province|Préfecture|Canton|District|État|Ville-État|Comté|Gouvernorat)"
-                              r" (?:de|du|d')|district de)\s*(?=[A-ZÀ-ÖØ-Þ])")
+# Tokyo », « État de Berlin », « Province de Groningue », « wilaya d'Oran », « Urban Municipality of Kranj ») ; le nom
+# complet reste un nom de recherche. Insensible à la casse, apostrophe droite ou courbe, n'importe quelle lettre après.
+PREFIXES_REGIONS = re.compile(
+    r"^(?:(?:Région autonome|Province|Préfecture|Prefecture|Canton|District|État|Ville-État|Comté|Gouvernorat|Wilaya|"
+    r"Municipalité|Voïvodie|Oblast|Division|Kraï|Kray|Ville) (?:de la |de l['’]|des |de |du |d['’])"
+    r"|(?:Région|Region|Préfecture|District|Municipalité|Province|(?:Urban )?Municipality of|City of)\s+)"
+    r"(?=[^\W\d_])", re.IGNORECASE)
+# « Ville de Saint-Marin », « Ville de Capri » : le nom seul.
+PREFIXE_VILLE = re.compile(r"^Ville (?:de |d['’])(?=[^\W\d_])")
 ECHELLE = 10000                              # positions au dix-millième de degré (11 m au plus)
 TAILLE_MAX = 1_950_000                       # le garde-fou de publication refuse les fichiers de plus de 2 Mo
 
@@ -227,20 +264,22 @@ def nom_francais(alternatifs):
 class Ent:
     """Un endroit en préparation."""
     __slots__ = ('type', 'code', 'nom', 'variantes', 'pays', 'region', 'departement', 'population', 'lat', 'lon',
-                 'gid')
+                 'gid', 'date')
 
     def __init__(self, type, code, nom, pays=None, region=None, departement=None, population=0, lat=None, lon=None,
-                 gid=None):
+                 gid=None, date=None):
         self.type, self.code, self.nom = type, code, nom
         self.variantes = set()
         self.pays, self.region, self.departement = pays, region, departement
         self.population, self.lat, self.lon, self.gid = int(population or 0), lat, lon, gid
+        self.date = date                         # date de modification de la ligne dans GeoNames
 
 
 def sans_prefixe(nom):
-    """Nom de région sans son mot administratif, s'il est suivi d'un nom propre (voir PREFIXES_REGIONS)."""
+    """Nom de région sans son mot administratif, s'il est suivi d'un nom propre (voir PREFIXES_REGIONS : une
+    majuscule de n'importe quel alphabet, « Đakovo », « Žilina » ; jamais « Région de la capitale »)."""
     court = PREFIXES_REGIONS.sub('', nom, count=1).strip()
-    return court if court and court != nom else nom
+    return court if court and court != nom and court[0].isupper() else nom
 
 
 def arrondir(population):
@@ -255,6 +294,69 @@ def _population(r):
         return max(0, int(r[14] or 0))
     except ValueError:
         return 0
+
+
+def grille(villes, points):
+    """La grille de myphotos/lieux.py (même choix de la ville : distance / poids, même règle des pays) sur ces villes
+    et ces points [(ville, lat, lon, poids)] ; ville_de(i) -> Ent."""
+    from myphotos.lieux import _Donnees
+    codes = sorted({v.pays for v in villes})
+    num = {c: i for i, c in enumerate(codes)}
+    rang = {id(v): i for i, v in enumerate(villes)}
+    g = object.__new__(_Donnees)
+    g.n_admin, g.n_villes = 0, len(villes)
+    g.v_lat = np.array([v.lat for v in villes], np.float64)
+    g.v_lon = np.array([v.lon for v in villes], np.float64)
+    g.pop = np.array([arrondir(v.population) for v in villes], np.float64)
+    g.v_pays = np.array([num[v.pays] for v in villes], np.int64)
+    g.p_ville = np.array([rang[id(v)] for v, _, _, _ in points], np.int64)
+    g.p_lat = np.array([la for _, la, _, _ in points], np.float64)
+    g.p_lon = np.array([lo for _, _, lo, _ in points], np.float64)
+    g.p_poids = np.array([round(po, 3) for _, _, _, po in points], np.float64)
+    g._preparer_grille()
+    return g, num
+
+
+def frontieres(villes, points, ecartees, nouvelle_ville):
+    """Lieux habités écartés par les seuils (et quartiers, PPLX) qui tomberaient dans un autre pays que le leur :
+    localisés avec les villes gardées (vérité : GeoNames lui-même), réintégrés (un quartier : point
+    en plus de la ville la plus proche de son pays), et ainsi de suite jusqu'à ce que plus rien ne change. Mesuré à la
+    relecture de la 0.5.0 : 1 848 lieux sur 140 098 dans un autre pays (Monaco : 4 sur 11 ; Luxembourg : 17 sur 140),
+    1 572 sans lieu. (villes ajoutées, points ajoutés)."""
+    from myphotos.lieux import RAYON_KM, RAYON_PAYS_KM
+    n_villes = n_points = 0
+    restants = list(ecartees)
+    for _tour in range(6):
+        g, num = grille(villes, points)
+        ajouts, encore = [], []
+        for r in restants:
+            lat, lon = float(r[4]), float(r[5])
+            i, _d = g.plus_proche(lat, lon, RAYON_KM)
+            if i is None:                        # sans ville à 30 km : le pays de la plus proche, jusqu'à 100 km
+                i, _d = g.plus_proche(lat, lon, RAYON_PAYS_KM, pondere=False)
+            if i is None or villes[i].pays == r[8]:
+                encore.append(r)                 # bon pays (ou rien de connu à 100 km : pas un pays faux)
+                continue
+            ajouts.append(r)
+        if not ajouts:
+            break
+        for r in ajouts:
+            lat, lon = float(r[4]), float(r[5])
+            if r[7] == 'PPLX':
+                # Quartier : point en plus de la ville la plus proche de son pays (à 30 km au plus).
+                idx = g.candidats(lat, lon, RAYON_KM)
+                miens = [int(g._g_ordre[k]) for k in idx if int(g._g_pays[k]) == num.get(r[8], -1)]
+                if not miens:
+                    continue
+                v = min(miens, key=lambda k: (villes[k].lat - lat) ** 2 + ((villes[k].lon - lon) * 0.7) ** 2)
+                points.append((villes[v], lat, lon, 1.0 + POIDS_POPULATION * (_population(r) / 1000.0) ** 0.5))
+                villes[v].variantes.update((r[1], r[2]))
+                n_points += 1
+            else:
+                villes.append(nouvelle_ville(r))
+                n_villes += 1
+        restants = encore
+    return n_villes, n_points
 
 
 def rassembler(cache, actualiser=False):
@@ -305,6 +407,7 @@ def rassembler(cache, actualiser=False):
     # habité connu est représentée par son propre point.
     villes = []
     communes_nouvelles = anciennes_communes = 0
+    centres, quartiers = {}, []                 # Paris, Lyon, Marseille : geonameid du centre ; leurs quartiers
     for cc in ['FR'] + list(OUTRE_MER):
         lignes = [r for r in lignes_zip(chemins[f'{cc}.zip']) if len(r) >= 19]
         niveau = 'ADM4' if cc == 'FR' else OUTRE_MER[cc][2]
@@ -315,6 +418,8 @@ def rassembler(cache, actualiser=False):
             if r[7] == 'ADM4H':
                 historiques[normaliser(r[1])].append((float(r[4]), float(r[5])))
         lieux = [r for r in lignes if r[6] == 'P' and r[7] not in ECARTES]
+        if cc == 'FR':
+            quartiers += [r for r in lignes if r[6] == 'P' and r[7] == 'PPLX' and r[13] in GRANDES_VILLES]
         par_commune = defaultdict(list)
         for r in lieux:
             if champ is not None and r[champ] in communes:
@@ -331,6 +436,8 @@ def rassembler(cache, actualiser=False):
             if memes:
                 r = max(memes, key=lambda x: (x[7] != 'PPL', _population(x)))
                 gardes[r[0]] = (r, _population(c) or _population(r), None)   # population de la commune d'abord
+                if cc == 'FR' and code in GRANDES_VILLES:
+                    centres[code] = int(r[0])
                 for x in dedans:
                     if x is not r and _population(x) > 0 and ancienne_commune(x):
                         gardes[x[0]] = (x, _population(x), c[1])
@@ -357,7 +464,7 @@ def rassembler(cache, actualiser=False):
             else:
                 region, dep = 'FR.' + cc, None
             v = Ent('ville', None, r[1], pays='FR', region=region, departement=dep, population=pop,
-                    lat=float(r[4]), lon=float(r[5]), gid=int(gid))
+                    lat=float(r[4]), lon=float(r[5]), gid=int(gid), date=r[18] or None)
             v.variantes.update((r[1], r[2]))
             if commune:
                 v.variantes.add(commune)
@@ -366,19 +473,35 @@ def rassembler(cache, actualiser=False):
           f'{anciennes_communes} anciennes communes en plus)', flush=True)
 
     n_france = len(villes)
-    for r in lignes_zip(chemins['cities500.zip'], 'cities500.txt'):
-        if len(r) < 19 or r[8] in OUTRE_MER or r[8] == 'FR' or r[8] not in pays or r[7] in ECARTES:
-            continue
-        pop = _population(r)
-        seuil = SEUIL_PROCHES if r[8] in PROCHES else SEUIL_MONDE
-        if pop < seuil and r[7] not in TOUJOURS:
-            continue
+    par_gid = {v.gid: v for v in villes}
+    points = []                                 # (ville, lat, lon, poids) : points en plus d'une ville
+    for code, gid in centres.items():           # quartiers de Paris, Lyon et Marseille
+        centre = par_gid[gid]
+        siens = [r for r in quartiers if r[13] == code]
+        poids = 1.0 + POIDS_POPULATION * (centre.population / (len(siens) + 1) / 1000.0) ** 0.5
+        points += [(centre, float(r[4]), float(r[5]), poids) for r in siens]
+
+    def nouvelle_ville(r):
         code_region = f'{r[8]}.{r[10]}'
         v = Ent('ville', None, r[1], pays=r[8], region=code_region if code_region in regions else None,
-                population=pop, lat=float(r[4]), lon=float(r[5]), gid=int(r[0]))
+                population=_population(r), lat=float(r[4]), lon=float(r[5]), gid=int(r[0]), date=r[18] or None)
         v.variantes.update((r[1], r[2]))
-        villes.append(v)
+        return v
+
+    ecartees = []                               # lieux habités hors de France écartés par les seuils
+    for r in lignes_zip(chemins['cities500.zip'], 'cities500.txt'):
+        if len(r) < 19 or r[8] in OUTRE_MER or r[8] == 'FR' or r[8] not in pays or r[7] in HISTORIQUES:
+            continue
+        seuil = SEUIL_PROCHES if r[8] in PROCHES else SEUIL_MONDE
+        if r[7] == 'PPLX' or (_population(r) < seuil and r[7] not in TOUJOURS):
+            ecartees.append(r)
+            continue
+        villes.append(nouvelle_ville(r))
     print(f'reste du monde : {len(villes) - n_france} villes', flush=True)
+    t = time.monotonic()
+    villes_frontieres, points_frontieres = frontieres(villes, points, ecartees, nouvelle_ville)
+    print(f'frontières : {villes_frontieres} villes et {points_frontieres} quartiers en plus '
+          f'({time.monotonic() - t:.0f} s)', flush=True)
 
     # ------------------------------------------------ noms français et locaux
     voulus = {v.gid for v in villes[n_france:]}
@@ -418,6 +541,16 @@ def rassembler(cache, actualiser=False):
             if prefixe + code in NOMS_CORRIGES:
                 e.variantes.add(e.nom)
                 e.nom = NOMS_CORRIGES[prefixe + code]
+            e.variantes.update(NOMS_EN_PLUS.get(prefixe + code, ()))
+    for v in villes:
+        court = PREFIXE_VILLE.sub('', v.nom, count=1)
+        if court != v.nom:
+            v.variantes.add(v.nom)
+            v.nom = court
+        v.variantes.update(VILLES_EN_PLUS.get((v.pays, v.nom), ()))
+        for ile, (lat1, lat2, lon1, lon2, cc) in ILES.items():
+            if v.pays == cc and lat1 <= v.lat <= lat2 and lon1 <= v.lon <= lon2:
+                v.variantes.add(ile)
 
     # ------------------------------------------------ endroits gardés, numérotés
     utiles_regions = {v.region for v in villes if v.region}
@@ -450,7 +583,8 @@ def rassembler(cache, actualiser=False):
                         v.variantes.add(k[len(a):])
 
     return {'pays': liste_pays, 'regions': liste_regions, 'departements': liste_deps, 'villes': villes,
-            'n_france': n_france, 'chemins': chemins}
+            'n_france': n_france, 'chemins': chemins, 'points': points,
+            'date': max(v.date for v in villes if v.date)}
 
 
 def preparer(cache, sortie, actualiser=False):
@@ -458,6 +592,9 @@ def preparer(cache, sortie, actualiser=False):
     r = rassembler(cache, actualiser)
     liste_pays, liste_regions, liste_deps, villes = r['pays'], r['regions'], r['departements'], r['villes']
     n_france, chemins = r['n_france'], r['chemins']
+    rang_ville = {id(v): i for i, v in enumerate(villes)}
+    points = sorted(((rang_ville[id(v)], round(la * ECHELLE), round(lo * ECHELLE), min(65535, round(po * 1000)))
+                     for v, la, lo, po in r['points']))
     entites = liste_pays + liste_regions + liste_deps + villes
     i_pays = {e.code: i for i, e in enumerate(liste_pays)}
     i_regions = {e.code: i for i, e in enumerate(liste_regions)}
@@ -497,6 +634,10 @@ def preparer(cache, sortie, actualiser=False):
         'ville_geonames': deltas([v.gid for v in villes]),
         'ville_lat': deltas([round(v.lat * ECHELLE) for v in villes]),
         'ville_lon': deltas([round(v.lon * ECHELLE) for v in villes]),
+        'points_ville': deltas([x[0] for x in points]),
+        'points_lat': deltas([x[1] for x in points]),
+        'points_lon': deltas([x[2] for x in points]),
+        'points_poids': np.array([x[3] for x in points], '<u2').tobytes(),
     }
     charge, positions = bytearray(), {}
     for nom, octets in sections.items():
@@ -508,19 +649,22 @@ def preparer(cache, sortie, actualiser=False):
     dictionnaire = max(1 << 20, 1 << (len(charge) - 1).bit_length())
     compresse = lzma.compress(charge, format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64, filters=[
         {'id': lzma.FILTER_LZMA2, 'preset': 9 | lzma.PRESET_EXTREME, 'dict_size': dictionnaire}])
-    dates = {nom: datetime.fromtimestamp(p.stat().st_mtime, timezone.utc).strftime('%Y-%m-%d')
-             for nom, p in chemins.items()}
+    # Version : du contenu seul (la dernière modification des lignes de GeoNames retenues, et l'empreinte), jamais de la
+    # date des fichiers du cache (relecture de la 0.5.0 : une copie du cache sans ses dates changeait la version, et
+    # tous les utilisateurs auraient refait le calcul des lieux de toutes leurs photos).
     entete = {
         'format': FORMAT,
-        'version': f'{max(dates.values())}-{empreinte[:8]}',
+        'version': f'{r["date"]}-{empreinte[:8]}',
+        'date': r['date'],                       # dernière modification des lignes de GeoNames retenues
         'licence': 'GeoNames (https://www.geonames.org), Creative Commons Attribution 4.0 (CC BY 4.0)',
-        'sources': [{'fichier': nom, 'adresse': ADRESSE + nom, 'date': dates[nom], 'taille': p.stat().st_size}
+        'sources': [{'fichier': nom, 'adresse': ADRESSE + nom, 'taille': p.stat().st_size}
                     for nom, p in chemins.items()],
         'couverture': {'france': 'toutes les communes, métropole et outre-mer',
                        'proches': sorted(PROCHES), 'seuil_proches': SEUIL_PROCHES, 'seuil_monde': SEUIL_MONDE,
                        'toujours': sorted(TOUJOURS)},
         'comptes': {'pays': len(liste_pays), 'regions': len(liste_regions), 'departements': len(liste_deps),
-                    'villes': len(villes), 'villes_france': n_france, 'variantes': len(variantes)},
+                    'villes': len(villes), 'villes_france': n_france, 'variantes': len(variantes),
+                    'points': len(points)},
         'echelle': ECHELLE,
         'empreinte': empreinte,
         'sections': positions,
