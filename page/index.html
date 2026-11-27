@@ -154,6 +154,10 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
   display: inline-flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.35rem;
   color: var(--texte); text-decoration: none; letter-spacing: -.01em;
 }
+/* Écran principal : le nom, et la version juste dessous (écrite par le serveur dès l'envoi de la page). */
+.marque-textes { display: inline-flex; flex-direction: column; line-height: 1.05; }
+.marque-version { font-size: .5em; font-weight: 500; color: var(--texte-doux); letter-spacing: 0; margin-top: 3px; }
+.marque-version:empty { display: none; }
 /* Icône de MyPhotos (construction/MyPhotos.ico, image de 64 px), une seule fois dans la page. */
 .logo {
   display: inline-block; width: calc(40px * var(--e)); height: calc(40px * var(--e)); flex: none;
@@ -883,7 +887,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 <div id="appli" hidden>
   <div class="haut">
     <header class="entete">
-      <a id="accueil" class="marque" href="#" aria-label="MyPhotos : afficher toutes les photos"><span class="logo" aria-hidden="true"></span><span>MyPhotos</span></a>
+      <a id="accueil" class="marque" href="#" aria-label="MyPhotos : afficher toutes les photos"><span class="logo" aria-hidden="true"></span><span class="marque-textes"><span>MyPhotos</span><span id="marque-version" class="marque-version"></span></span></a>
       <form id="formulaire" class="recherche" role="search">
         <div class="champ">
           <svg class="icone" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
@@ -1438,6 +1442,8 @@ function appliquerEtat(e) {
   E.serveur = e;
   if (e.arret) { montrerArret(); return; }
   if (e.limite_selection) LIMITE_SELECTION = e.limite_selection;
+  // Version sous le nom, en haut à gauche (déjà écrite par le serveur ; tenue à jour au cas où).
+  if (e.version && $('#marque-version').textContent !== `version ${e.version}`) $('#marque-version').textContent = `version ${e.version}`;
   if (E.ecran === 'demarrage' || E.ecran === 'arrete') {
     $('#arrete').hidden = true;
     $('#ecran-demarrage').hidden = true;

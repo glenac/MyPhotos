@@ -4,7 +4,11 @@
   "Au-dessus des résultats, une étiquette rappelle chaque date et chaque lieu reconnus ; sa croix la retire.",
   "Dans la visionneuse, le lieu de la photo (ville, région, pays) ; un clic montre toutes les photos prises à cet endroit.",
   "« Ce jour-là » : en tête de vos photos, celles prises le même jour les années passées.",
-  "Le lieu vient de la position GPS de la photo et se trouve sur votre ordinateur, sans Internet."
+  "Le lieu vient de la position GPS de la photo et se trouve sur votre ordinateur, sans Internet.",
+  "Plus discret encore : dès son démarrage, MyPhotos coupe les données de diagnostic d’ONNX Runtime, l’outil de Microsoft qui fait tourner le moteur."
+ ],
+ "0.4.2": [
+  "La version de MyPhotos s’affiche sous son nom, en haut à gauche : vous voyez d’un coup d’œil laquelle est installée."
  ],
  "0.4.1": [
   "« Plus comme celle-ci » : dans la visionneuse, les photos qui ressemblent le plus à celle affichée.",

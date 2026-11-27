@@ -668,7 +668,7 @@ def _completer_cartes(cartes, processeur):
 
 def _onnxruntime():
     o = {'version': None, 'fournisseurs': None}
-    import onnxruntime as ort
+    ort = modele.onnxruntime()                       # télémétrie d'ONNX Runtime coupée (voir modele.onnxruntime)
     o['version'] = getattr(ort, '__version__', None)
     o['fournisseurs'] = list(ort.get_available_providers())
     return o
