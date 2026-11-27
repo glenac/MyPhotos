@@ -121,15 +121,16 @@ def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
     env = dict(os.environ, MYPHOTOS_PORT=str(port), MYPHOTOS_SANS_PAGE='1', MYPHOTOS_DOSSIER=str(donnees),
                MYPHOTOS_MODELES=str(MODELES), PYTHONIOENCODING='utf-8')
     env.pop('MYPHOTOS_TELECHARGEMENT_FACTICE', None)
+    # Toujours : son propre mutex et son propre dossier des mises à jour (%LOCALAPPDATA%\MyPhotos\mises-a-jour, rangé
+    # au démarrage, et le mutex qu'attend l'installateur ne sont jamais ceux de l'utilisateur).
+    processus_essai.isoler(env, donnees)
     env.update(variables)
     Path(donnees).mkdir(parents=True, exist_ok=True)
     DONNEES_PAR_PORT[port] = Path(donnees)
     sortie = open(Path(donnees) / 'essai-serveur.err', 'ab')
-    # neutre : ni les dossiers d'images de cet ordinateur, ni le dossier des mises à jour de l'utilisateur
-    # (%LOCALAPPDATA%\MyPhotos\mises-a-jour, rangé au démarrage) : celui des données d'essai.
+    # neutre : aucun dossier d'images de cet ordinateur.
     lancement = ['-c', 'import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
-                       's.dossier_images = lambda: None; s.config.MISES_A_JOUR = s.config.DONNEES / "mises-a-jour"; '
-                       'sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
+                       's.dossier_images = lambda: None; sys.exit(s.main())'] if neutre else ['-m', 'myphotos']
     arguments = [sys.executable, '-X', 'faulthandler', *lancement]
     options = dict(cwd=str(RACINE), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=sortie,
                    creationflags=SANS_FENETRE)
@@ -139,6 +140,7 @@ def lancer_serveur(donnees, port=PORT, neutre=False, **variables):
     else:
         proc = subprocess.Popen(arguments, **options)
     proc.sortie = sortie
+    proc.mutex = env['MYPHOTOS_ESSAI_MUTEX']
     return proc
 
 
@@ -1212,6 +1214,72 @@ class TestInstances(unittest.TestCase):
             arreter_essai(proc)
             proc.sortie.close()
         self.assertTrue(port_libre(self.PORT2))
+
+    @staticmethod
+    def mutex_existe(nom):
+        import ctypes
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.OpenMutexW.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_wchar_p]
+        k32.OpenMutexW.restype = ctypes.c_void_p
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k32.OpenMutexW(0x00100000, False, nom)                         # SYNCHRONIZE
+        if h:
+            k32.CloseHandle(h)
+        return bool(h)
+
+    def test_config_d_un_myphotos_d_essai(self):
+        """Relecture de la 0.4.2 : un MyPhotos lancé par un essai depuis les sources prenait le vrai mutex (celui
+        qu'attend l'installateur) et rangeait le vrai %LOCALAPPDATA%\\MyPhotos\\mises-a-jour. processus_essai.isoler
+        lui donne les siens, que config lit ; un environnement de MyPhotos non isolé est refusé au lancement."""
+        code = 'import myphotos.config as c; print(c.MUTEX); print(c.MISES_A_JOUR)'
+        donnees = DONNEES / 'essai-isole'
+        env = dict(os.environ, MYPHOTOS_DOSSIER=str(donnees), PYTHONIOENCODING='utf-8')
+        for k in ('MYPHOTOS_ESSAI_MUTEX', 'MYPHOTOS_ESSAI_MISES_A_JOUR'):
+            env.pop(k, None)
+        with self.assertRaises(ValueError):
+            processus_essai.verifier_isole(env)
+        if os.name == 'nt':
+            with self.assertRaises(ValueError):
+                processus_essai.popen(processus_essai.Job(), [sys.executable, '-c', 'pass'], env=env)
+        processus_essai.isoler(env)
+        processus_essai.verifier_isole(env)
+        sortie = subprocess.run([sys.executable, '-c', code], cwd=str(RACINE), env=env, capture_output=True,
+                                text=True, encoding='utf-8', timeout=60, creationflags=SANS_FENETRE)
+        mutex, dossier = sortie.stdout.splitlines()
+        self.assertEqual(mutex, env['MYPHOTOS_ESSAI_MUTEX'])
+        self.assertNotEqual(mutex, 'MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED')
+        self.assertEqual(Path(dossier), donnees / 'mises-a-jour')
+        from myphotos import config
+        self.assertEqual(config.MUTEX, 'MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED')            # l'essai lui-même
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows')
+    def test_serveur_d_essai_isole(self):
+        """Vrai serveur d'essai (lancer_serveur) : il tient SON mutex, jamais le vrai, et range SON dossier des mises à
+        jour (un vieil installateur posé là est effacé au démarrage), jamais celui de l'utilisateur."""
+        if not port_libre(self.PORT2):
+            self.skipTest(f'port {self.PORT2} déjà pris')
+        from myphotos import config
+        vrai = config.MUTEX
+        vrai_avant = self.mutex_existe(vrai)                 # une vraie MyPhotos ouverte : rien n'y est touché
+        donnees = DONNEES / 'essai-isole'
+        majs = donnees / 'mises-a-jour'
+        majs.mkdir(parents=True, exist_ok=True)
+        vieux = majs / 'MyPhotos-0.0.1-installation.exe'
+        vieux.write_bytes(b'x')
+        proc = lancer_serveur(donnees, self.PORT2, neutre=True)
+        try:
+            attendre_serveur(proc, self.PORT2)
+            self.assertNotEqual(proc.mutex, vrai)
+            self.assertTrue(self.mutex_existe(proc.mutex))
+            if not vrai_avant:
+                self.assertFalse(self.mutex_existe(vrai), "un serveur d'essai a pris le vrai mutex")
+            self.assertTrue(attendre(lambda: not vieux.exists(), 20), "dossier des mises à jour de l'essai pas rangé")
+            self.assertEqual(api('/api/quitter', {}, hote=f'127.0.0.1:{self.PORT2}', port=self.PORT2)[0], 200)
+            self.assertEqual(proc.wait(timeout=60), 0)
+        finally:
+            arreter_essai(proc)
+            proc.sortie.close()
+        self.assertFalse(self.mutex_existe(proc.mutex))
 
     def test_arret_malgre_un_autre_site(self):
         """Un site ouvert dans le navigateur qui interroge MyPhotos toutes les secondes (page en « no-cors », données,
@@ -2751,15 +2819,15 @@ class TestChoixDossier(unittest.TestCase):
             self.relacher.set()
             return 1
         choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=fermer)
-        self.reponses = ['E:\Tard']
+        self.reponses = [r'E:\Tard']
         self.assertIsNone(choix.demander(delai=0.2))
         self.assertEqual(len(set(fermes)), 1)
         self.assertIsInstance(fermes[0], int)               # le fil de la fenêtre (identifiant Windows)
         self.assertFalse(choix._ouverte.is_set())
         self.relacher.clear()
-        self.reponses = ['E:\Ensuite']
+        self.reponses = [r'E:\Ensuite']
         threading.Timer(0.2, self.relacher.set).start()
-        self.assertEqual(choix.demander(delai=10), 'E:\Ensuite')   # la suivante, sans « déjà ouverte »
+        self.assertEqual(choix.demander(delai=10), r'E:\Ensuite')   # la suivante, sans « déjà ouverte »
 
     def test_choix_fait_au_moment_du_delai(self):
         """Dossier choisi à l'instant où le délai expire : il est rendu, pas perdu."""
@@ -2767,14 +2835,14 @@ class TestChoixDossier(unittest.TestCase):
             self.relacher.set()                             # la fenêtre rend le dossier choisi, pas « annulé »
             return 1
         choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=fermer)
-        self.reponses = ['E:\Juste à temps']
-        self.assertEqual(choix.demander(delai=0.2), 'E:\Juste à temps')
+        self.reponses = [r'E:\Juste à temps']
+        self.assertEqual(choix.demander(delai=0.2), r'E:\Juste à temps')
 
     def test_fenetre_qui_ne_se_ferme_pas(self):
         """Elle ne se ferme pas (FERMETURE_S) : la page l'apprend (« toujours ouverte », 409), et en refuse une
         seconde jusqu'à sa fermeture."""
         choix = self.serveur.ChoixDossier(ouvrir=self.ouvrir, fermer=lambda _fil: 0)
-        self.reponses = ['E:\Tard']
+        self.reponses = [r'E:\Tard']
         with mock.patch.object(self.serveur, 'FERMETURE_S', 0.3):
             with self.assertRaises(self.serveur.Refus) as e:
                 choix.demander(delai=0.2)

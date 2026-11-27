@@ -130,7 +130,10 @@ def bloc_environnement(env):
 
 def lancer(arguments, bureau, dossier, env, job):
     """Lance `arguments` sur le bureau « WinSta0\\<bureau> », avec l'environnement `env` (dict), DANS le Job Object
-    `job` (processus_essai.Job) : créé suspendu, mis dans le job, puis relancé. Rend (pid, handle)."""
+    `job` (processus_essai.Job) : créé suspendu, mis dans le job, puis relancé. Rend (pid, handle). L'environnement
+    d'un MyPhotos d'essai doit être passé par processus_essai.isoler()."""
+    import processus_essai
+    processus_essai.verifier_isole(env)
     si = STARTUPINFOW()
     si.cb = ctypes.sizeof(si)
     nom = tampon_utf16('WinSta0\\' + bureau)

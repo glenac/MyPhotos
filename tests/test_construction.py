@@ -617,8 +617,6 @@ class TestInstallateur(unittest.TestCase):
         import outils_fenetre as O
         import processus_essai
         port = int(os.environ.get('MYPHOTOS_ESSAI_PORT_NOMS') or 7946)
-        if mutex_existe():
-            self.skipTest('une MyPhotos 0.3 (ou plus) tourne déjà sur cet ordinateur')
         if not port_libre(port):
             self.skipTest(f'port {port} déjà pris')
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
@@ -629,6 +627,7 @@ class TestInstallateur(unittest.TestCase):
         env.update(MYPHOTOS_PORT=str(port), MYPHOTOS_DOSSIER=str(donnees), MYPHOTOS_SANS_PAGE='1',
                    MYPHOTOS_ESSAI_NEUTRE='1',          # aucun dossier d'images de l'ordinateur parcouru
                    PYTHONIOENCODING='utf-8')            # sans MYPHOTOS_MODELES : modele\ dans les données
+        processus_essai.isoler(env)                      # ni le vrai mutex, ni le vrai dossier des mises à jour
         code = ('import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
                 's.dossier_images = lambda: None; sys.exit(s.main())')
         p = processus_essai.popen(processus_essai.Job(), [sys.executable, '-c', code], cwd=str(RACINE), env=env,
@@ -775,8 +774,9 @@ class TestInstallateurReel(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.upper().startswith(('MYPHOTOS_', 'WEBVIEW2_'))}
         # Un MyPhotos lancé par l'installateur d'essai tient le mutex de l'essai, jamais celui de la vraie MyPhotos,
         # et ne parcourt aucun dossier d'images de l'ordinateur (MYPHOTOS_ESSAI_NEUTRE).
+        # Ni le vrai dossier des mises à jour (rangé au démarrage) : celui de l'essai.
         env.update(TEMP=str(self.temp), TMP=str(self.temp), MYPHOTOS_ESSAI_MUTEX=MUTEX_ESSAI,
-                   MYPHOTOS_ESSAI_NEUTRE='1',
+                   MYPHOTOS_ESSAI_NEUTRE='1', MYPHOTOS_ESSAI_MISES_A_JOUR=str(self.d / 'mises-a-jour'),
                    **{k: str(v) for k, v in env_plus.items()})
         job = self.P.Job()
         pid, h = self.O.lancer([str(a) for a in arguments], self.bureau, str(self.d), env, job)

@@ -1008,17 +1008,19 @@ class TestOutilsFenetre(unittest.TestCase):
 @unittest.skipUnless(os.name == 'nt', 'Windows')
 class TestMutex(unittest.TestCase):
     """Mutex de l'installateur (config.MUTEX) : il existe tant que MyPhotos tourne, et disparaît avec lui. Vrai
-    serveur d'essai (MYPHOTOS_SANS_PAGE, port et données d'essai, aucun dossier proposé), dans un Job Object."""
+    serveur d'essai (MYPHOTOS_SANS_PAGE, port et données d'essai, aucun dossier proposé), dans un Job Object. Comme
+    tout MyPhotos d'essai, il tient un mutex à lui (processus_essai.isoler) : jamais le vrai, qu'une vraie mise à jour
+    de l'utilisateur attendrait (relecture de la 0.4.2)."""
 
     PORT = int(os.environ.get('MYPHOTOS_ESSAI_PORT_MUTEX') or 7944)
 
     @staticmethod
-    def mutex_existe():
+    def mutex_existe(nom=None):
         k32 = ctypes.WinDLL('kernel32', use_last_error=True)
         k32.OpenMutexW.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_wchar_p]
         k32.OpenMutexW.restype = ctypes.c_void_p
         k32.CloseHandle.argtypes = [ctypes.c_void_p]
-        h = k32.OpenMutexW(0x00100000, False, config.MUTEX)                # SYNCHRONIZE
+        h = k32.OpenMutexW(0x00100000, False, nom or config.MUTEX)         # SYNCHRONIZE
         if h:
             k32.CloseHandle(h)
         return bool(h)
@@ -1027,8 +1029,7 @@ class TestMutex(unittest.TestCase):
         import outils_fenetre as O
         import processus_essai
         self.assertEqual(config.MUTEX, 'MyPhotos-25DE0724-F7B4-4956-8238-1E33E16ABFED')
-        if self.mutex_existe():
-            self.skipTest('une MyPhotos 0.3 (ou plus) tourne déjà sur cet ordinateur')
+        vrai_avant = self.mutex_existe()                  # une vraie MyPhotos ouverte : rien n'y est touché
         if not _port_libre(self.PORT):
             self.skipTest(f'port {self.PORT} déjà pris')
         base = Path(os.environ.get('MYPHOTOS_ESSAI_UI') or Path(tempfile.gettempdir()) / 'myphotos-essai-ui')
@@ -1041,18 +1042,26 @@ class TestMutex(unittest.TestCase):
                    PYTHONIOENCODING='utf-8')
         code = ('import sys; import myphotos.serveur as s; s.dossiers_proposes = lambda: []; '
                 's.dossier_images = lambda: None; sys.exit(s.main())')
+        with self.assertRaises(ValueError):                # non isolé : refusé avant tout lancement
+            processus_essai.popen(processus_essai.Job(), [sys.executable, '-c', 'pass'], env=env)
+        processus_essai.isoler(env)
+        mutex = env['MYPHOTOS_ESSAI_MUTEX']
+        self.assertNotEqual(mutex, config.MUTEX)
+        self.assertFalse(self.mutex_existe(mutex))
         p = processus_essai.popen(processus_essai.Job(), [sys.executable, '-c', code], cwd=str(RACINE), env=env,
                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         try:
             self.assertTrue(O.attendre(lambda: O.requete_json(self.PORT, '/api/etat')[0] == 200, 60), 'serveur absent')
-            self.assertTrue(self.mutex_existe())
+            self.assertTrue(self.mutex_existe(mutex))
+            if not vrai_avant:
+                self.assertFalse(self.mutex_existe(), "un MyPhotos d'essai a pris le vrai mutex")
             etat = O.requete_json(self.PORT, '/api/etat')[1]
             self.assertEqual(etat['compte'], fenetre.identite_compte())     # même compte que l'essai
             self.assertEqual(O.requete_json(self.PORT, '/api/quitter', {})[0], 200)
             self.assertEqual(p.wait(60), 0)
             self.assertTrue(p.job.attendre_vide(10))
-            self.assertFalse(self.mutex_existe())
+            self.assertFalse(self.mutex_existe(mutex))
         finally:
             processus_essai.arreter(p)
 
@@ -1539,6 +1548,8 @@ class TestFenetreReelle(unittest.TestCase):
                         'MYPHOTOS_ESSAI_TRACE': str(cls.trace), 'MYPHOTOS_ESSAI_VIDE': str(cls.dossier / 'vide'),
                         'PYTHONIOENCODING': 'utf-8',
                         'PYTHONDONTWRITEBYTECODE': '1'})
+        import processus_essai
+        processus_essai.isoler(cls.env)                  # son mutex, son dossier des mises à jour : jamais les vrais
         cls.preparer(photos)
 
     @classmethod
@@ -2040,7 +2051,7 @@ class TestFenetreReelle(unittest.TestCase):
             for d in (0.0, 0.5, 1.5):
                 fa = fenetre_de(ja, 90)
                 self.assertTrue(fa, f'pas de fenêtre (avant la relance à {d} s)')
-                self.assertTrue(TestMutex.mutex_existe())
+                self.assertTrue(TestMutex.mutex_existe(self.env['MYPHOTOS_ESSAI_MUTEX']))
                 fil.faire(lambda: O.u32.PostMessageW(fa['hwnd'], O.WM_CLOSE, 0, 0))
                 time.sleep(d)
                 jb, hb = lancer()
@@ -2055,7 +2066,7 @@ class TestFenetreReelle(unittest.TestCase):
             self.assertTrue(O.attendre_processus(ha, 60))
             self.assertEqual(O.code_sortie(ha), 0)
             self.assertTrue(all(j.attendre_vide(10) for j in jobs))
-            self.assertFalse(TestMutex.mutex_existe())
+            self.assertFalse(TestMutex.mutex_existe(self.env['MYPHOTOS_ESSAI_MUTEX']))
             self.assertFalse((self.donnees / 'webview2').exists())
             journal = self.journal()
             self.assertNotIn('Failed to delete user data folder', journal)

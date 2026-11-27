@@ -49,9 +49,16 @@ JOURNAL = DONNEES / 'journal.log'
 JETON = DONNEES / 'jeton'
 # Installateurs téléchargés par la mise à jour proposée (mise_a_jour.py) : toujours dans le profil de l'utilisateur
 # (%LOCALAPPDATA%, privé à son compte Windows), même quand MYPHOTOS_DOSSIER met les données ailleurs : un autre compte
-# du PC ne doit jamais pouvoir y remplacer un installateur entre son contrôle et son lancement.
-MISES_A_JOUR = (Path(os.environ['LOCALAPPDATA']) / 'MyPhotos' / 'mises-a-jour'
-                if os.name == 'nt' and os.environ.get('LOCALAPPDATA') else DONNEES / 'mises-a-jour')
+# du PC ne doit jamais pouvoir y remplacer un installateur entre son contrôle et son lancement. Seuls les MyPhotos
+# lancés par les essais en ont un autre (MYPHOTOS_ESSAI_MISES_A_JOUR, dans leurs données d'essai, avec leur propre
+# MYPHOTOS_ESSAI_MUTEX : tests/processus_essai.isoler) : le démarrage range ce dossier, et une suite d'essais ne doit
+# jamais effacer l'installateur d'une vraie mise à jour en cours.
+if os.environ.get('MYPHOTOS_ESSAI_MISES_A_JOUR'):
+    MISES_A_JOUR = Path(os.environ['MYPHOTOS_ESSAI_MISES_A_JOUR'])
+elif os.name == 'nt' and os.environ.get('LOCALAPPDATA'):
+    MISES_A_JOUR = Path(os.environ['LOCALAPPDATA']) / 'MyPhotos' / 'mises-a-jour'
+else:
+    MISES_A_JOUR = DONNEES / 'mises-a-jour'
 
 # Formats lus en version 1 (HEIC et vidéos : plus tard).
 EXTENSIONS = {'.jpg', '.jpeg', '.jfif', '.png', '.webp', '.bmp', '.gif', '.tif', '.tiff'}
