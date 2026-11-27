@@ -4100,9 +4100,14 @@ class TestPolitiqueDesLieux(unittest.TestCase):
         c = self.chercheur({orange: 3, 'p:FR': 3})
         self.assertIsNone(c('orange', self.indices()))
         self.assertIsNone(c('orange', self.indices(preposition=True, article=True)))     # « à l'orange »
-        for kw in ({'majuscule': True}, {'preposition': True}, {'majuscule': True, 'debut': True}):
+        for kw in ({'majuscule': True}, {'preposition': True}, {'majuscule': True, 'debut': True, 'seul': True}):
             with self.subTest(**kw):
                 self.assertEqual(c('orange', self.indices(**kw))['idents'], [orange])
+        # Relecture de la 0.5.0 : la majuscule du premier mot ne prouve rien si la recherche n'est pas que ce nom
+        # (« Orange et citron ») ; « en » + un nom de ville courant est une tournure (« en mer », « en avion »).
+        self.assertIsNone(c('orange', self.indices(majuscule=True, debut=True, seul=False)))
+        self.assertIsNone(c('orange', self.indices(preposition=True, prep='en')))
+        self.assertEqual(c('orange', self.indices(preposition=True, prep='a'))['idents'], [orange])
         self.assertIsNone(self.chercheur({'v:2986045': 2})('port', self.indices(preposition=True, article=True)))
         self.assertIsNone(self.chercheur({'d:FR.10': 5})('aube', self.indices(preposition=True, article=True)))
         self.assertEqual(self.chercheur({'d:FR.10': 5})('aube', self.indices(majuscule=True))['idents'], ['d:FR.10'])
@@ -4148,6 +4153,78 @@ class TestPolitiqueDesLieux(unittest.TestCase):
         self.assertEqual(idents('bretagne'), ['r:FR.53'])
         self.assertEqual(recherche.idents_des_lieux([]), [])
         self.assertEqual(recherche.idents_des_lieux([None, {'nom': 'x'}]), [])
+
+
+class TestLieuxTapes(unittest.TestCase):
+    """Relecture de la 0.5.0 : recherches tapées, vraies données des lieux (lieux.py), photos prises au centre de
+    quelques villes ; requete.analyser avec recherche.chercheur_lieux, comme Application.analyser_recherche."""
+
+    @classmethod
+    def setUpClass(cls):
+        from myphotos import lieux, recherche, requete
+        cls.recherche, cls.requete = recherche, requete
+        source = lieux.lieux()
+
+        def ville(nom, pays='FR', region=None, departement=None):
+            c = [e for e in source.chercher(lieux.normaliser(nom)) if e.type == 'ville' and e.pays == pays
+                 and region in (None, e.region) and departement in (None, e.departement)]
+            return max(c, key=lambda e: e.population)
+        villes = [ville('La Montagne', departement='d:FR.44'), ville('Mer'), ville('Avion'), ville('Rennes'),
+                  ville('Tours'), ville('Orange'), ville('Roses', 'ES'), ville('Cassis'), ville('Porto', 'PT'),
+                  ville('Metz'), ville('Honfleur'), ville('Béjaïa', 'DZ'), ville('Strasbourg'), ville('Nice'),
+                  ville('Beaune'), ville('Saint-Denis', departement='d:FR.93'),
+                  ville('Saint-Denis', region='r:FR.RE'), ville('Notre-Dame-de-Monts'), ville('Vers-Pont-du-Gard'),
+                  ville('Abidjan', 'CI'), ville('Paris'), ville('Brest'), ville('Ajaccio'), ville('Sens')]
+        cls.presents = {}
+        for k, v in enumerate(villes):
+            l = source.localiser(v.lat, v.lon)
+            for cle in ('ville', 'departement', 'region', 'pays'):
+                if l.get(cle):
+                    cls.presents[l[cle]] = cls.presents.get(l[cle], 0) + 10 + (k == 15)   # Saint-Denis (93) d'abord
+        cls.ville = staticmethod(ville)
+
+    def analyser(self, q):
+        from datetime import date
+        a = self.requete.analyser(q, date(2026, 11, 27), self.recherche.chercheur_lieux(self.presents))
+        return a, [p['libelle'] for p in a.puces], self.recherche.idents_des_lieux(a.lieux)
+
+    def test_mots_courants_qui_restent_des_mots(self):
+        for q in ('vacances à la montagne', 'ski à la montagne', 'voyage en avion', 'sortie en mer', 'en mer',
+                  'Rennes du père Noël', 'Tours du château', 'Orange et citron', 'Sens interdit', 'bouquet de roses',
+                  'mes roses', 'kir au cassis', 'confiture de cassis', 'verre de porto', 'quiche lorraine',
+                  'bouteille de calvados', 'gâteau avec une bougie', 'paris-brest', "bleu d'Auvergne"):
+            with self.subTest(q=q):
+                a, puces, _ = self.analyser(q)
+                self.assertEqual((puces, a.mots), ([], q))
+
+    def test_lieux_reconnus(self):
+        cas = {'à La Montagne': ['La Montagne'], 'à Mer': ['Mer'], 'Orange': ['Orange'], 'Rennes': ['Rennes'],
+               'photos de Rennes': ['Rennes'], 'Orange 2019': ['Orange', '2019'], 'Nice et Orange': ['Nice', 'Orange'],
+               'Lorraine': ['Lorraine'], 'vacances en Lorraine': ['Lorraine'], 'vacances lorraine': ['Lorraine'],
+               'Grand Est': ['Grand Est'], 'marché de Noël dans le Grand Est': ['Grand Est'],
+               "Côte d'Azur": ["Côte d'Azur"], "plage sur la Côte d'Azur": ["Côte d'Azur"],
+               "vignes en Côte-d'Or": ["Côte-d'Or"], "Côte d'Ivoire": ["Côte d'Ivoire"],
+               'plage à Notre-Dame-de-Monts': ['Notre-Dame-de-Monts'], 'Vers-Pont-du-Gard': ['Vers-Pont-du-Gard'],
+               'à côté de Brest': ['Brest'], 'vacances en corse': ['Corse'], 'Roses': ['Roses'], 'à Porto': ['Porto']}
+        for q, attendu in cas.items():
+            with self.subTest(q=q):
+                self.assertEqual(self.analyser(q)[1], attendu)
+        a, _, idents = self.analyser("plage sur la Côte d'Azur")
+        self.assertEqual((a.mots, idents), ('plage', ['d:FR.06']))
+        a, _, idents = self.analyser("vignes en Côte-d'Or")
+        self.assertEqual((a.mots, idents), ('vignes', ['d:FR.21']))
+
+    def test_homonymes_tapes_en_minuscules(self):
+        reunion = self.ville('Saint-Denis', region='r:FR.RE').ident
+        seine = self.ville('Saint-Denis', departement='d:FR.93').ident
+        self.assertEqual(self.analyser('Saint-Denis')[2], [seine])                 # le plus photographié
+        for q in ('saint-denis la réunion', 'saint-denis réunion', 'Saint-Denis La Réunion', 'saint denis à la réunion'):
+            with self.subTest(q=q):
+                a, _, idents = self.analyser(q)
+                self.assertEqual((idents, a.mots), ([reunion], ''))
+        # « réunion » loin du lieu : une réunion de famille, pas l'île.
+        a, puces, idents = self.analyser('réunion de famille à Saint-Denis')
+        self.assertEqual((puces, idents, a.mots), (['Saint-Denis'], [seine], 'réunion de famille'))
 
 
 class TestCompatibilite041(EssaiDatesLieux):

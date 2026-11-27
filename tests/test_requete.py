@@ -761,7 +761,7 @@ class TestLieux(unittest.TestCase):
         self.assertEqual(a.puces, [{'type': 'lieu', 'libelle': 'Bretagne', 'texte': 'en Bretagne'}])
         self.assertEqual(lieux.indices('bretagne'),
                          {'preposition': True, 'majuscule': True, 'mots': 1, 'debut': False, 'texte': 'Bretagne',
-                          'article': False})
+                          'article': False, 'prep': 'en', 'seul': False, 'complement': False, 'autres': []})
 
     def test_a_la_plage_n_est_pas_un_lieu(self):
         lieux = Lieux()
@@ -769,10 +769,15 @@ class TestLieux(unittest.TestCase):
         self.assertEqual((a.mots, a.lieux, a.puces), ('à la plage', [], []))
         self.assertEqual(lieux.indices('la plage')['preposition'], True)
         self.assertEqual(lieux.indices('plage'), {'preposition': True, 'majuscule': False, 'mots': 1,
-                                                  'debut': False, 'texte': 'plage', 'article': True})
+                                                  'debut': False, 'texte': 'plage', 'article': True, 'prep': 'a',
+                                                  'seul': True, 'complement': False, 'autres': []})
+        # « à la montagne », « à la plage » : l'article au début du nom compte aussi (relecture de la 0.5.0).
+        self.assertTrue(lieux.indices('la plage')['article'])
         analyser('Plage', AUJ, lieux)
         self.assertEqual(lieux.appels[-1], ('plage', {'preposition': False, 'majuscule': True, 'mots': 1,
-                                                      'debut': True, 'texte': 'Plage', 'article': False}))
+                                                      'debut': True, 'texte': 'Plage', 'article': False,
+                                                      'prep': None, 'seul': True, 'complement': False,
+                                                      'autres': []}))
 
     def test_article_entre_la_preposition_et_le_nom(self):
         for texte, nom, article in (('chien à la plage', 'plage', True), ('bateau au port', 'port', True),
@@ -818,7 +823,11 @@ class TestLieux(unittest.TestCase):
         lieux = Lieux()
         self.assertEqual(analyser('Nice', AUJ, lieux).lieux, [{'nom': 'Nice'}])
         self.assertEqual(lieux.indices('nice'), {'preposition': False, 'majuscule': True, 'mots': 1, 'debut': True,
-                                                 'texte': 'Nice', 'article': False})
+                                                 'texte': 'Nice', 'article': False, 'prep': None, 'seul': True,
+                                                 'complement': False, 'autres': []})
+        lieux = Lieux()
+        analyser('Nice et Cannes', AUJ, lieux)                   # pas toute la recherche : seul=False
+        self.assertEqual((lieux.indices('nice')['debut'], lieux.indices('nice')['seul']), (True, False))
         self.assertEqual(analyser('une nice photo', AUJ, Lieux()).lieux, [])
         self.assertEqual(analyser('à nice', AUJ, Lieux()).lieux, [{'nom': 'Nice'}])
         lieux = Lieux()
@@ -900,7 +909,7 @@ class TestLieux(unittest.TestCase):
             indices['preposition'] = 'abîmé'
             vus.append(indices)
         analyser('à la plage de Bretagne', AUJ, garde)
-        self.assertTrue(all(len(v) == 6 for v in vus))
+        self.assertTrue(all(len(v) == 10 for v in vus))
 
 
 class TestNormalisation(unittest.TestCase):

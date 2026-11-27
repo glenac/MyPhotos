@@ -20,8 +20,13 @@ Interface
   aujourd_hui : date (ou datetime) des dates relatives et de l'année en cours.
   chercher_lieu(nom_normalise, indices) -> objet ou None ; l'appelant décide (il sait quels lieux ont des photos) ;
     indices = {'preposition': bool, 'majuscule': bool, 'mots': int}, plus 'debut' (le groupe ouvre la recherche : sa
-    majuscule ne prouve rien), 'texte' (le groupe tel que tapé) et 'article' (un article entre la préposition et le
-    nom, « à la plage », ou une préposition contractée, « au port »). Une exception, ou une liste vide, vaut « non ».
+    majuscule ne prouve rien), 'seul' (le groupe est toute la recherche, hors dates et mots sans contenu, ou d'autres
+    lieux y sont : sa majuscule de début compte alors), 'texte' (le groupe tel que tapé), 'article' (un article
+    entre la préposition et le nom, « à la plage », au début du nom, « à la montagne », ou une préposition
+    contractée, « au port »), 'prep' (la préposition, « en », « a », « pres de »…, ou None), 'complement' (sans
+    préposition, juste après un nom, avec ou sans « de » : « quiche lorraine », « bouquet de roses ») et 'autres'
+    (les lieux déjà trouvés, collés à ce groupe : « saint-denis la réunion »). Une exception, ou une liste vide,
+    vaut « non ».
   ignorer : textes des puces retirées : ces mots ne sont plus lus ni comme date ni comme lieu.
 - normaliser(texte) : la règle de lieux.normaliser (celle de lieux.py sert pour chercher_lieu quand il existe).
 - FiltreDates(periodes) (`in`, masque numpy, clause SQL), contient(), intervalles() : appliquer les périodes.
@@ -126,11 +131,15 @@ Dates précises
 Lieux
 - Après les dates, sur les mots qui restent : groupes de 6 mots au plus (et non 4 : « Saintes-Maries-de-la-Mer »,
   « Saint-Jean-Pied-de-Port », « L'Isle-sur-la-Sorgue », « Provence-Alpes-Côte d'Azur » en ont 5), les plus longs
-  d'abord, de gauche à droite, sans chevauchement ; jamais à travers une virgule, ni avec un chiffre, ni un groupe qui
-  commence par une préposition ou finit par un petit mot ; jamais un mot outil, ni un mois, une saison, une fête ou un
-  jour de la semaine seuls (« Avril » le prénom ne devient pas la commune d'Avril).
-- Préposition (« à », « en », « au », « aux », « dans », « vers », « près de », « à côté de », « autour de », « du côté
-  de », avec ou sans le/la/les/l') : retirée avec le lieu. « au Mans », « aux Sables-d'Olonne » : si le nom seul n'est
+  d'abord, de gauche à droite, sans chevauchement ; jamais à travers une virgule, ni avec un chiffre, ni un morceau
+  d'un nom composé (« Paris-Brest », « Notre-Dame-de-Monts » : tout le nom ou rien), ni un groupe qui commence par une
+  vraie préposition ou finit par une préposition ou un article (sauf liés par un trait d'union : « Vers-Pont-du-Gard »,
+  « Saint-Germain-des-Prés ») ; d'autres petits mots au bord, oui (« Côte d'Azur », « Grand Est », « Les
+  Ponts-de-Cé ») ; jamais un mot outil, ni un mois, une saison, une fête ou un jour de la semaine seuls (« Avril » le
+  prénom ne devient pas la commune d'Avril). Si d'autres lieux sont trouvés, le début de la recherche est essayé
+  encore une fois, avec sa majuscule (« Nice et Orange »).
+- Préposition (« à », « en », « au », « aux », « dans », « vers », « sur », « près de », « à côté de », « autour de »,
+  « du côté de », avec ou sans le/la/les/l') : retirée avec le lieu. « au Mans », « aux Sables-d'Olonne » : si le nom seul n'est
   pas un lieu, « le mans », « les sables d olonne » sont essayés. « à la plage » n'est pas un lieu si chercher_lieu dit
   non (« la plage » puis « plage », avec preposition=True).
 - majuscule : la première lettre du groupe, ou de son premier mot après l'article (« la Baule »), est une capitale ;
@@ -1412,34 +1421,50 @@ class _Lecture:
     # ------------------------------------------------ lieux
 
     def lieux(self, chercher):
-        """Groupes de mots libres, les plus longs d'abord, de gauche à droite : [(debut, fin, objet, texte)]."""
+        """Groupes de mots libres, les plus longs d'abord, de gauche à droite : [(debut, fin, objet, texte)]. Puis,
+        si d'autres lieux ont été trouvés, encore une fois les groupes du début de la recherche : sa majuscule de début
+        de phrase compte alors (« Nice et Cannes », mais pas « Rennes du père Noël »)."""
         trouves = []
         for lg in range(min(MOTS_LIEU_MAX, self.N), 0, -1):
             for s in range(self.N - lg + 1):
-                e = s + lg
-                if not self.groupe_possible(s, e):
-                    continue
-                deb, prep, art = self.preposition(s)
-                texte = self.texte(s, e)
-                nom = _nom_lieu(texte)
-                if not nom:
-                    continue
-                # article : entre la préposition et le nom (« à la plage »), ou dans la préposition (« au port ») ;
-                # un nom qui est aussi un mot courant est alors plutôt ce mot-là (choix de l'appelant).
-                indices = {'preposition': prep is not None, 'majuscule': self.majuscule(s, e), 'mots': lg,
-                           'debut': s == 0, 'texte': texte,
-                           'article': art is not None or (prep is not None and prep[-1] in ('au', 'aux', 'du', 'des'))}
-                lieu = _appeler(chercher, nom, indices)
-                if lieu is None and prep and art is None and prep[-1] in ('au', 'aux', 'du', 'des'):
-                    article = 'les ' if prep[-1] in ('aux', 'des') else 'le '      # « au Mans » : « le mans »
-                    lieu = _appeler(chercher, article + nom, indices)
-                if lieu is None:
-                    continue
-                for k in range(deb, e):
-                    self.etat[k] = 3
-                trouves.append((deb, e, lieu, texte))
+                self.essayer_lieu(chercher, s, s + lg, trouves, False)
+        if trouves and self.N and self.etat[0] == 0:
+            for lg in range(min(MOTS_LIEU_MAX, self.N), 0, -1):
+                if self.essayer_lieu(chercher, 0, lg, trouves, True):
+                    break
         trouves.sort(key=lambda x: x[0])
         return trouves
+
+    def essayer_lieu(self, chercher, s, e, trouves, ailleurs):
+        """Le groupe s..e est-il un lieu ? S'il l'est, il est noté dans trouves. ailleurs : la recherche a d'autres
+        lieux (indice « seul » vrai : la majuscule du premier mot compte)."""
+        if not self.groupe_possible(s, e):
+            return False
+        deb, prep, art = self.preposition(s)
+        texte = self.texte(s, e)
+        nom = _nom_lieu(texte)
+        if not nom:
+            return False
+        # article : entre la préposition et le nom (« à la plage »), au début du nom après une préposition
+        # (« à la montagne »), ou dans la préposition (« au port ») ; un nom qui est aussi un mot courant est alors
+        # plutôt ce mot-là (choix de l'appelant).
+        article = art is not None or (prep is not None and (prep[-1] in ('au', 'aux', 'du', 'des')
+                                                             or self.n[s] in _ARTICLES))
+        indices = {'preposition': prep is not None, 'majuscule': self.majuscule(s, e), 'mots': e - s,
+                   'debut': s == 0, 'texte': texte, 'article': article,
+                   'prep': ' '.join(prep) if prep else None, 'seul': ailleurs or self.seul(deb, e),
+                   'complement': prep is None and self.complement_de_nom(s),
+                   'autres': [x[2] for x in trouves if x[1] == deb or x[0] == e]}
+        lieu = _appeler(chercher, nom, indices)
+        if lieu is None and prep and art is None and prep[-1] in ('au', 'aux', 'du', 'des'):
+            article = 'les ' if prep[-1] in ('aux', 'des') else 'le '      # « au Mans » : « le mans »
+            lieu = _appeler(chercher, article + nom, indices)
+        if lieu is None:
+            return False
+        for k in range(deb, e):
+            self.etat[k] = 3
+        trouves.append((deb, e, lieu, texte))
+        return True
 
     def groupe_possible(self, s, e):
         for k in range(s, e):
@@ -1447,9 +1472,43 @@ class _Lecture:
                 return False
             if k > s and self.j[k].coupure:
                 return False
-        if self.n[s] in _OUTILS or self.n[e - 1] in _OUTILS_FIN:
+        if self.lie(s) or self.lie(e):       # jamais un morceau d'un nom composé (« Paris-Brest », « Vers-Pont-du-Gard »)
             return False
-        return e - s > 1 or (len(self.n[s]) > 1 and self.n[s] not in _NON_LIEUX)
+        if e - s == 1:
+            return len(self.n[s]) > 1 and self.n[s] not in _NON_LIEUX
+        # Plusieurs mots : même s'ils commencent ou finissent par un petit mot (« Côte d'Azur », « Grand Est »,
+        # « Notre-Dame-de-Monts », « Les Ponts-de-Cé ») ; chercher_lieu décide (noms exacts de lieux qui ont des
+        # photos). Jamais une vraie préposition en tête, ni une préposition ou un article à la fin, sauf liés au nom
+        # par un trait d'union (« Vers-Pont-du-Gard », « Saint-Germain-des-Prés ») ; au moins un mot plein.
+        if self.n[s] in _PREPOSITIONS_VRAIES and not self.lie(s + 1):
+            return False
+        if self.n[e - 1] in _PREPOSITIONS_VRAIES | _ARTICLES and not self.lie(e - 1):
+            return False
+        return any(self.n[k] not in _OUTILS_FIN for k in range(s, e))
+
+    def lie(self, k):
+        """Les mots k - 1 et k sont-ils liés par un trait d'union (« Saint-Malo », sans espace) ?"""
+        if not 0 < k < self.N:
+            return False
+        entre = self.t[self.j[k - 1].fin:self.j[k].debut]
+        return bool(entre) and all(c in _TIRETS for c in entre)
+
+    def seul(self, deb, e):
+        """Le groupe (avec sa préposition) est-il toute la recherche, hors dates et mots sans contenu (« Orange »,
+        « Orange 2019 », « photos de Rennes ») ? Sa majuscule de début de phrase compte alors."""
+        return all(self.etat[k] != 0 or self.n[k] in _REMPLISSAGE for k in range(self.N) if not deb <= k < e)
+
+    def complement_de_nom(self, s):
+        """Le groupe qui commence au mot s complète-t-il un nom, juste après lui ou après « de » (« quiche lorraine »,
+        « vin d'alsace », « bouquet de roses ») ? Jamais après « photos de », « vacances »…"""
+        k = s - 1
+        if k >= 0 and self.n[k] in _DE:
+            k -= 1
+        if k < 0:
+            return False
+        w = self.n[k]
+        return (self.etat[k] == 0 and w.isalpha() and len(w) > 1 and w not in _OUTILS_FIN and w not in _LIANTS
+                and w not in _REMPLISSAGE and w not in _NEUTRES and w not in _VOYAGES)
 
     def preposition(self, s):
         """(début, préposition, article) : ce qui part avec le lieu (« près de la »), ou (s, None, None)."""
@@ -1504,7 +1563,7 @@ class _Lecture:
         return _BORDS.sub('', ' '.join(morceaux))
 
 
-_PREPOSITIONS = sorted([('a',), ('en',), ('au',), ('aux',), ('dans',), ('vers',)]
+_PREPOSITIONS = sorted([('a',), ('en',), ('au',), ('aux',), ('dans',), ('vers',), ('sur',)]
                        + [(x, y) for x in ('pres', 'autour') for y in ('de', 'du', 'des', 'd')]
                        + [(x, 'cote', y) for x in ('a', 'du') for y in ('de', 'du', 'des', 'd')],
                        key=len, reverse=True)
@@ -1514,6 +1573,11 @@ _OUTILS = {'a', 'en', 'au', 'aux', 'dans', 'vers', 'pres', 'de', 'du', 'des', 'd
            'leur', 'leurs', 'ce', 'cet', 'cette', 'ces', 'qui', 'que', 'quoi', 'dont', 'est', 'sont', 'c', 'qu', 'j',
            'n', 's', 'm', 't'}
 _OUTILS_FIN = _OUTILS | _ARTICLES
+_PREPOSITIONS_VRAIES = {'a', 'en', 'au', 'aux', 'dans', 'vers', 'pres', 'de', 'du', 'des', 'd', 'sur', 'sous', 'chez',
+                        'pour', 'par', 'avec', 'sans', 'et', 'ou', 'entre', 'depuis', 'pendant', 'durant', 'autour'}
+# Mots d'un voyage : un lieu qui les suit n'en est pas le complément (« vacances lorraine », « séjour alsace »).
+_VOYAGES = {'vacances', 'voyage', 'voyages', 'sejour', 'sejours', 'week', 'end', 'weekend', 'balade', 'balades',
+            'randonnee', 'randonnees', 'visite', 'visites', 'escapade', 'circuit', 'excursion', 'route', 'trip'}
 _NON_LIEUX = _OUTILS_FIN | _MOTS_DATES
 _LIANTS = {'de', 'du', 'des', 'd', 'en', 'a', 'au', 'aux', 'pendant', 'durant', 'lors', 'pour', 'le', 'la', 'les', 'l',
            'et', 'ou', 'dans', 'vers', 'depuis', 'entre', 'ce', 'cet', 'cette'}

@@ -340,20 +340,63 @@ class Filtre:
 
 
 # Noms de lieux qui sont aussi des mots de tous les jours (formes de lieux.normaliser) : un lieu seulement avec une
-# majuscule (« Orange », « photos de Nice ») ou une préposition sans article (« à orange », « en vienne ») ; « à la
-# plage », « au port », « à l'aube », « un lot de photos », « avion » restent des mots. Les autres noms de lieux sont
-# reconnus tels quels, mais seulement là où il y a des photos : la liste ne garde que les collisions probables (mots
-# cherchés dans des photos, noms de communes, de départements ou de villes connues). Une erreur reste possible
-# (« Nancy », « Florence » sont aussi des prénoms) : le × de la puce la défait.
-MOTS_COURANTS = frozenset("""
+# majuscule (« photos de Nice » ; en tête de la recherche, seulement si elle n'est que ce nom : « Orange », mais pas
+# « Orange et citron », « Rennes du père Noël ») ou une préposition sans article (« à orange », « en vienne ») ;
+# « à la plage », « à la montagne », « au port », « à l'aube », « un lot de photos », « avion » restent des mots. Après
+# « en », seulement une région, un département ou un pays (« en corse ») : « en mer », « en avion », « en montagne »
+# sont des tournures ordinaires. Les autres noms de lieux sont reconnus tels quels, mais seulement là où il y a des
+# photos : la liste ne garde que les collisions probables (mots cherchés dans des photos, noms de communes, de
+# départements ou de villes connues), et leurs pluriels (« bouquet de roses » : Roses, en Espagne). Une erreur reste
+# possible (« Nancy », « Florence » sont aussi des prénoms) : le × de la puce la défait.
+_MOTS_COURANTS = """
     orange mer nice tours pau vienne sens bar port ile plage
     reunion montagne campagne bourg mont bois foret jardin riviere fontaine falaise rocher plaine lac plan rue cours pont
     chateau ecole college ville vignes champs marche cascade volcan bains moulins salon piano avion train velo cheval ski
     nord sud est ouest centre cher lot somme aube landes allier creuse manche
     champagne bordeaux cognac camembert brie roquefort munster chablis chantilly vichy perrier
+    cassis porto calvados cantal madere malaga bougie
     grand bonne belle eu ri vitre vire cannes rennes lourdes corse lys rose condom tulle ham gap
     mobile alliance normal bath reading spa deal march street best essen chili
-    """.split()) | {'le port', 'la plage', 'la mer', 'la montagne', 'la cote', 'la tour', 'la reunion'}
+    """.split()
+
+
+def _pluriels(mots):
+    """Les mots et leurs pluriels (« roses », « châteaux », « chevaux »)."""
+    res = set(mots)
+    for m in mots:
+        if m[-1] not in 'sxz':
+            res.add(m + 's')
+        if m.endswith(('eau', 'eu')):
+            res.add(m + 'x')
+        if m.endswith('al'):
+            res.add(m[:-2] + 'aux')
+    return res
+
+
+MOTS_COURANTS = frozenset(_pluriels(_MOTS_COURANTS)) | {'le port', 'la plage', 'la mer', 'la montagne', 'la cote',
+                                                         'la tour', 'la reunion'}
+# Noms de régions qui disent aussi un produit ou une recette (« quiche lorraine », « vin d'alsace », « bleu
+# d'Auvergne », « escargots de Bourgogne ») : sans préposition, juste après un nom (avec ou sans « de »), ce n'est pas
+# le lieu, même avec une majuscule ; seul (« alsace », « photos d'Alsace », « vacances lorraine ») ou après « en », si.
+NOMS_PRODUITS = frozenset({'alsace', 'lorraine', 'bourgogne', 'auvergne'})
+
+
+def _accepte(nom, indices, candidats):
+    """Ce nom tapé désigne-t-il ce lieu (candidats : ses Endroit qui ont des photos) ? Voir MOTS_COURANTS."""
+    majuscule = indices.get('majuscule') and (not indices.get('debut') or indices.get('seul', True))
+    preposition = indices.get('preposition') and not indices.get('article')
+    if nom in MOTS_COURANTS:
+        if majuscule:
+            return True
+        if preposition:
+            return indices.get('prep') != 'en' or any(e.type != 'ville' for e in candidats)
+        # Collé à un autre lieu de la recherche qu'il contient (« saint-denis la réunion ») : il le précise.
+        autres = [c for o in indices.get('autres') or () if isinstance(o, dict) for c in o.get('candidats', ())]
+        miens = {e.ident for e in candidats}
+        return any(_parents(c) & miens for c in autres)
+    if nom in NOMS_PRODUITS and not indices.get('preposition') and indices.get('complement'):
+        return False                                     # « bleu d'Auvergne » : un fromage, même avec la majuscule
+    return True
 
 
 def _parents(e):
@@ -380,11 +423,8 @@ def chercheur_lieux(presents, source=None):
     def chercher(nom, indices):
         if not presents or not nom:
             return None
-        if nom in MOTS_COURANTS and not (indices.get('majuscule')
-                                         or (indices.get('preposition') and not indices.get('article'))):
-            return None
         candidats = [e for e in source.chercher(nom) if presents.get(e.ident)]
-        if not candidats:
+        if not candidats or not _accepte(nom, indices, candidats):
             return None
         exacts = [e for e in candidats if _lieux.normaliser(e.nom) == nom]
         meilleur = max(exacts or candidats, key=lambda e: presents[e.ident])     # max : le premier à égalité
@@ -394,7 +434,11 @@ def chercheur_lieux(presents, source=None):
         zone = meilleur.departement or meilleur.region if meilleur.type == 'ville' else meilleur.region
         reunis = [meilleur] + [e for e in candidats if e is not meilleur and e not in exacts and e.type == meilleur.type
                                and zone and (e.departement or e.region if e.type == 'ville' else e.region) == zone]
-        if len(reunis) > 1 and meilleur not in exacts:
+        # Un nom qui en désigne plusieurs (« Côte d'Azur », « Lorraine ») : la puce garde le nom tapé, même quand
+        # une seule de ses parties a des photos (et non « Alpes-Maritimes » pour « Côte d'Azur »).
+        groupe = meilleur.type in ('departement', 'region') and meilleur not in exacts and sum(
+            1 for e in source.chercher(nom) if e.type == meilleur.type and _lieux.normaliser(e.nom) != nom) > 1
+        if groupe or (len(reunis) > 1 and meilleur not in exacts):
             texte = (indices.get('texte') or nom).strip()
             libelle = texte[:1].upper() + texte[1:]
         else:
