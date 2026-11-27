@@ -874,6 +874,13 @@ class Indexeur:
             if self._interrompu():
                 return
             self._localiser()
+            # Pause pendant le calcul des lieux (la fin d'une analyse) : on attend la reprise, puis on le finit.
+            # Avant (relecture de la 0.5.0) : « terminé » tout de suite, sans « Reprendre », et la suite une heure
+            # plus tard seulement.
+            while not self._interrompu() and not self._en_marche.is_set():
+                self._attendre_reprise()
+                if not self._interrompu():
+                    self._localiser()
             if self._interrompu():
                 return
             # Le moteur est GARDÉ entre deux passages : avec DirectML, détruire une session pendant qu'une autre

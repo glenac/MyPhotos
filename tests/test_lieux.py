@@ -895,6 +895,59 @@ class TestCalculEnArrierePlan(unittest.TestCase):
             self.assertEqual(ix._localiser(), 150)           # deux lots de 100, puis 50
         self.assertEqual(self.base.a_localiser(1000, vraie.version), [])
 
+    def test_pause_pendant_le_calcul_des_lieux(self):
+        """Relecture de la 0.5.0 : Pause pendant le dernier calcul des lieux passait l'état à « terminé » (sans
+        « Reprendre »), et le calcul ne reprenait qu'à l'inventaire automatique, une heure plus tard. Par le vrai fil
+        de l'Indexeur : la pause se voit, et Reprendre finit le calcul."""
+        absent = self.tmp / 'disque-debranche'           # dossier injoignable : l'inventaire garde ses photos
+        absent.mkdir()
+        d = self.base.ajouter_dossier(absent)
+        absent.rmdir()
+        lignes = [(str(absent / f'p{i:04d}.jpg'), 10 + i, 1, None) for i in range(600)]
+        self.base.ajouter_photos(d['id'], lignes)
+        connus = self.base.connus(d['id'])
+        rnd = random.Random(7)
+        v = np.zeros(8, np.float16).tobytes()
+        self.base.enregistrer([{'id': connus[ch][0], 'taille': t, 'modifie': 1, 'largeur': 400, 'hauteur': 300,
+                                'date_prise': None, 'lat': rnd.uniform(43, 50), 'lon': rnd.uniform(-1, 6),
+                                'vecteur': v, 'miniature': b'jpeg'} for ch, t, _, _ in lignes], [], 'base')
+        vraie = donnees()
+        commence, libre, appels = threading.Event(), threading.Event(), []
+
+        class Lente:
+            version = vraie.version
+
+            def localiser(self, lat, lon):
+                appels.append(1)
+                if len(appels) == 150:                       # au milieu du 2e lot : la pause arrive là
+                    commence.set()
+                    libre.wait(10)
+                return vraie.localiser(lat, lon)
+        ix = Indexeur(self.base, lambda materiel='auto': MoteurSimple(), 'base', fils_decodage=2,
+                      inventaire_auto_s=3600)
+        self.indexeurs.append(ix)
+        ix.source_lieux = Lente()
+        with mock.patch.object(indexation, 'LIEUX_LOT', 100):
+            ix.demarrer()
+            self.assertTrue(commence.wait(60), 'calcul des lieux jamais commencé')
+            ix.pause()
+            libre.set()
+
+            def phase():
+                return ix.etat()['phase']
+            fin = time.monotonic() + 10
+            while phase() != 'pause' and time.monotonic() < fin:
+                time.sleep(0.05)
+            self.assertEqual(phase(), 'pause')
+            time.sleep(0.5)
+            self.assertEqual(phase(), 'pause')               # jamais « terminé » pendant la pause
+            reste = len(self.base.a_localiser(10000, vraie.version))
+            self.assertGreater(reste, 0)
+            ix.reprendre()
+            self.assertTrue(ix.attendre(60), 'calcul pas repris')
+        self.assertEqual(self.base.a_localiser(10000, vraie.version), [])
+        self.assertEqual(ix.etat()['phase'], 'termine')
+
     def test_pendant_une_longue_analyse(self):
         """Pendant une longue analyse, les photos déjà analysées ont leur lieu sans attendre la fin."""
         for i in range(40):
