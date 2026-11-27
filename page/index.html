@@ -2128,7 +2128,8 @@ const R = {
   // Dates et lieux (0.5.0) : textes des puces retirées (renvoyés au serveur : ils redeviennent des mots), puces de la
   // dernière réponse, mots cherchés dans les photos une fois les dates et les lieux retirés, photos sans position GPS.
   // Dates sans aucune photo, que le serveur n'a pas retenues (leurs mots sont cherchés dans toutes les photos).
-  ignorer: [], puces: [], mots: null, sansPosition: null, sansPhoto: [],
+  // lieu : ident d'un lieu (lien de la visionneuse), appliqué tel quel par le serveur.
+  ignorer: [], puces: [], mots: null, sansPosition: null, sansPhoto: [], lieu: null,
 };
 const IGNORER_MAX = 8;             // puces retirées gardées dans l'adresse (le serveur en accepte 10)
 const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
@@ -2136,12 +2137,13 @@ const infosPhotos = new Map();
 
 /** Adresse d'une recherche (avec ses puces retirées : &sans=…), des photos semblables à une photo (#semblables=…) ou
  *  d'une photo ; sur l'écran « Doublons » : #doublons, ou #doublons&photo=… */
-function adresse(q, photo, semblables = R.semblables, ignorer = R.ignorer) {
+function adresse(q, photo, semblables = R.semblables, ignorer = R.ignorer, lieu = R.lieu) {
   if (E.vue === 'doublons') return photo ? `#doublons&photo=${photo}` : '#doublons';
   const p = new URLSearchParams();
   if (semblables) p.set('semblables', String(semblables));
   else if (q) {
     p.set('q', q);
+    if (lieu) p.set('lieu', lieu);
     for (const x of ignorer || []) p.append('sans', x);
   }
   if (photo) p.set('photo', String(photo));
@@ -2153,8 +2155,12 @@ function lireAdresse() {
   const id = p.get('photo') || '', ref = p.get('semblables') || '';
   return {q: (p.get('q') || '').trim().replace(/\s+/g, ' ').slice(0, 200), photo: /^[1-9]\d{0,17}$/.test(id) ? +id : null,
     ignorer: textesIgnores(p.getAll('sans')), semblables: /^[1-9]\d{0,17}$/.test(ref) ? +ref : null,
+    lieu: identLieu(p.get('lieu')),
     reglages: p.has('reglages'), moteurs: p.has('moteurs'), doublons: p.has('doublons')};
 }
+
+/** Ident d'un lieu (« v:2990045 », « d:FR.29 ») ou null. */
+const identLieu = (x) => (typeof x === 'string' && /^[vdrp]:[A-Za-z0-9.]{1,24}$/.test(x) ? x : null);
 
 /** Textes de puces retirées : propres, sans doublon, IGNORER_MAX au plus. */
 const textesIgnores = (liste) => [...new Set((liste || []).map((x) => String(x).trim().replace(/\s+/g, ' ').slice(0, 200))
@@ -2170,8 +2176,8 @@ function synchroniser() {
     if (E.vue !== 'photos') montrerPhotos();
     if (a.semblables) {
       if (a.semblables !== R.semblables) chercher('', null, a.semblables);
-    } else if (a.q !== R.q || R.semblables || !memesTextes(a.ignorer, R.ignorer)) {
-      chercher(a.q, null, null, a.ignorer);
+    } else if (a.q !== R.q || R.semblables || !memesTextes(a.ignorer, R.ignorer) || a.lieu !== R.lieu) {
+      chercher(a.q, null, null, a.ignorer, a.lieu);
     }
   }
   const v = $('#visionneuse');
@@ -2190,12 +2196,13 @@ window.addEventListener('hashchange', synchroniser);
 
 /** Recherche (q), toutes les photos (q vide) ou, avec `semblables` (identifiant d'une photo), les photos qui lui
  *  ressemblent le plus (« Plus comme celle-ci »). ignorer : textes des puces retirées (0.5.0), cherchés comme des mots. */
-function chercher(q, historique = 'pousser', semblables = null, ignorer = []) {
+function chercher(q, historique = 'pousser', semblables = null, ignorer = [], lieu = null) {
   q = semblables ? '' : (q || '').trim().replace(/\s+/g, ' ').slice(0, 200);
   ignorer = q ? textesIgnores(ignorer) : [];
+  lieu = q ? identLieu(lieu) : null;
   if (E.vue !== 'photos') montrerPhotos();  // une recherche depuis l'écran « Doublons » ramène aux photos
   // Autre recherche (ou puce retirée) : la sélection ne suit pas ; même liste mise à jour : elle reste.
-  if (q !== R.q || semblables !== R.semblables || !memesTextes(ignorer, R.ignorer)) viderSelection();
+  if (q !== R.q || semblables !== R.semblables || !memesTextes(ignorer, R.ignorer) || lieu !== R.lieu) viderSelection();
   if (semblables !== R.semblables) {
     R.retour = semblables ? (history.state && history.state.retour) || null : null;
     R.reference = null;
@@ -2203,6 +2210,7 @@ function chercher(q, historique = 'pousser', semblables = null, ignorer = []) {
   $('#q').value = q;
   R.q = q;
   R.ignorer = ignorer;
+  R.lieu = lieu;
   R.puces = [];
   R.mots = null;
   R.sansPosition = null;
@@ -2247,7 +2255,7 @@ function chercher(q, historique = 'pousser', semblables = null, ignorer = []) {
 function rafraichir() {
   if (R.mode === null) return;
   const y = window.scrollY;
-  chercher(R.q, null, R.semblables, R.ignorer);
+  chercher(R.q, null, R.semblables, R.ignorer, R.lieu);
   if (y < 400) window.scrollTo(0, 0);
 }
 
@@ -2255,6 +2263,7 @@ function urlPage(debut, n, proches = false) {
   if (R.mode === 'semblables') return `/api/semblables/${R.semblables}?debut=${debut}&n=${n}`;
   if (!R.q) return `/api/photos?debut=${debut}&n=${n}`;
   const p = new URLSearchParams({q: R.q});
+  if (R.lieu) p.set('lieu', R.lieu);
   for (const x of R.ignorer) p.append('ignorer', x);
   if (proches) p.set('proches', '1');
   p.set('debut', String(debut));
@@ -2568,7 +2577,7 @@ function texteRetour() {
 function voirSemblables(id) {
   if (!id) return;
   const retour = E.vue === 'doublons' ? {doublons: true} : R.semblables ? {semblables: R.semblables}
-    : {q: R.q || '', ignorer: R.ignorer};
+    : {q: R.q || '', ignorer: R.ignorer, lieu: R.lieu};
   const v = $('#visionneuse');
   const remplacer = v.open && V.pousse;
   if (v.open) {
@@ -2596,7 +2605,7 @@ function revenirDesSemblables() {
   } else if (r.semblables) {
     chercher('', 'pousser', r.semblables);
   } else {
-    chercher(r.q || '', 'pousser', null, r.ignorer || []);
+    chercher(r.q || '', 'pousser', null, r.ignorer || [], r.lieu || null);
   }
   window.scrollTo(0, 0);
 }
@@ -2809,9 +2818,11 @@ function puceFiltre(p) {
     icone('croix')));
 }
 
-/** × d'une puce : la même recherche, sans ce filtre ; son texte redevient un mot. */
+/** × d'une puce : la même recherche, sans ce filtre ; son texte redevient un mot (la puce d'un lien de lieu de la
+ *  visionneuse : le lieu n'est plus appliqué, son nom est cherché comme une recherche tapée). */
 function retirerFiltre(p) {
-  chercher(R.q, 'pousser', null, [...R.ignorer, p.texte]);
+  if (R.lieu && p.type === 'lieu') chercher(R.q, 'pousser', null, [...R.ignorer, p.texte], null);
+  else chercher(R.q, 'pousser', null, [...R.ignorer, p.texte], R.lieu);
   $('#q').focus({preventScroll: true});
 }
 
@@ -2874,7 +2885,8 @@ function majCeJour() {
   $('#ce-jour').hidden = !(R.mode === 'dates' && !R.q && !R.semblables && CJ.groupes.size);
 }
 
-/** Visionneuse : clic sur le lieu de la photo, toutes les photos de ce lieu. */
+/** Visionneuse : clic sur le lieu de la photo, toutes les photos de ce lieu (par son ident : jamais une autre lecture
+ *  de son nom, « Saint-Sylvestre » la commune n'est pas le réveillon). */
 function chercherLieu() {
   const q = V.lieu && V.lieu.recherche;
   if (!q) return;
@@ -2884,7 +2896,7 @@ function chercherLieu() {
     V.pousse = false;
     fermerVisionneuse(false);
   }
-  chercher(q, remplacerEntree ? 'remplacer' : 'pousser');
+  chercher(q, remplacerEntree ? 'remplacer' : 'pousser', null, [], identLieu(V.lieu.ident));
   window.scrollTo(0, 0);
 }
 

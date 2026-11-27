@@ -204,6 +204,7 @@ TAILLES_TEXTE = ('normale', 'grande', 'tres-grande')
 # « Ce jour-là » : au plus 12 miniatures par année.
 IGNORER_MAX = 10
 CE_JOUR_N = 12
+_IDENT_LIEU = re.compile(r'[vdrp]:[A-Za-z0-9.]{1,24}')       # ident de lieux.py (paramètre lieu de /api/recherche)
 
 # Images que le navigateur affiche telles quelles ; les autres extensions de config.EXTENSIONS (TIFF) sont
 # converties en JPEG à la volée.
@@ -2629,7 +2630,7 @@ class Application:
 
     # ------------------------------------------------ photos
 
-    def chercher(self, q, debut, n, proches=False, ignorer=()):
+    def chercher(self, q, debut, n, proches=False, ignorer=(), lieu=None):
         """Résultats d'une recherche (mode 'recherche'), ou, avec proches=True, les photos suivantes sous les seuils
         (mode 'proches', « moins probables »). Pendant la préparation du moteur : réponse vide marquée
         preparation=True, que la page relance d'elle-même, jamais une erreur.
@@ -2640,9 +2641,15 @@ class Application:
         texte}]), les mots qui restent, et, quand un lieu filtre, sans_position : le nombre de photos analysées sans
         position GPS, qu'aucun lieu ne peut retrouver. S'il reste des mots, la recherche par mots est limitée aux
         photos de ces dates et de ces lieux (mêmes seuils, mêmes pages, « moins sûres » et « les plus proches »
-        comprises) ; sinon, ces photos par date (mode 'dates', comme toutes les photos, sans le moteur)."""
+        comprises) ; sinon, ces photos par date (mode 'dates', comme toutes les photos, sans le moteur).
+
+        lieu (ident de lieux.py, « v:2990045 ») : le lien du lieu de la visionneuse (lieu_photo) ; toutes les photos de
+        ce lieu, par date, sans relire le texte q (son nom, pour la recherche et la puce) : « Notre-Dame-de-Monts »,
+        « Saint-Sylvestre » (une commune, pas le réveillon), « Vers-Pont-du-Gard » donnent toujours ce lieu-là."""
         if not (q or '').strip():
             return self.photos_par_date(debut, n)
+        if lieu is not None:
+            return self._photos_du_lieu(q, lieu, debut, n)
         a, sans_photo = self._analyser(q, ignorer)
         ecartees = {'dates_sans_photo': sans_photo} if sans_photo else {}
         if a is None:
@@ -2658,6 +2665,19 @@ class Application:
         filtre = _recherche.Filtre(dates if dates else None,
                                    self.base.ids_des_lieux(idents) if idents is not None else None)
         return dict(self._chercher_mots(a.mots, debut, n, proches, filtre), **info)
+
+    def _photos_du_lieu(self, q, ident, debut, n):
+        """Toutes les photos du lieu `ident` (lien de la visionneuse), par date ; une seule puce, ce lieu (son × le
+        retire : q est alors cherché comme une recherche tapée)."""
+        e = _lieux.lieux().endroit(ident) if isinstance(ident, str) and _IDENT_LIEU.fullmatch(ident) else None
+        if e is None:
+            raise Refus('Ce lieu est inconnu.', 400)
+        r = self.base.page_filtree(self._liste_filtree(None, (e.ident,)), debut, n)
+        texte = _recherche.normaliser_requete(q)
+        return {'mode': 'dates', 'debut': r['debut'], 'suivant': r['debut'] + len(r['photos']), 'total': r['total'],
+                'photos': r['photos'], 'requete': texte, 'mots': '', 'lieu': e.ident,
+                'puces': [{'type': 'lieu', 'libelle': texte or e.nom, 'texte': texte}],
+                'sans_position': self.base.sans_position()}
 
     def _liste_filtree(self, intervalles, idents):
         """base.liste_filtree, gardée pour les pages suivantes de la même recherche tant que l'index et les lieux ne
@@ -2857,7 +2877,10 @@ class Application:
             autre = next((x.nom for x in parents if _lieux.normaliser(x.nom) != nom), None)
             if autre:
                 recherche = f'{e.nom} {autre}'
-        return {'libelle': source.libelle(e), 'recherche': recherche}
+        # ident : la page le donne à la recherche (paramètre lieu) ; le nom n'est plus relu comme un texte tapé, qui
+        # pouvait mener ailleurs (relecture de la 0.5.0 : « Saint-Sylvestre » lu comme le réveillon, « Vers-Pont-du-Gard »
+        # comme le Gard, « Notre-Dame-de-Monts » comme des mots).
+        return {'libelle': source.libelle(e), 'recherche': recherche, 'ident': e.ident}
 
     def ce_jour(self, n=CE_JOUR_N):
         """« Ce jour-là » (0.5.0) : les photos prises le même jour et le même mois que la date du jour, les années
@@ -3824,9 +3847,13 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
                 raise Refus('Recherche trop longue.', 400)
             debut = self._entier(params, 'debut', 0, 0, 10 ** 8)
             n = self._entier(params, 'n', LISTE_DEFAUT, 1, LISTE_MAX)
+            # Lien du lieu de la visionneuse (0.5.0) : son ident, appliqué tel quel.
+            lieu = (params.get('lieu') or [''])[-1] if chemin == '/api/recherche' else ''
+            if lieu and not _IDENT_LIEU.fullmatch(lieu):
+                raise Refus('Paramètre invalide.', 400)
             if (params.get('proches') or [''])[-1] == '1' and q.strip():
                 return self._json(app.chercher(q, debut, n, proches=True, ignorer=ignorer))   # « les plus proches »
-            return self._json(app.chercher(q, debut, n, ignorer=ignorer))
+            return self._json(app.chercher(q, debut, n, ignorer=ignorer, lieu=lieu or None))
         if chemin == '/api/ce-jour':                       # « Ce jour-là » (0.5.0)
             return self._json(app.ce_jour())
         if chemin.startswith('/api/semblables/'):          # « Plus comme celle-ci » (0.4.1)

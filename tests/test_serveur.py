@@ -4064,22 +4064,60 @@ class TestCeJourEtLieuPhoto(EssaiDatesLieux):
     def test_lieu_d_une_photo(self):
         app = self.app
         self.assertEqual(app.info_photo(self.p['brest_noel'])['lieu'],
-                         {'libelle': 'Brest, Finistère, Bretagne, France', 'recherche': 'Brest'})
+                         {'libelle': 'Brest, Finistère, Bretagne, France', 'recherche': 'Brest', 'ident': 'v:3030300'})
         self.assertEqual(app.info_photo(self.p['seville_ete'])['lieu'],
-                         {'libelle': 'Séville, Andalousie, Espagne', 'recherche': 'Séville'})
+                         {'libelle': 'Séville, Andalousie, Espagne', 'recherche': 'Séville', 'ident': app.info_photo(self.p['seville_ete'])['lieu']['ident']})
         self.assertIsNone(app.info_photo(self.p['sans_gps_noel'])['lieu'])
         # Homonymes qui ont tous deux des photos : le lien précise ce qui contient le lieu, et la recherche le suit.
         paris, texas = app.info_photo(self.p['paris_noel'])['lieu'], app.info_photo(self.p['paris_texas'])['lieu']
-        self.assertEqual(paris, {'libelle': 'Paris, Île-de-France, France', 'recherche': 'Paris Île-de-France'})
+        self.assertEqual((paris['libelle'], paris['recherche']), ('Paris, Île-de-France, France', 'Paris Île-de-France'))
         self.assertEqual(texas['recherche'], 'Paris Texas')
         for nom in ('brest_noel', 'seville_ete', 'paris_noel', 'paris_texas', 'quimper_juin', 'orange_ce_jour'):
             with self.subTest(nom=nom):
-                q = app.info_photo(self.p[nom])['lieu']['recherche']
-                r = app.chercher(q, 0, 50)
+                lieu = app.info_photo(self.p[nom])['lieu']
+                r = app.chercher(lieu['recherche'], 0, 50)
                 self.assertEqual(r['mode'], 'dates')
                 self.assertIn(self.p[nom], self.ids(r))
                 self.assertTrue(all(p['type'] == 'lieu' for p in r['puces']))
+                # Le lien de la visionneuse passe l'ident : toutes les photos de ce lieu, et lui seul.
+                r = app.chercher(lieu['recherche'], 0, 50, lieu=lieu['ident'])
+                self.assertEqual((r['mode'], r['lieu'], r['mots']), ('dates', lieu['ident'], ''))
+                self.assertIn(self.p[nom], self.ids(r))
+                self.assertEqual(r['puces'], [{'type': 'lieu', 'libelle': lieu['recherche'], 'texte': lieu['recherche']}])
+                self.assertEqual(set(self.ids(r)), set(app.base.ids_par_lieu(lieu['ident'])))
         self.assertEqual(self.noms(self.ids(app.chercher('Paris Île-de-France', 0, 50))), ['paris_noel'])
+        with self.assertRaises(self.serveur.Refus):
+            app.chercher('Brest', 0, 50, lieu='v:999999999')
+
+    def test_lien_de_lieu_jamais_relu_comme_un_texte(self):
+        """Relecture de la 0.5.0 : le lien du lieu repassait par l'analyse du texte. « Saint-Sylvestre » (Haute-Vienne)
+        devenait le réveillon (aucune photo du village), « Notre-Dame-de-Monts » des mots, « Vers-Pont-du-Gard » le
+        Gard (Nîmes compris), Mayenne la ville tout le département. Avec l'ident : ce lieu-là, exactement."""
+        from myphotos import lieux
+        source = lieux.lieux()
+        app = self.app
+
+        def ville(nom, departement):
+            return next(e for e in source.chercher(lieux.normaliser(nom)) if e.type == 'ville'
+                        and e.departement == departement)
+        villes = [ville('Saint-Sylvestre', 'd:FR.87'), ville('Toussaint', 'd:FR.76'), ville('Notre-Dame-de-Monts',
+                  'd:FR.85'), ville('Vers-Pont-du-Gard', 'd:FR.30'), ville('Nîmes', 'd:FR.30'),
+                  ville('Mayenne', 'd:FR.53'), ville('Laval', 'd:FR.53'), ville('Réveillon', 'd:FR.51')]
+        dossier = self.tmp / 'photos-villages'
+        dossier.mkdir()
+        VILLES_ESSAI.update({f'v{k}': (e.lat, e.lon) for k, e in enumerate(villes)})
+        try:
+            ids = photos_datees(app.base, dossier, [(f'v{k}', '2021-06-01T10:00:00', '2021-06-02T10:00:00', 'sure')
+                                                    for k in range(len(villes))])
+        finally:
+            for k in range(len(villes)):
+                VILLES_ESSAI.pop(f'v{k}', None)
+        for e, pid in zip(villes, ids):
+            with self.subTest(ville=e.nom):
+                lieu = app.info_photo(pid)['lieu']
+                self.assertEqual(lieu['ident'], e.ident)
+                r = app.chercher(lieu['recherche'], 0, 50, lieu=lieu['ident'])
+                self.assertEqual((self.ids(r), r['puces'][0]['type']), ([pid], 'lieu'))
 
 
 class TestPolitiqueDesLieux(unittest.TestCase):
@@ -4388,8 +4426,16 @@ class TestDatesEtLieuxHttp(unittest.TestCase):
                          [(ecart, f'Il y a {ecart} ans', [self.quimper])])
         statut, p = api(f'/api/photo/{self.brest}', **self.kw)
         self.assertEqual(statut, 200, p)
-        self.assertEqual(p['lieu'], {'libelle': 'Brest, Finistère, Bretagne, France', 'recherche': 'Brest'})
+        self.assertEqual(p['lieu'], {'libelle': 'Brest, Finistère, Bretagne, France', 'recherche': 'Brest',
+                                     'ident': 'v:3030300'})
         self.assertIsNone(api(f'/api/photo/{self.sans_gps}', **self.kw)[1]['lieu'])
+        # Le lien du lieu : son ident (paramètre lieu), appliqué tel quel ; un ident illisible ou inconnu : refusé.
+        statut, r = self.recherche('Brest', lieu='v:3030300')
+        self.assertEqual((statut, r['mode'], r['lieu'], [x['id'] for x in r['photos']]),
+                         (200, 'dates', 'v:3030300', [self.brest]))
+        for mauvais in ('v:', 'x:12', 'v:12;DROP', 'v:' + '9' * 30):
+            self.assertEqual(self.recherche('Brest', lieu=mauvais)[0], 400, mauvais)
+        self.assertEqual(self.recherche('Brest', lieu='v:999999999')[0], 400)
         # Protégées comme les autres routes : jeton, autre site.
         self.assertEqual(api('/api/ce-jour', jeton=False, **self.kw)[0], 403)
         statut, _, _ = requete('GET', '/api/ce-jour', entetes={'Sec-Fetch-Site': 'cross-site'}, **self.kw)
@@ -4401,7 +4447,8 @@ class TestDatesEtLieuxHttp(unittest.TestCase):
     def test_page(self):
         page = requete('GET', '/', **self.kw)[2].decode('utf-8')
         for attendu in ('id="filtres"', 'id="sans-position"', 'id="ce-jour"', 'Ce jour-là', 'id="v-lieu"',
-                        "'/api/ce-jour'", "p.append('ignorer', x)", 'Noël 2019, plage en Bretagne'):
+                        "'/api/ce-jour'", "p.append('ignorer', x)", 'Noël 2019, plage en Bretagne',
+                        "if (R.lieu) p.set('lieu', R.lieu);", 'identLieu(V.lieu.ident)', 'id="sans-photo"'):
             self.assertIn(attendu, page)
         # Textes des puces et du lieu par textContent seulement : jamais innerHTML hors des icônes constantes.
         self.assertEqual(page.count('innerHTML'), 1)
