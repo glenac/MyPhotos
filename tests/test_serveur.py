@@ -382,6 +382,12 @@ class TestSecurite(EssaiServeur):
         imbrique = b'{"ids":' + b'[' * 20000 + b']' * 20000 + b', "confirme": true}'      # moins de 64 Ko
         self.assertEqual(requete('POST', '/api/supprimer', brut=imbrique,
                                  entetes={'X-MyPhotos': '1', 'Content-Type': 'application/json'})[0], 400)
+        # Chiffres qui ne sont pas des chiffres ASCII (relecture de la 0.5.0 : « ² » passait isdigit(), puis int()
+        # levait : erreur 500 et trace dans le journal).
+        for params in ('debut=%C2%B2', 'n=%C2%B2', 'debut=%D9%A3', 'n=%EF%BC%91'):
+            for chemin in ('/api/recherche?q=chien&', '/api/photos?', f'/api/semblables/{INCONNU}?'):
+                with self.subTest(params=params, chemin=chemin):
+                    self.assertEqual(requete('GET', chemin + params)[0], 400)
         self.vivant()
         ajout = journal.read_bytes()[avant:].decode('utf-8', 'replace') if journal.exists() else ''
         self.assertNotIn('Traceback', ajout)

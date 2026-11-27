@@ -3836,7 +3836,7 @@ class Gestionnaire(http.server.BaseHTTPRequestHandler):
         v = (params.get(nom) or [''])[-1]
         if v == '':
             return defaut
-        if not v.isdigit() or len(v) > 9:
+        if not (v.isascii() and v.isdigit()) or len(v) > 9:     # « ² », « ٣ » : isdigit() seul les acceptait
             raise Refus('Paramètre invalide.', 400)
         return max(mini, min(maxi, int(v)))
 
