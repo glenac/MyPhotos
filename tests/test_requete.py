@@ -514,6 +514,13 @@ CAS_PIEGES = [
     ('photos des années 90', '', 1, ['années 1990']),
     ('vacances années 90', 'vacances', 1, ['années 1990']),
     ('6 juin 2019', '', 1, ['6 juin 2019']),
+    # Relecture 0.5.0 : « selfie » est cherché par le moteur ; « hier soir » est une date entière, comme « ce soir ».
+    ('mes selfies en 2019', 'mes selfies', 1, ['2019']),
+    ('selfies de Noël 2019', 'selfies', 1, ['Noël 2019']),
+    ('hier soir', '', 1, None),
+    ('photos de hier soir', '', 1, None),
+    ('chien hier matin', 'chien', 1, None),
+    ('avant-hier soir', '', 1, None),
 ]
 
 

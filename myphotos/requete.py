@@ -628,6 +628,8 @@ class _Expr:
 
 _RELATIFS = {
     ('aujourd', 'hui'): 'aujourdhui', ('aujourdhui',): 'aujourdhui', ('hier',): 'hier', ('avant', 'hier'): 'avant_hier',
+    ('hier', 'soir'): 'hier', ('hier', 'matin'): 'hier', ('hier', 'midi'): 'hier', ('hier', 'apres', 'midi'): 'hier',
+    ('avant', 'hier', 'soir'): 'avant_hier', ('avant', 'hier', 'matin'): 'avant_hier',
     ('ce', 'matin'): 'aujourdhui', ('ce', 'midi'): 'aujourdhui', ('cet', 'apres', 'midi'): 'aujourdhui',
     ('ce', 'soir'): 'aujourdhui', ('cette', 'nuit'): 'cette_nuit',
     ('cette', 'semaine'): 'semaine', ('cette', 'semaine', 'ci'): 'semaine',
@@ -1608,7 +1610,7 @@ _LIANTS = {'de', 'du', 'des', 'd', 'en', 'a', 'au', 'aux', 'pendant', 'durant', 
 _REMPLISSAGE = _LIANTS | {'photo', 'photos', 'image', 'images', 'cliche', 'cliches', 'souvenir', 'souvenirs', 'mes',
                           'nos', 'tes', 'vos', 'ma', 'mon', 'toutes', 'tous', 'tout', 'une', 'un', 'prises', 'prise',
                           'pris', 'faites', 'fait', 'faite', 'datant', 'datees', 'datee', 'video', 'videos', 'album',
-                          'albums', 'selfie', 'selfies', 'voir', 'montre', 'montrer', 'moi', 'afficher', 'cherche',
+                          'albums', 'voir', 'montre', 'montrer', 'moi', 'afficher', 'cherche',
                           'chercher', 'trouver', 'retrouver', 'y', 'il', 'diaporama'}
 _BORDS = re.compile('^[\\s,;:.!?…/&+' + _CLASSE_TIRETS + ']+|[\\s,;:!?…/&+' + _CLASSE_TIRETS + ']+$')
 _STRICT = False             # essais : une erreur de lecture d'une date remonte au lieu d'être ignorée
