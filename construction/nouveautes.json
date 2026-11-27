@@ -5,6 +5,7 @@
   "Dans la visionneuse, le lieu de la photo (ville, région, pays) ; un clic montre toutes les photos prises à cet endroit.",
   "« Ce jour-là » : en tête de vos photos, celles prises le même jour les années passées.",
   "Le lieu vient de la position GPS de la photo et se trouve sur votre ordinateur, sans Internet.",
+  "En grand texte sur un petit écran, le haut de la page tient dans la largeur, et cocher une photo ne fait plus sauter la page.",
   "Plus discret encore : dès son démarrage, MyPhotos coupe les données de diagnostic d’ONNX Runtime, l’outil de Microsoft qui fait tourner le moteur."
  ],
  "0.4.2": [
