@@ -569,7 +569,8 @@ class TestBaseLieux(EssaiBase):
         c = self.base._cnx()
         self.assertEqual(c.execute('PRAGMA user_version').fetchone()[0], 1)
         colonnes = [l[1] for l in c.execute('PRAGMA table_info(lieux_photos)')]
-        self.assertEqual(colonnes, ['photo_id', 'ville', 'departement', 'region', 'pays', 'distance', 'version'])
+        self.assertEqual(colonnes, ['photo_id', 'ville', 'departement', 'region', 'pays', 'distance', 'version',
+                                    'lat', 'lon'])
         noms = {n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
         self.assertIn('photos_gps', noms)
         # Rouverte : rien à créer (aucune écriture à l'ouverture d'une base à jour).
@@ -764,6 +765,50 @@ class TestCompatibilite(EssaiBase):
         localiser_tout(self.base)
         self.assertEqual(self.base.ids_par_lieu('d:FR.29'), [nouvelles['quimper']])
         self.assertEqual(self.base._cnx().execute('PRAGMA user_version').fetchone()[0], 1)
+
+    def test_position_changee_par_la_0_4_1(self):
+        """Relecture de la 0.5.0 : la 0.4.1 réanalyse une photo dont la position a changé (retirée, ou corrigée dans
+        un autre logiciel) sans rien savoir des lieux. De retour en 0.5.0, son lieu ne doit plus être montré ni compté,
+        et il est refait."""
+        ancien = self.base_0_4_1()
+        index, mini = self.tmp / 'donnees' / 'index.db', self.tmp / 'donnees' / 'miniatures.db'
+        self.base.fermer()
+        os.remove(index)
+        os.remove(mini)
+        b041 = ancien.Base(index, mini)
+        ids, d = ajouter_photos_gps(b041, self.dossier, {'brest': BREST, 'brest2': BREST, 'quimper': QUIMPER})
+        b041.fermer()
+        self.base = Base(index, mini)                                # 0.5.0 : les trois en Bretagne
+        self.assertEqual(localiser_tout(self.base), 3)
+        self.assertEqual(sorted(self.base.ids_par_lieu('r:FR.53')), sorted(ids.values()))
+        self.base.fermer()
+        b041 = ancien.Base(index, mini)                              # 0.4.1 : brest à Séville, brest2 sans GPS
+        p, p2 = b041.photo(ids['brest']), b041.photo(ids['brest2'])
+        b041.marquer_modifiees([(ids['brest'], p['taille'] + 1, p['modifie'] + 1, p['date_fichier']),
+                                (ids['brest2'], p2['taille'] + 1, p2['modifie'] + 1, p2['date_fichier'])])
+        v = np.zeros(8, np.float16).tobytes()
+        b041.enregistrer([{'id': ids['brest'], 'taille': p['taille'] + 1, 'modifie': p['modifie'] + 1, 'largeur': 400,
+                           'hauteur': 300, 'date_prise': None, 'lat': SEVILLE[0], 'lon': SEVILLE[1], 'vecteur': v,
+                           'miniature': b'jpeg'},
+                          {'id': ids['brest2'], 'taille': p2['taille'] + 1, 'modifie': p2['modifie'] + 1,
+                           'largeur': 400, 'hauteur': 300, 'date_prise': None, 'lat': None, 'lon': None, 'vecteur': v,
+                           'miniature': b'jpeg'}], [], 'base')
+        b041.fermer()
+        self.base = Base(index, mini)                                # de retour en 0.5.0
+        self.assertIsNone(self.base.lieu_photo(ids['brest']))       # jamais le lieu d'une autre position
+        self.assertIsNone(self.base.lieu_photo(ids['brest2']))
+        self.assertEqual([x for x, _, _ in self.base.a_localiser(10, donnees().version)], [ids['brest']])
+        self.base.reparer()
+        self.assertEqual(sorted(self.base.ids_par_lieu('r:FR.53')), [ids['quimper']])
+        self.assertNotIn('p:ES', self.base.lieux_presents())
+        localiser_tout(self.base)
+        self.assertEqual(self.base.ids_par_lieu('p:ES'), [ids['brest']])
+        self.assertEqual(self.base.lieu_photo(ids['brest'])['pays'], 'p:ES')
+        self.assertEqual(self.base.ids_par_lieu('r:FR.53'), [ids['quimper']])
+        # Une position qui change entre a_localiser et l'écriture : le lieu calculé pour l'ancienne n'est pas écrit.
+        lieu = donnees().localiser(*BREST)
+        self.assertEqual(self.base.enregistrer_lieux([dict(lieu, photo_id=ids['quimper'], version='x',
+                                                           lat=BREST[0], lon=BREST[1])]), 0)
 
 
 # ---------------------------------------------------------------- calcul en arrière-plan

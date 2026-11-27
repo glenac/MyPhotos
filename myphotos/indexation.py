@@ -1105,7 +1105,7 @@ class Indexeur:
                 for pid, lat, lon in lot:
                     r = source.localiser(lat, lon) or {}
                     lignes.append((pid, r.get('ville'), r.get('departement'), r.get('region'), r.get('pays'),
-                                   r.get('distance'), version))
+                                   r.get('distance'), version, lat, lon))
                 if lignes:
                     self.base.enregistrer_lieux(lignes)
                     n += len(lignes)

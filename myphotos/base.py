@@ -30,12 +30,15 @@ sur une base 0.4.0 ne lit que les colonnes qu'elle connaît et ajoute ses dossie
 
 Table lieux_photos (0.5.0) : le lieu de chaque photo qui a une position GPS valide (lieux.py, sans Internet) : idents
 de sa ville, de son département, de sa région et de son pays (None quand il n'y en a pas : photo prise en mer…),
-distance à la ville en km, et version des données de lieux qui l'a calculé (refait quand elle change). Même règle que
-les exclusions : créée à l'ouverture si elle manque, sans changer user_version ; une 0.4.x l'ignore. Les lignes d'une
-photo oubliée partent avec elle, dans la même transaction ; celles qu'une 0.4.x aurait laissées (elle ne connaît pas la
-table) sont ignorées par les lectures, qui passent par photos, et effacées par reparer(). Avec elle, un index partiel
-de photos (photos_gps : position et miniature des photos qui en ont une) évite de relire toute la table, vecteurs
-compris, pour trouver les photos à localiser.
+distance à la ville en km, version des données de lieux qui l'a calculé (refait quand elle change) et position
+(lat, lon) dont il vient. Même règle que les exclusions : créée à l'ouverture si elle manque, sans changer
+user_version ; une 0.4.x l'ignore. Les lignes d'une photo oubliée partent avec elle, dans la même transaction. Une
+0.4.x (ou une 0.3.0) rouverte sur la base ne connaît pas la table : une photo qu'elle oublie y laisse sa ligne, une
+photo qu'elle analyse de nouveau (position retirée ou changée) garde la sienne, et une 0.3.0 peut redonner
+l'identifiant d'une photo oubliée à une autre. Ces lignes sont refaites (a_localiser : position différente de celle du
+calcul) ou effacées (reparer : photo disparue, ou sans position valide), et lieu_photo ne montre jamais un lieu
+calculé pour une autre position. Avec elle, un index partiel de photos (photos_gps : position et miniature des photos
+qui en ont une) évite de relire toute la table, vecteurs compris, pour trouver les photos à localiser.
 """
 import ctypes
 import os
@@ -104,7 +107,9 @@ _SCHEMA_LIEUX = (
         region      TEXT,
         pays        TEXT,
         distance    REAL,
-        version     TEXT)""",
+        version     TEXT,
+        lat         REAL,
+        lon         REAL)""",
     "CREATE INDEX IF NOT EXISTS lieux_photos_ville ON lieux_photos(ville) WHERE ville IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS lieux_photos_departement ON lieux_photos(departement) WHERE departement IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS lieux_photos_region ON lieux_photos(region) WHERE region IS NOT NULL",
@@ -546,6 +551,10 @@ class Base:
             try:
                 for sql in _SCHEMA_LIEUX:
                     c.execute(sql)
+                # Table d'une 0.5.0 en préparation, sans la position du calcul : ses lignes seront refaites.
+                for col in ('lat', 'lon'):
+                    if not self._a_colonne(c, 'lieux_photos', col):
+                        c.execute(f'ALTER TABLE lieux_photos ADD COLUMN {col} REAL')
             except BaseException:
                 c.execute('ROLLBACK')
                 raise
@@ -554,7 +563,7 @@ class Base:
     @staticmethod
     def _schema_lieux_manquant(c):
         noms = {n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE name IN ('lieux_photos', 'photos_gps')")}
-        return len(noms) < 2
+        return len(noms) < 2 or not Base._a_colonne(c, 'lieux_photos', 'lat')
 
     @staticmethod
     def _a_colonne(c, table, colonne):
@@ -1093,28 +1102,34 @@ class Base:
         return self._cnx().execute(
             'SELECT p.id, p.lat, p.lon FROM photos p LEFT JOIN lieux_photos l ON l.photo_id = p.id '
             f'WHERE p.lat IS NOT NULL AND p.erreur IS NULL AND {_GPS_VALIDE.format(p="p.")} '
-            'AND (l.photo_id IS NULL OR l.version IS NOT ?) ORDER BY p.id LIMIT ?',
+            'AND (l.photo_id IS NULL OR l.version IS NOT ? OR l.lat IS NOT p.lat OR l.lon IS NOT p.lon) '
+            'ORDER BY p.id LIMIT ?',
             (version, max(0, int(limite)))).fetchall()
 
     def enregistrer_lieux(self, lignes):
-        """Écrit des lieux, d'un coup : lignes [(photo_id, ville, departement, region, pays, distance, version)] ou
-        dictionnaires de ces clés (idents de lieux.py, None quand il n'y en a pas). Une photo oubliée entre-temps est
-        ignorée. Renvoie le nombre de lignes écrites."""
+        """Écrit des lieux, d'un coup : lignes [(photo_id, ville, departement, region, pays, distance, version[, lat,
+        lon])] ou dictionnaires de ces clés (idents de lieux.py, None quand il n'y en a pas ; lat, lon : la position
+        localisée, celle de a_localiser). La position de la photo est gardée avec son lieu ; une photo oubliée
+        entre-temps, ou dont la position a changé depuis (lat, lon donnés), est ignorée. Renvoie le nombre de lignes
+        écrites."""
         valeurs = []
         for l in lignes:
             if isinstance(l, dict):
                 l = (l['photo_id'], l.get('ville'), l.get('departement'), l.get('region'), l.get('pays'),
-                     l.get('distance'), l.get('version'))
-            pid, ville, dep, region, pays, distance, version = l
+                     l.get('distance'), l.get('version'), l.get('lat'), l.get('lon'))
+            pid, ville, dep, region, pays, distance, version, *pos = l
+            lat, lon = (pos + [None, None])[:2]
+            donnee = lat is not None and lon is not None
             valeurs.append((int(pid), ville, dep, region, pays, None if distance is None else float(distance),
-                            version, int(pid)))
+                            version, int(pid), int(donnee), float(lat) if donnee else None,
+                            float(lon) if donnee else None))
         if not valeurs:
             return 0
         with self._transaction() as c:
             avant = c.total_changes
             c.executemany('INSERT OR REPLACE INTO lieux_photos(photo_id, ville, departement, region, pays, distance, '
-                          'version) SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM photos WHERE id = ?)',
-                          valeurs)
+                          'version, lat, lon) SELECT ?, ?, ?, ?, ?, ?, ?, p.lat, p.lon FROM photos p WHERE p.id = ? '
+                          'AND (? = 0 OR (p.lat IS ? AND p.lon IS ?))', valeurs)
             n = c.total_changes - avant
         # Après le COMMIT (relecture de la 0.5.0) : une recherche qui relit lieux_presents() pendant l'écriture
         # gardait l'instantané d'avant sous le nouveau numéro, et la Bretagne n'était plus reconnue jusqu'au
@@ -1276,9 +1291,11 @@ class Base:
 
     def lieu_photo(self, photo_id):
         """{ville, departement, region, pays, distance, version} d'une photo, ou None si elle n'a pas (encore) de
-        lieu."""
-        l = self._cnx().execute('SELECT ville, departement, region, pays, distance, version FROM lieux_photos '
-                                'WHERE photo_id = ?', (int(photo_id),)).fetchone()
+        lieu, ou un lieu calculé pour une autre position (par exemple retirée par une 0.4.x : refait bientôt)."""
+        l = self._cnx().execute('SELECT l.ville, l.departement, l.region, l.pays, l.distance, l.version '
+                                'FROM lieux_photos l JOIN photos p ON p.id = l.photo_id '
+                                'WHERE l.photo_id = ? AND p.lat IS l.lat AND p.lon IS l.lon',
+                                (int(photo_id),)).fetchone()
         return dict(zip(('ville', 'departement', 'region', 'pays', 'distance', 'version'), l)) if l else None
 
     def sans_position(self):
@@ -1298,10 +1315,18 @@ class Base:
             n = c.execute('DELETE FROM mini.miniatures WHERE id NOT IN (SELECT id FROM main.photos)').rowcount
             n += c.execute('UPDATE photos SET miniature = 0 WHERE miniature = 1 '
                            'AND id NOT IN (SELECT id FROM mini.miniatures)').rowcount
-            # Lieux de photos oubliées par une 0.4.x, qui ne connaît pas la table (0.5.0).
-            n += c.execute('DELETE FROM lieux_photos WHERE photo_id NOT IN (SELECT id FROM photos)').rowcount
+            # Lieux de photos oubliées par une 0.4.x, qui ne connaît pas la table (0.5.0), ou dont la position a été
+            # retirée ou changée par elle (une 0.3.0 peut même redonner leur identifiant à d'autres photos).
+            lieux = c.execute('DELETE FROM lieux_photos WHERE photo_id NOT IN (SELECT id FROM photos)').rowcount
+            lieux += c.execute(
+                'DELETE FROM lieux_photos WHERE photo_id IN (SELECT l.photo_id FROM lieux_photos l JOIN photos p '
+                f'ON p.id = l.photo_id WHERE NOT ({_GPS_VALIDE.format(p="p.")}) OR p.erreur IS NOT NULL '
+                'OR l.lat IS NOT p.lat OR l.lon IS NOT p.lon)').rowcount
+            n += lieux
             refaites = c.execute('UPDATE photos SET vecteur = NULL, modele = NULL '
                                  'WHERE modele IS NOT NULL AND miniature = 0').rowcount
             if refaites:
                 self._nouvelle_generation(c)
+        if lieux:
+            self.numero_lieux += 1                       # après le COMMIT : les lieux qui ont des photos ont changé
         return n + refaites
