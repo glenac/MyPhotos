@@ -1193,6 +1193,17 @@ class Base:
         lignes.sort(key=lambda x: (x[1] or '', x[0]), reverse=True)
         return lignes
 
+    def dates_presentes(self, intervalles):
+        """Au moins une photo affichée prise dans l'un de ces intervalles [(debut, fin)] de datetime.date (fins
+        comprises) ? Une requête LIMIT 1 par intervalle dans l'index photos_date, jusqu'à la première trouvée."""
+        dates = 'COALESCE(date_prise, date_fichier)'
+        with self._lecture() as c:
+            for d, f in intervalles:
+                if c.execute(f'SELECT 1 FROM photos WHERE miniature = 1 AND {dates} >= ? AND {dates} < ? LIMIT 1',
+                             (d.isoformat(), (f + timedelta(days=1)).isoformat())).fetchone():
+                    return True
+        return False
+
     def page_filtree(self, liste, debut=0, n=200):
         """Une page d'une liste_filtree : {'total', 'debut', 'photos': [{id, date, largeur, hauteur}]} ; une photo
         oubliée entre-temps est omise de la page."""

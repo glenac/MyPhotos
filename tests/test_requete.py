@@ -343,6 +343,24 @@ CAS_DATES = [
     ('en 2019 et en 2020', '', [('2019-01-01', '2019-12-31'), ('2020-01-01', '2020-12-31')], ['2019', '2020']),
     ('29 février en 2019', '', [('2019-01-01', '2019-12-31')], ['29 février', '2019']),
     ('Noël il y a quelques années', '', 7, ['Noël', '2018 à 2024']),
+    # Relecture 0.5.0 : un nombre de deux chiffres qui commence un jour n'est pas une année (« Noël 25 décembre » :
+    # Noël 2025 seulement ; « réveillon 31 décembre » : réveillons de 1931, aucune photo).
+    ('Noël 25 décembre', '', 2 * TOUS_LES_ANS, ['Noël (chaque année)', '25 décembre (chaque année)']),
+    ('réveillon 31 décembre', '', 3 * TOUS_LES_ANS, ['réveillons (chaque année)', '31 décembre (chaque année)']),
+    ('Halloween 31 octobre', '', 2 * TOUS_LES_ANS, ['Halloween (chaque année)', '31 octobre (chaque année)']),
+    ('Saint-Sylvestre 31 décembre', '', 2 * TOUS_LES_ANS,
+     ['Saint-Sylvestre (chaque année)', '31 décembre (chaque année)']),
+    ('Saint-Valentin 14 février', '', 2 * TOUS_LES_ANS, ['Saint-Valentin (chaque année)', '14 février (chaque année)']),
+    ('fête de la musique 21 juin', '', 2 * TOUS_LES_ANS,
+     ['fête de la musique (chaque année)', '21 juin (chaque année)']),
+    ('Noël 24 au 26 décembre', '', TOUS_LES_ANS, ['Noël (chaque année)', '24 au 26 décembre (chaque année)']),
+    ('Noël 10 ans', '10 ans', TOUS_LES_ANS, ['Noël (chaque année)']),
+    ('Pâques 10 enfants', '10 enfants', TOUS_LES_ANS, ['Pâques (chaque année)']),
+    ('Noël 12 personnes', '12 personnes', TOUS_LES_ANS, ['Noël (chaque année)']),
+    # … mais « mai 68 », « été 98 », « mars 21 », « Noël 20 » restent des années, même suivies d'autres mots.
+    ('Noël 20', '', [('2020-12-24', '2020-12-26')], ['Noël 2020']),
+    ('mai 68 à Paris', 'Paris', [('1968-05-01', '1968-05-31')], ['mai 1968']),
+    ('hiver 98 15 jours de ski', '15 jours de ski', 2, ['hiver 1998']),
 ]
 
 # Pièges : ce qui doit rester des mots, ou rester des mots en partie : (texte, mots, nombre de périodes, libellés).
@@ -476,6 +494,13 @@ CAS_PIEGES = [
     ('photos', 'photos', 0, []),
     ('chien', 'chien', 0, []),
     ('chien noir', 'chien noir', 0, []),
+    # Relecture 0.5.0 : deux chiffres devant une quantité (« été 30 degrés » donnait l'été 1930).
+    ('été 30 degrés', 'été 30 degrés', 0, []),
+    ('canicule été 35 degrés', 'canicule été 35 degrés', 0, []),
+    ('été 30°', 'été 30°', 0, []),
+    ('août 15 jours', 'août 15 jours', 0, []),
+    ('juillet 10 jours en Corse', 'juillet 10 jours en Corse', 0, []),
+    ('en août 15 jours', '15 jours', TOUS_LES_ANS, ['août (chaque année)']),
 ]
 
 

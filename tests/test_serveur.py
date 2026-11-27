@@ -3879,7 +3879,32 @@ class TestDatesEtLieux(EssaiDatesLieux):
         self.assertEqual(self.noms(self.ids(app.chercher('réveillon de Noël 2019', 0, 50))),
                          ['brest_noel', 'paris_noel', 'fichier_noel', 'quimper_reveillon'])
         self.assertEqual(self.noms(self.ids(app.chercher('été 2022', 0, 50))), ['seville_ete', 'brest_juillet'])
-        self.assertEqual(self.ids(app.chercher('Noël 2021', 0, 50)), [])
+        # Une date sans aucune photo n'est pas retenue (garde-fou) : ses mots demandent alors le moteur.
+        with self.assertRaises(self.serveur.Refus) as e:
+            app.chercher('Noël 2021', 0, 50)
+        self.assertEqual(e.exception.statut, 503)
+
+    def test_date_sans_aucune_photo(self):
+        """Relecture de la 0.5.0 : une date qui n'a aucune photo n'est pas retenue, comme un lieu sans photo (une
+        lecture fausse, « réveillon 1931 » ou « maison 1930 », ne vide plus les résultats) ; la réponse le dit."""
+        app = self.app
+        for q, ecartees in (('maison 1930', ['1930']), ('Noël 2021', ['Noël 2021']), ('réveillon 1931', ['réveillon 1931']),
+                            ('soirée en 1985', ['en 1985']), ('Noël 2019', []), ('Brest', [])):
+            with self.subTest(q=q):
+                a, x = app._analyser(q)
+                self.assertEqual(x, ecartees)
+                if ecartees:
+                    self.assertIsNone(a)
+        # Avec un lieu qui a des photos : le lieu reste, les mots de la date sont cherchés parmi ses photos.
+        a, x = app._analyser('Noël 2021 à Brest')
+        self.assertEqual(([p['libelle'] for p in a.puces], a.mots, a.periodes, x), (['Brest'], 'Noël 2021', [], ['Noël 2021']))
+        # Plusieurs dates : retenues si l'une a des photos (l'une OU l'autre).
+        self.assertEqual(app._analyser('Noël 2019 et Noël 2021')[1], [])
+        self.activer_moteur()
+        r = app.chercher('chien Noël 2021', 0, 50)
+        self.assertEqual((r['mode'], r['puces'], r['dates_sans_photo']), ('recherche', [], ['Noël 2021']))
+        self.assertEqual(r['total_sures'] + r['total_peut_etre'] + r['total_proches'], len(self.PHOTOS))
+        self.assertNotIn('dates_sans_photo', app.chercher('chien Noël 2019', 0, 50))
 
     def test_lieux_seuls(self):
         app = self.app
@@ -3964,8 +3989,9 @@ class TestDatesEtLieux(EssaiDatesLieux):
             x = app.chercher('chien Noël 2019', debut, 1)
             pages += self.ids(x, 'sures') + self.ids(x, 'peut_etre')
         self.assertEqual(pages, tous)
-        # Un filtre qui ne garde rien : réponse vide, jamais une erreur.
-        r = app.chercher('chien Noël 2021', 0, 50)
+        # Un filtre qui ne garde rien (Noël 2019 et Séville ont des photos, mais aucune les deux) : réponse vide,
+        # jamais une erreur.
+        r = app.chercher('chien Noël 2019 à Séville', 0, 50)
         self.assertEqual((r['total_sures'], r['total_peut_etre'], r['total_proches'], r['sures']), (0, 0, 0, []))
 
     def test_puces_retirees(self):

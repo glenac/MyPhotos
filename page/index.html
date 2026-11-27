@@ -654,7 +654,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
 }
 .filtre-retirer:hover { background: var(--surface); color: var(--danger); }
 .filtre-retirer .icone { width: 1.3em; height: 1.3em; stroke-width: 2.4; }
-.sans-position { margin: 10px 0 0; }
+.sans-position, .sans-photo { margin: 10px 0 0; }
 /* « Ce jour-là » : en tête de toutes les photos, les photos du même jour les années passées. */
 .ce-jour {
   margin: 18px 0 2px; padding: 6px 18px 14px; border: 1px solid var(--bordure); border-radius: var(--rayon);
@@ -956,6 +956,7 @@ body:has(#ecran-doublons:not([hidden])) .annonce { inset: auto auto 104px 50%; }
          dans les photos, comme avant). -->
     <div id="filtres" class="filtres" role="group" aria-label="Dates et lieux de la recherche" hidden></div>
     <p id="sans-position" class="note sans-position" hidden></p>
+    <p id="sans-photo" class="note sans-photo" hidden></p>
     <div class="ligne-compte">
       <p id="compte" class="compte" aria-live="polite"></p>
       <p id="maj" class="maj" hidden>De nouvelles photos sont prêtes. <button id="maj-bouton" class="bouton-lien" type="button">Mettre à jour</button></p>
@@ -2126,7 +2127,8 @@ const R = {
   semblables: null, reference: null, retour: null, messageSemblables: null,
   // Dates et lieux (0.5.0) : textes des puces retirées (renvoyés au serveur : ils redeviennent des mots), puces de la
   // dernière réponse, mots cherchés dans les photos une fois les dates et les lieux retirés, photos sans position GPS.
-  ignorer: [], puces: [], mots: null, sansPosition: null,
+  // Dates sans aucune photo, que le serveur n'a pas retenues (leurs mots sont cherchés dans toutes les photos).
+  ignorer: [], puces: [], mots: null, sansPosition: null, sansPhoto: [],
 };
 const IGNORER_MAX = 8;             // puces retirées gardées dans l'adresse (le serveur en accepte 10)
 const nouvelleListe = () => ({ids: [], vus: new Set(), suivant: 0, total: 0, fin: false, enCours: false, pause: false});
@@ -2767,13 +2769,17 @@ const motsCherches = () => R.mots || R.q;
 /** Puces des dates et des lieux reconnus dans la recherche, et phrase des photos sans position GPS ; d = réponse du
  *  serveur, ou null pour tout effacer. Textes par textContent seulement (un nom de lieu n'est jamais du HTML). */
 function majFiltres(d) {
-  const avant = JSON.stringify([R.puces, R.sansPosition]);
+  const avant = JSON.stringify([R.puces, R.sansPosition, R.sansPhoto]);
   if (d) {
     R.puces = (d.puces || []).filter((p) => p && typeof p.libelle === 'string' && typeof p.texte === 'string');
     R.mots = typeof d.mots === 'string' && d.mots ? d.mots : null;
     R.sansPosition = Number.isInteger(d.sans_position) ? d.sans_position : null;
+    R.sansPhoto = Array.isArray(d.dates_sans_photo) ? d.dates_sans_photo.filter((x) => typeof x === 'string' && x) : [];
     // Pages suivantes de la même recherche : rien ne change, les puces restent (le focus d'un × aussi).
-    if (JSON.stringify([R.puces, R.sansPosition]) === avant && $('#filtres').childElementCount === R.puces.length) return;
+    if (JSON.stringify([R.puces, R.sansPosition, R.sansPhoto]) === avant
+      && $('#filtres').childElementCount === R.puces.length) return;
+  } else {
+    R.sansPhoto = [];
   }
   const zone = $('#filtres');
   remplacer(zone, R.puces.map(puceFiltre));
@@ -2783,6 +2789,12 @@ function majFiltres(d) {
   if (!note.hidden) {
     note.textContent = n > 1 ? `${nombre.format(n)} photos n’ont pas de position GPS : elles ne peuvent pas être retrouvées par lieu.`
       : '1 photo n’a pas de position GPS : elle ne peut pas être retrouvée par lieu.';
+  }
+  const sansPhoto = $('#sans-photo');
+  sansPhoto.hidden = !R.sansPhoto.length;
+  if (!sansPhoto.hidden) {
+    const dates = R.sansPhoto.map((x) => `« ${x} »`).join(' et ');
+    sansPhoto.textContent = `Aucune de vos photos ne date de ${dates} : ces mots sont cherchés dans toutes vos photos.`;
   }
 }
 

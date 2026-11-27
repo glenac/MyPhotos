@@ -39,7 +39,9 @@ Généralités
   l'intégration ; FiltreDates les applique en O(log n) par photo, ou en une clause SQL.
 - Années : 4 chiffres, de 1900 à l'année en cours (« 1500 », « 2045 » restent des mots) ; jointes à une fête, un mois,
   une saison ou un jour, jusqu'à l'an prochain (Nouvel An, appareil mal réglé). Deux chiffres seulement jointes
-  (« mars 21 », « été 98 », « mai 68 ») : jusqu'à l'an prochain 2000 + n, sinon 1900 + n. Une année suivie d'une
+  (« mars 21 », « été 98 », « mai 68 ») : jusqu'à l'an prochain 2000 + n, sinon 1900 + n ; jamais quand ils
+  commencent un jour (« Noël 25 décembre », « réveillon 31 décembre » : Noël et le 25 décembre, tous les ans) ni
+  devant une quantité (« été 30 degrés », « été 30° », « août 15 jours », « Noël 10 ans »). Une année suivie d'une
   unité (« 2000 euros », « 1500 m »), ou précédée de « n° » ou d'un nom de modèle (« Peugeot 2008 », « Windows
   2000 », « chambre 2019 »), reste un mot ; « en 2008 » reste une année. « bonne année 2020 » : l'année 2020, et les
   mots « bonne année » (des vœux). Une année hors limites jointe à une date (« Noël 2045 », « 14 juillet 1789 »)
@@ -270,6 +272,13 @@ _UNITES = {'euro', 'euros', 'eur', 'e', 'dollar', 'dollars', 'usd', 'km', 'm', '
            'an', 'ans', 'jour', 'jours', 'h', 'heure', 'heures', 'min', 'minute', 'minutes', 'cv', 'chevaux', 'point',
            'points', 'pts', 'page', 'pages', 'mot', 'mots', 'pixel', 'pixels', 'px', 'ko', 'mo', 'go', 'w', 'watts',
            'v', 'volts', 'pas', 'tour', 'tours', 'fois', 'mille', 'exemplaires', 'places', 'marches', 'metres'}
+# Après un nombre de deux chiffres, ces mots en font une quantité, pas une année (« été 30 degrés », « Noël 10 ans »,
+# « août 15 jours », « Pâques 10 enfants ») ; sans les lettres seules qui sont aussi des élisions (l', m', t'…).
+_QUANTITES = (_UNITES | set(_UNITES_TEMPS) | {
+    'degre', 'degres', 'enfant', 'enfants', 'adulte', 'adultes', 'invite', 'invites', 'convive', 'convives', 'ami',
+    'amis', 'copain', 'copains', 'copine', 'copines', 'cousin', 'cousins', 'cousine', 'cousines', 'bougie', 'bougies',
+    'eleve', 'eleves', 'participant', 'participants', 'nuit', 'nuits', 'centimetre', 'centimetres'}) - set('letmgvwsdnj')
+_SIGNES_QUANTITE = set('°%€$£')                  # « été 30° », « soldes 50 % », « 20 € »
 # Devant ces mots, un nombre de 4 chiffres est un numéro ou un modèle, pas une année (« Peugeot 2008 »).
 _AVANT_NUMERO = {'n', 'no', 'numero', 'num', 'peugeot', 'renault', 'citroen', 'windows', 'office', 'iphone', 'ipad',
                  'galaxy', 'samsung', 'nokia', 'boeing', 'airbus', 'model', 'modele', 'version', 'serie', 'reference',
@@ -689,11 +698,22 @@ class _Lecture:
         if y is not None:
             return y, k + 1
         w = self.mot(k)
-        if w is not None and len(w) == 2 and self.j[k].nombre is not None:
+        if w is not None and len(w) == 2 and self.j[k].nombre is not None and not self.jour_ou_quantite(k):
             y = self.siecle(self.j[k].nombre)
             if ANNEE_MIN <= y <= self.auj.year + 1:
                 return y, k + 1
         return None, k
+
+    def jour_ou_quantite(self, k):
+        """Le nombre de deux chiffres du mot k est-il un jour ou une quantité, plutôt qu'une année ? Un jour s'il
+        commence une date (« Noël 25 décembre », « Noël 24 au 26 décembre ») ; une quantité devant une unité ou un
+        signe (« été 30 degrés », « été 30° », « août 15 jours », « Noël 10 ans », « Pâques 10 enfants »)."""
+        suite = self.t[self.j[k].fin:self.j[k].fin + 2].lstrip()
+        if suite[:1] in _SIGNES_QUANTITE:
+            return True
+        if k + 1 < self.N and self.n[k + 1] in _QUANTITES:
+            return True
+        return self.jours(k, ()) is not None
 
     def annee_hors(self, k):
         """Le mot k ressemble à une année (4 chiffres, 1000 à 2999) mais n'est pas permis (« Noël 2045 »,

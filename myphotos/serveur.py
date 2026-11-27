@@ -2643,13 +2643,14 @@ class Application:
         comprises) ; sinon, ces photos par date (mode 'dates', comme toutes les photos, sans le moteur)."""
         if not (q or '').strip():
             return self.photos_par_date(debut, n)
-        a = self.analyser_recherche(q, ignorer)
+        a, sans_photo = self._analyser(q, ignorer)
+        ecartees = {'dates_sans_photo': sans_photo} if sans_photo else {}
         if a is None:
-            return dict(self._chercher_mots(q, debut, n, proches), puces=[])
+            return dict(self._chercher_mots(q, debut, n, proches), puces=[], **ecartees)
         dates = _requete.FiltreDates(a.periodes)
         idents = _recherche.idents_des_lieux(a.lieux) if a.lieux else None
         info = {'requete': _recherche.normaliser_requete(q), 'puces': a.puces, 'mots': a.mots,
-                'sans_position': self.base.sans_position() if idents is not None else None}
+                'sans_position': self.base.sans_position() if idents is not None else None, **ecartees}
         if not a.mots:
             r = self.base.page_filtree(self._liste_filtree(dates.intervalles if dates else None, idents), debut, n)
             return dict(mode='dates', debut=r['debut'], suivant=r['debut'] + len(r['photos']), total=r['total'],
@@ -2680,17 +2681,36 @@ class Application:
         """requete.analyser, avec la façon de MyPhotos de reconnaître un lieu (recherche.chercheur_lieux : seulement
         les lieux qui ont des photos) : une Analyse, ou None quand rien n'est filtré (aucune puce). Une panne ici ne
         fait jamais échouer la recherche : elle se fait alors sans date ni lieu."""
+        return self._analyser(q, ignorer)[0]
+
+    def _analyser(self, q, ignorer=()):
+        """(analyser_recherche, textes des dates écartées). Garde-fou (relecture de la 0.5.0) : des dates qui n'ont
+        aucune photo ne sont pas retenues, comme un lieu sans photo : leurs mots sont cherchés dans les photos, et la
+        page dit pourquoi. Une lecture fausse (« maison 1930 », un nombre pris pour une année) ne vide jamais les
+        résultats ; une vraie date sans photo (« Noël 2003 ») montre ce qui ressemble le plus à ces mots."""
         try:
             try:
                 presents = self._lieux_presents()
             except sqlite3.Error:
                 presents = {}
             chercher_lieu = _recherche.chercheur_lieux(presents) if presents else None
-            a = _requete.analyser(q, aujourd_hui(), chercher_lieu, ignorer)
+            auj = aujourd_hui()
+            a = _requete.analyser(q, auj, chercher_lieu, ignorer)
+            ecartees = []
+            if a.periodes and not self._dates_presentes(a.periodes):
+                ecartees = [p['texte'] for p in a.puces if p['type'] == 'date']
+                a = _requete.analyser(q, auj, chercher_lieu, list(ignorer or ()) + ecartees)
         except Exception:
             journal.exception('dates et lieux de la recherche (%d caractères)', len(q or ''))   # jamais le texte
-            return None
-        return a if a.puces else None
+            return None, []
+        return (a if a.puces else None), ecartees
+
+    def _dates_presentes(self, periodes):
+        """Une photo au moins dans ces périodes ? Dans le doute (base illisible), oui : la date reste."""
+        try:
+            return self.base.dates_presentes(_requete.intervalles(periodes))
+        except sqlite3.Error:
+            return True
 
     def _chercher_mots(self, q, debut, n, proches=False, filtre=None):
         """Recherche par mots (0.4.1) ; filtre (recherche.Filtre, 0.5.0) : limitée aux photos qu'il garde."""
